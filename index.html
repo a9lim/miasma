@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Miasma | a9l.im</title>
+  <meta name="description"
+    content="Spatial epidemic simulator on hex lattices with selectable topology — plane, cylinder, torus, Möbius strip, Klein bottle, real projective plane. Compartmental SEIRDV dynamics, multi-strain evolution, and paintable interventions.">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+  <meta property="og:title" content="Miasma — Interactive Spatial Epidemic Simulator">
+  <meta property="og:description" content="Compartmental epidemic dynamics on closed hex manifolds. Choose a topology, seed patient zero, and watch outbreaks spread, mutate, and burn out.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://a9l.im/miasma">
+  <meta property="og:site_name" content="a9l.im">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta property="og:image" content="https://a9l.im/miasma/og-image.webp">
+  <meta name="twitter:image" content="https://a9l.im/miasma/og-image.webp">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/webp">
+  <meta property="og:image:alt" content="Miasma spatial epidemic simulator">
+  <meta name="twitter:site" content="@_a9lim">
+  <meta name="twitter:creator" content="@_a9lim">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:title" content="Miasma — Interactive Spatial Epidemic Simulator">
+  <meta name="twitter:description" content="Compartmental SEIRDV dynamics on hex lattices with selectable topology — plane, cylinder, torus, Möbius strip, Klein bottle, real projective plane.">
+  <meta name="author" content="a9lim">
+  <link rel="icon" href="/favicon.ico">
+  <meta name="theme-color" content="#C8553D">
+  <link rel="canonical" href="https://a9l.im/miasma">
+  <link rel="alternate" hreflang="en" href="https://a9l.im/miasma">
+  <link rel="alternate" hreflang="x-default" href="https://a9l.im/miasma">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Miasma">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/fonts/fonts.css">
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="/shared-base.css">
+  <link rel="stylesheet" href="styles.css">
+  <script src="/shared-tokens.js"></script>
+  <script defer src="/shared-touch.js"></script>
+  <script defer src="/shared-utils.js"></script>
+  <script defer src="/shared-haptics.js"></script>
+  <script defer src="/shared-camera.js"></script>
+  <script defer src="/shared-info.js"></script>
+  <script defer src="/shared-shortcuts.js"></script>
+  <script defer src="/shared-about.js"></script>
+  <script defer src="/shared-icons.js"></script>
+  <script defer src="/shared-toolbar.js"></script>
+  <script defer src="/shared-forms.js"></script>
+  <script defer src="/shared-dropdown.js"></script>
+  <script defer src="/shared-sparkline.js"></script>
+  <script defer src="/shared-tooltip.js"></script>
+  <script defer src="colors.js"></script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": ["WebApplication", "LearningResource"],
+    "name": "Miasma",
+    "url": "https://a9l.im/miasma",
+    "description": "Interactive spatial epidemic simulator running compartmental SEIRDV dynamics on hex lattices with selectable two-dimensional topology — plane, cylinder, torus, Möbius strip, Klein bottle, and real projective plane. Models multi-strain evolution, mutation, vaccination, quarantine, and natal/maternal immunity flags. Paint interventions directly onto the manifold and watch reproduction number, attack rate, and herd-immunity threshold change in real time.",
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": ["meta[name='description']"]
+    },
+    "applicationCategory": "EducationalApplication",
+    "educationalUse": "Interactive simulation for learning epidemic dynamics, compartmental models, spatial epidemiology, and the influence of network topology on disease spread",
+    "learningResourceType": "Simulation",
+    "educationalLevel": "Undergraduate",
+    "inLanguage": "en",
+    "about": [
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q2572354", "name": "Compartmental models in epidemiology"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q2206263", "name": "SIR model"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q44512", "name": "Epidemic"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q901464", "name": "Basic reproduction number"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q736798", "name": "Herd immunity"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q176737", "name": "Stochastic process"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q189156", "name": "Cellular automaton"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q3063631", "name": "Hexagonal tiling"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q2721559", "name": "Topological manifold"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q23638", "name": "Klein bottle"},
+      {"@type": "Thing", "@id": "https://www.wikidata.org/wiki/Q226843", "name": "Möbius strip"}
+    ],
+    "keywords": "epidemic simulator, SEIR model, SIR model, compartmental model, basic reproduction number, herd immunity, cellular automaton, hex lattice, topology, Klein bottle, Möbius strip, multi-strain, vaccination, educational",
+    "operatingSystem": "Any (Web Browser)",
+    "browserRequirements": "Modern browser with Canvas support",
+    "sameAs": "https://github.com/a9lim/a9lim.github.io",
+    "codeRepository": "https://github.com/a9lim/a9lim.github.io",
+    "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+    "interactivityType": "active",
+    "teaches": [
+      "Compartmental disease models (S, E, I, R, D, V, M) and the SEIRDV framework",
+      "Basic reproduction number R0 and the herd-immunity threshold 1 - 1/R0",
+      "Stochastic vs deterministic epidemic dynamics on discrete lattices",
+      "How spatial structure and lattice topology alter outbreak waves and final size",
+      "Multi-strain competition, cross-immunity, and antigenic mutation",
+      "Effect of vaccination, quarantine, and contact-tracing interventions"
+    ],
+    "educationalAlignment": [
+      {"@type": "AlignmentObject", "alignmentType": "educationalSubject", "targetName": "AP Biology", "targetUrl": "https://apcentral.collegeboard.org/courses/ap-biology"},
+      {"@type": "AlignmentObject", "alignmentType": "educationalSubject", "targetName": "NGSS HS-LS2: Ecosystems — Interactions, Energy, and Dynamics", "targetUrl": "https://www.nextgenscience.org/dci-arrangement/hs-ls2-ecosystems-interactions-energy-and-dynamics"},
+      {"@type": "AlignmentObject", "alignmentType": "educationalSubject", "targetName": "AP Statistics", "targetUrl": "https://apcentral.collegeboard.org/courses/ap-statistics"}
+    ],
+    "datePublished": "2026-05-12",
+    "dateModified": "2026-05-13",
+    "author": {
+      "@type": "Person",
+      "name": "a9lim",
+      "url": "https://a9l.im/#about",
+      "sameAs": [
+        "https://github.com/a9lim",
+        "https://twitter.com/_a9lim"
+      ]
+    },
+    "isPartOf": {
+      "@type": "WebSite",
+      "name": "a9l.im",
+      "url": "https://a9l.im"
+    },
+    "isBasedOn": [
+      {"@type": "ScholarlyArticle", "name": "A contribution to the mathematical theory of epidemics", "author": "W. O. Kermack and A. G. McKendrick", "datePublished": "1927", "sameAs": "https://doi.org/10.1098/rspa.1927.0118"},
+      {"@type": "ScholarlyArticle", "name": "The Mathematics of Infectious Diseases", "author": "H. W. Hethcote", "datePublished": "2000", "sameAs": "https://doi.org/10.1137/S0036144500371907"},
+      {"@type": "ScholarlyArticle", "name": "Networks and epidemic models", "author": "M. J. Keeling and K. T. D. Eames", "datePublished": "2005", "sameAs": "https://doi.org/10.1098/rsif.2005.0051"},
+      {"@type": "Book", "name": "Infectious Diseases of Humans: Dynamics and Control", "author": "R. M. Anderson and R. M. May", "datePublished": "1991", "sameAs": "https://global.oup.com/academic/product/infectious-diseases-of-humans-9780198540403"}
+    ],
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "timeRequired": "PT30M",
+    "accessibilityFeature": ["highContrastDisplay", "readingOrder", "structuralNavigation"],
+    "accessibilityHazard": ["flashing", "motionSimulation"],
+    "relatedLink": ["https://a9l.im/geon", "https://a9l.im/cyano", "https://a9l.im/gerry", "https://a9l.im/shoals", "https://a9l.im/scripture"]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is a compartmental model?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "A compartmental model partitions a population into discrete states (compartments) such as Susceptible, Exposed, Infectious, Recovered, Deceased, and Vaccinated, and specifies the rates at which individuals transition between them. Miasma uses an SEIRDV core extended with maternal immunity (M), latent carriers (L), chronic carriers (C), fatality flags (F), and status overlays for hospitalization (H) and quarantine (Q). Every transition is a per-tick probability computed from contact with neighboring cells on the lattice."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is R0, the basic reproduction number?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "R0 is the expected number of secondary infections produced by a single infectious individual in a fully susceptible population. R0 > 1 sustains an outbreak; R0 < 1 lets it die out. Miasma displays R0 derived from the current transmission probability, infectious period, and average degree of the lattice, and tracks the effective reproduction number Re as susceptibles deplete."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Why does Miasma use a hexagonal grid?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Hex lattices give every cell the same number of immediate neighbors (six) at the same distance, eliminating the corner-vs-edge asymmetry of square grids. This produces more isotropic wave propagation, which matters when you are comparing outbreak shapes across different topologies — any anisotropy you see is from the manifold, not from the tiling."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What does the topology of the surface do to the dynamics?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "On a finite plane, outbreaks die at the edges. On a cylinder, waves wrap on one axis. On a torus, both axes wrap and the surface is boundary-free and orientable, giving the cleanest long-time dynamics. On a Möbius strip and Klein bottle the surface is non-orientable, so a wave returning to its origin can arrive mirror-reflected — producing interference patterns and altered final sizes that you cannot get on any orientable surface. The real projective plane (RP²) adds antipodal identification."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can vaccination eliminate a disease in Miasma?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, if you push the susceptible fraction below the herd-immunity threshold 1 - 1/R0 before the outbreak takes off. The simulator lets you paint vaccinated patches and watch how fragmented vs continuous coverage changes whether outbreaks can find percolation paths through the remaining susceptibles."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is herd immunity?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Herd immunity is the indirect protection that arises when a sufficient fraction of a population is immune — through prior infection or vaccination — so that each infectious case produces fewer than one new case on average. The threshold for a well-mixed population is 1 - 1/R0. On a spatial lattice the threshold is generally lower, because immune clusters block transmission geometrically as well as statistically."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Why does spatial structure matter for epidemics?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Well-mixed (mass-action) models assume every individual can contact every other with equal probability. Real contact networks have geometry — neighbors, hubs, distance. Spatial structure slows wave fronts, lowers the effective reproduction number, produces traveling waves rather than synchronous global outbreaks, and creates pockets of susceptibles that can drive second waves. Miasma is built specifically to make these effects visible."
+        }
+      }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://a9l.im"},{"@type":"ListItem","position":2,"name":"Projects","item":"https://a9l.im/projects"},{"@type":"ListItem","position":3,"name":"Miasma","item":"https://a9l.im/miasma"}]}
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "How to run an outbreak in Miasma",
+    "step": [
+      {"@type": "HowToStep", "position": 1, "name": "Pick a preset", "text": "Start from a calibrated preset (measles, influenza, COVID-like, generic SIR) — each one sets transmission rate, latent and infectious periods, fatality, and waning immunity to realistic values."},
+      {"@type": "HowToStep", "position": 2, "name": "Choose a topology", "text": "Select the underlying 2-manifold: plane, cylinder, torus, Möbius strip, Klein bottle, or real projective plane. The same dynamics produce very different outbreak shapes on each."},
+      {"@type": "HowToStep", "position": 3, "name": "Seed patient zero", "text": "Click on the lattice to place one or more infectious individuals. Re-seed to compare independent stochastic realizations."},
+      {"@type": "HowToStep", "position": 4, "name": "Watch the dynamics", "text": "Press play and watch the wave propagate. The time-series panel tracks compartment counts, R0/Re, and attack rate as the outbreak evolves."},
+      {"@type": "HowToStep", "position": 5, "name": "Paint interventions", "text": "Switch the brush to vaccinated, quarantined, or removed and paint patches onto the manifold to test how spatial intervention patterns alter the outcome."}
+    ]
+  }
+  </script>
+</head>
+
+<body class="sim-body app-ready">
+  <a href="#dashboard" class="skip-link">Skip to controls</a>
+  <a href="#miasma-canvas" class="skip-link">Skip to simulation</a>
+
+  <!-- =================== Header =================== -->
+  <header id="top-bar" class="sim-toolbar glass" role="toolbar" aria-label="Simulation controls">
+    <div class="header-brand">
+      <a href="/" class="sim-home" title="a9l.im"><img src="/logo.svg" alt="a9l.im" height="28"></a>
+      <h1 class="sim-brand">Miasma</h1>
+    </div>
+    <div class="header-tools sim-toolbar-actions">
+      <button id="play-btn" class="tool-btn" aria-label="Play simulation" title="Play"></button>
+      <button id="step-btn" class="tool-btn" aria-label="Step one tick" title="Step (.)" data-icon="step"></button>
+      <button id="reset-btn" class="tool-btn" aria-label="Reset simulation" title="Reset simulation" data-icon="reset"></button>
+      <span class="tool-sep"></span>
+      <button id="speed-btn" class="tool-btn" aria-label="Speed" title="Speed" data-icon="speed"></button>
+      <span class="tool-sep"></span>
+      <button id="theme-btn" class="tool-btn" data-theme="auto" aria-label="Toggle theme" title="Theme" data-icon="themeAuto"></button>
+      <button id="about-btn" class="tool-btn" aria-label="About" title="About" data-icon="about"></button>
+      <button id="menu-btn" class="tool-btn active" aria-label="Toggle sidebar" aria-expanded="true" title="Toggle sidebar" data-icon="menu"></button>
+    </div>
+  </header>
+
+  <!-- =================== Main Layout =================== -->
+  <main>
+    <div id="sim-container" class="canvas-container">
+      <canvas id="sim-canvas" aria-label="Spatial epidemic visualization on a selectable two-dimensional manifold tiled with hex cells"></canvas>
+
+      <!-- Topology selector — sliding mode indicator wired by _forms.bindModeGroup in main.js -->
+      <div id="topology-toggles" class="mode-toggles glass" role="tablist" aria-label="Surface topology">
+        <button class="mode-btn" data-topology="plane" role="tab" aria-selected="false" title="Bounded plane">Plane</button>
+        <button class="mode-btn" data-topology="cylinder" role="tab" aria-selected="false" title="One-axis wrap">Cylinder</button>
+        <button class="mode-btn active" data-topology="torus" role="tab" aria-selected="true" title="Both axes wrap (orientable, boundary-free)">Torus</button>
+        <button class="mode-btn" data-topology="mobius" role="tab" aria-selected="false" title="Non-orientable strip">Möbius</button>
+        <button class="mode-btn" data-topology="klein" role="tab" aria-selected="false" title="Closed non-orientable surface">Klein</button>
+        <button class="mode-btn" data-topology="rp2" role="tab" aria-selected="false" title="Real projective plane (antipodal identification)">RP²</button>
+      </div>
+
+      <!-- View mode selector — what each cell is colored by -->
+      <div id="viewmode-toggles" class="mode-toggles glass" role="tablist" aria-label="View mode">
+        <button class="mode-btn active" data-viewmode="compartment" role="tab" aria-selected="true" title="S/E/I/R/D/V/M">Compartment</button>
+        <button class="mode-btn" data-viewmode="strain" role="tab" aria-selected="false" title="Which strain infected this cell">Strain</button>
+        <button class="mode-btn" data-viewmode="age" role="tab" aria-selected="false" title="Age distribution">Age</button>
+        <button class="mode-btn" data-viewmode="health" role="tab" aria-selected="false" title="Baseline health / comorbidity">Health</button>
+        <button class="mode-btn" data-viewmode="status" role="tab" aria-selected="false" title="Hospitalized / quarantined overlays">Status</button>
+        <button class="mode-btn" data-viewmode="susceptibility" role="tab" aria-selected="false" title="Per-cell susceptibility multiplier">Susceptibility</button>
+      </div>
+
+      <div id="canvas-controls" class="sim-controls glass">
+        <button id="zoom-in-btn" class="tool-btn" title="Zoom in" aria-label="Zoom in" data-icon="plus" data-icon-size="16"></button>
+        <span id="zoom-indicator" class="zoom-level">100%</span>
+        <button id="zoom-out-btn" class="tool-btn" title="Zoom out" aria-label="Zoom out" data-icon="minus" data-icon-size="16"></button>
+        <div class="ctrl-sep"></div>
+        <button id="zoom-reset-btn" class="tool-btn" title="Fit to view" aria-label="Reset zoom" data-icon="fitView" data-icon-size="16"></button>
+      </div>
+    </div>
+
+    <!-- =================== Dashboard Sidebar =================== -->
+    <aside id="dashboard" class="sim-panel glass" role="complementary" aria-label="Miasma dashboard">
+      <div class="sheet-handle"></div>
+      <div class="stats-header">
+        <div class="sidebar-tabs" role="tablist" aria-label="Sidebar tabs">
+          <button class="tab-btn active" data-tab="compartments" role="tab" aria-selected="true">Compartments</button>
+          <button class="tab-btn" data-tab="strains" role="tab" aria-selected="false">Strains</button>
+          <button class="tab-btn" data-tab="interventions" role="tab" aria-selected="false">Interventions</button>
+          <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+        </div>
+        <button id="close-stats" class="tool-btn" title="Close" aria-label="Close panel" data-icon="close" data-icon-size="16"></button>
+      </div>
+
+      <div class="tabs-wrap">
+        <div class="tab-panels scrollbar-thin">
+          <!-- Compartments — S/E/I/R/D/V/M counts, status flags, R0/Re -->
+          <div class="tab-panel active" id="tab-compartments" role="tabpanel">
+            <p class="panel-hint">Population breakdown will appear here once the simulation is wired in Phase 2.</p>
+          </div>
+
+          <!-- Strains — multi-strain table, mutation tree -->
+          <div class="tab-panel" id="tab-strains" role="tabpanel">
+            <p class="panel-hint">Multi-strain table and antigenic mutation tree will appear here in Phase 2.</p>
+          </div>
+
+          <!-- Interventions — vaccination, quarantine, contact tracing brushes -->
+          <div class="tab-panel" id="tab-interventions" role="tabpanel">
+            <p class="panel-hint">Vaccination, quarantine, and contact-tracing controls will appear here in Phase 2.</p>
+          </div>
+
+          <!-- Settings — transmission, periods, fatality, waning, lattice size -->
+          <div class="tab-panel" id="tab-settings" role="tabpanel">
+            <p class="panel-hint">Disease parameters and lattice settings will appear here in Phase 2.</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- =================== Bottom Time-Series Panel =================== -->
+    <div id="timeseries-panel" class="sim-bar glass" role="region" aria-label="Compartment time series">
+      <canvas id="timeseries-canvas" aria-label="Stacked time series of compartment populations"></canvas>
+    </div>
+
+    <!-- =================== Reference Overlay =================== -->
+    <div id="reference-overlay" class="sim-overlay" hidden>
+      <div class="sim-overlay-panel glass">
+        <div class="stats-header">
+          <h2 id="reference-title" class="stats-title">Reference</h2>
+          <button id="reference-close" class="tool-btn" aria-label="Close reference" data-icon="close" data-icon-size="16"></button>
+        </div>
+        <div id="reference-body" class="sim-overlay-body scrollbar-thin"></div>
+      </div>
+    </div>
+  </main>
+
+  <details class="edu-content">
+    <summary>About this simulation</summary>
+    <article>
+      <h2>What is Miasma?</h2>
+      <p>Miasma is an interactive spatial epidemic simulator. Instead of integrating ordinary differential equations on a well-mixed population, it runs a stochastic cellular automaton on a hex-tiled two-dimensional manifold whose topology you choose. Each cell holds an individual whose state evolves through an extended compartmental model — Susceptible, Exposed, Infectious, Recovered, Deceased, Vaccinated, with Maternal-immunity, Latent-carrier, Chronic-carrier, and Fatality flags, and Hospitalized/Quarantined status overlays. The result is a system where you can see how the same disease parameters produce dramatically different outbreaks depending on the geometry of the contact network.</p>
+
+      <h3>Compartmental Models</h3>
+      <p>The compartmental tradition begins with Kermack and McKendrick's 1927 paper, which partitioned a population into Susceptible, Infectious, and Removed and derived the threshold condition that the modern basic reproduction number R<sub>0</sub> formalizes. The SIR core has since been extended in many directions — adding latency (E), demography (births, deaths), vaccination (V), maternal immunity (M), and waning. Miasma's SEIRDV core with M/L/C/F flags and H/Q status overlays is a synthesis of these extensions, made tractable by running each compartment as a discrete state on a finite lattice.</p>
+
+      <h3>Why Spatial Structure Matters</h3>
+      <p>Well-mixed (mass-action) models assume every individual can contact every other with equal probability. Real contact networks have geometry. In Miasma, infection only crosses between cells that are neighbors on the lattice, so outbreaks propagate as traveling waves rather than synchronous global infections. Wave fronts have a characteristic speed; the effective reproduction number behind a front is lower than R<sub>0</sub> because part of the neighborhood is already immune; final size is generally smaller than the mass-action prediction; and stochastic extinction at low densities becomes possible even when R<sub>0</sub> exceeds 1.</p>
+
+      <h3>Topology</h3>
+      <p>The simulator lets you set the underlying surface. The plane has boundary — outbreaks die at edges. The cylinder wraps one axis; the torus wraps both and is boundary-free and orientable, giving the cleanest long-time dynamics. The Möbius strip and Klein bottle are non-orientable: a wave returning to its origin can arrive mirror-reflected, producing interference patterns and altered final sizes that no orientable surface can reproduce. The real projective plane (RP²) identifies antipodal points and is the most non-trivial of the six. Comparing the same disease across topologies isolates the contribution of geometry alone, with all other parameters held fixed.</p>
+
+      <h3>Multi-Strain Dynamics</h3>
+      <p>Beyond a single pathogen, Miasma supports multi-strain populations with antigenic mutation, partial cross-immunity, and competition for susceptibles. Strains can emerge spontaneously through per-transmission mutation, and the strain-view mode colors each cell by which lineage currently or most recently infected it, producing a phylogeographic readout of the outbreak.</p>
+
+      <h3>Calibrated Presets</h3>
+      <p>Eight named configurations cover the textbook curriculum and a few exotic cases: SEIR-vanilla (pure Kermack–McKendrick on a torus), COVID-like (moderate β, longer infectious period, hospital pressure), Ebola (lower β, high mortality, infectious corpses), Tuberculosis (long latency with reactivation), Andes hantavirus (rodent-reservoir-primary with rare human-to-human spread), Smallpox (high β with severe mortality), Plague with rats (bidirectional spillover and infectious corpses), and Absurd mode (every toggle on, including zombies, on a Klein bottle). Each preset sets the transmission parameters, compartment toggles, and topology; from there you can paint interventions or tweak any slider live.</p>
+
+      <h3>View Modes</h3>
+      <p>Six heatmap projections of the same underlying state: compartment (canonical SEIRDV coloring), strain (cell colored by dominant active lineage), age (green when young, near-black when saturated), health (per-cell health ramp from red to green), status (faded background highlighting hospitalized and quarantined cells), and susceptibility (red where a cell has no prior exposure, green where the bloom-filter immunity record is saturated). Switching modes mid-run is non-destructive — the dynamics keep running on the same state.</p>
+
+      <h3>Interventions</h3>
+      <p>The intervention brushes let you paint five modes onto the manifold: seed (place strain α infections), vaccinate (S/E/R/M → V), quarantine (status overlay reducing transmission both ways), sanitize (clear infections and corpses), and cull (force-kill cells, including the zombie compartment). Brush radius scales 1/7/19 hexes, and every stroke goes onto an undo stack so a misplaced intervention is recoverable. The geometry of intervention matters: contiguous immune blocks at the herd-immunity threshold suppress outbreaks more reliably than the same fraction scattered randomly, because contiguous immunity blocks percolation paths. The simulator exposes this geometric dependence directly.</p>
+
+      <h3>Learning Outcomes</h3>
+      <p>After using Miasma, students should be able to: define compartments and transitions in an SEIRDV-class model and connect them to per-tick transition probabilities; derive the basic reproduction number R<sub>0</sub> and the herd-immunity threshold 1 − 1/R<sub>0</sub>; distinguish deterministic mass-action dynamics from stochastic spatial dynamics and predict where the two diverge; explain how lattice topology — boundary, orientability, antipodal identification — alters wave propagation and final size; describe multi-strain competition under partial cross-immunity; and evaluate the geometric efficacy of different vaccination patterns at the same coverage.</p>
+
+      <h3>Prerequisites</h3>
+      <p>Basic probability (rates, expected values, Poisson processes) and elementary linear algebra. Familiarity with differential equations is helpful for connecting the discrete-time spatial model to the continuous SIR ODEs but is not required — the simulator introduces both views.</p>
+
+      <h3>References</h3>
+      <p>W. O. Kermack and A. G. McKendrick, <a href="https://doi.org/10.1098/rspa.1927.0118" target="_blank" rel="noopener">"A contribution to the mathematical theory of epidemics"</a>, <em>Proc. R. Soc. A</em> (1927). H. W. Hethcote, <a href="https://doi.org/10.1137/S0036144500371907" target="_blank" rel="noopener">"The Mathematics of Infectious Diseases"</a>, <em>SIAM Review</em> 42(4):599–653 (2000). M. J. Keeling and K. T. D. Eames, <a href="https://doi.org/10.1098/rsif.2005.0051" target="_blank" rel="noopener">"Networks and epidemic models"</a>, <em>J. R. Soc. Interface</em> 2(4):295–307 (2005). R. M. Anderson and R. M. May, <em>Infectious Diseases of Humans: Dynamics and Control</em> (Oxford University Press, 1991).</p>
+
+      <h3>Accessibility</h3>
+      <p>Miasma supports full keyboard navigation across the toolbar, sidebar tabs, topology and view-mode selectors. The theme toggle provides a high-contrast variant. All toolbar buttons carry ARIA labels and the canvas exposes its purpose via <code>aria-label</code>. Compartment counts, R<sub>0</sub>, and attack rate are also reported as text in the sidebar dashboard for screen readers. Known hazards: continuous color changes on the lattice during outbreaks; rapid color shifts when running at high speed. Users sensitive to motion or flashing can lower the speed, step the simulation tick by tick, or switch to the compartment view mode which uses more muted colors than the strain view.</p>
+
+      <p><em>See also: <a href="/geon">Geon</a> for particle physics, <a href="/cyano">Cyano</a> for cellular biochemistry, <a href="/gerry">Gerry</a> for electoral fairness, <a href="/shoals">Shoals</a> for options trading, <a href="/scripture">Scripture</a> for the comparative-religion corpus.</em></p>
+    </article>
+  </details>
+
+  <script defer src="/shared-tabs.js"></script>
+  <link rel="modulepreload" href="main.js">
+  <script type="module" src="main.js"></script>
+</body>
+
+</html>

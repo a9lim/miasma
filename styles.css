@@ -1,0 +1,510 @@
+/* ═══════════════════════════════════════════════════════════════
+   styles.css — Project-specific overrides for miasma.
+   Shared patterns (glass, tool-btn, layout tokens) in /shared-base.css.
+   All colors via CSS vars injected by colors.js — no hardcoded values.
+   Compartment colors: --epi-s / -e / -i / -r / -d / -v / -m / -z
+                       plus -wash (0.18α) and -tint (0.10α) variants.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ───── Keyframes ───── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.6); }
+}
+
+
+/* ───── Base — full-viewport app shell ───── */
+html {
+  font-size: clamp(14px, 1.5vw, 16px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* ═══════════════════════════════════════
+   MAIN LAYOUT — canvas + bottom time-series strip
+   Canvas fills viewport behind HUD sidebar/toolbar.
+   Time-series panel is layered HUD at the bottom edge.
+   ═══════════════════════════════════════ */
+main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+
+/* ═══════════════════════════════════════
+   CANVAS CONTAINER
+   ═══════════════════════════════════════ */
+#sim-container {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-canvas);
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+  transition: background 0.3s var(--ease-out);
+}
+
+#sim-container.pan-mode { cursor: grab; }
+#sim-container.panning  { cursor: grabbing; }
+
+#sim-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  touch-action: none;
+}
+
+
+/* ═══════════════════════════════════════
+   THEME TOGGLE ICONS
+   ═══════════════════════════════════════ */
+#theme-btn .icon-auto,
+#theme-btn .icon-sun,
+#theme-btn .icon-moon { display: none; }
+
+#theme-btn[data-theme="auto"]  .icon-auto { display: block; }
+#theme-btn[data-theme="light"] .icon-sun  { display: block; }
+#theme-btn[data-theme="dark"]  .icon-moon { display: block; }
+
+
+/* ═══════════════════════════════════════
+   COMPARTMENT LEGEND — colored dots + label rows
+   Generic .legend-dot pulls a per-class --dot-color.
+   ═══════════════════════════════════════ */
+.legend-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.legend-sub {
+  font-family: var(--font-sans);
+  font-size: clamp(0.46rem, 0.7vw, 0.52rem);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+  opacity: 0.6;
+}
+
+.legend-sub:first-child { margin-top: 0; }
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: clamp(0.58rem, 0.88vw, 0.66rem);
+  color: var(--text-secondary);
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--dot-color);
+}
+
+.legend-dot.epi-s-dot { --dot-color: var(--epi-s); }
+.legend-dot.epi-e-dot { --dot-color: var(--epi-e); }
+.legend-dot.epi-i-dot { --dot-color: var(--epi-i); }
+.legend-dot.epi-r-dot { --dot-color: var(--epi-r); }
+.legend-dot.epi-d-dot { --dot-color: var(--epi-d); }
+.legend-dot.epi-v-dot { --dot-color: var(--epi-v); }
+.legend-dot.epi-m-dot { --dot-color: var(--epi-m); }
+.legend-dot.epi-z-dot { --dot-color: var(--epi-z); }
+
+
+/* ═══════════════════════════════════════
+   COMPARTMENT STAT READOUTS
+   Reuses .stat-value / .stat-label from shared-base.css.
+   Per-compartment color via --stat-color.
+   ═══════════════════════════════════════ */
+.stat-row[data-compartment="S"]     { --stat-color: var(--epi-s); }
+.stat-row[data-compartment="E"]     { --stat-color: var(--epi-e); }
+.stat-row[data-compartment="I"]     { --stat-color: var(--epi-i); }
+.stat-row[data-compartment="R"]     { --stat-color: var(--epi-r); }
+.stat-row[data-compartment="D"]     { --stat-color: var(--epi-d); }
+.stat-row[data-compartment="V"]     { --stat-color: var(--epi-v); }
+.stat-row[data-compartment="M"]     { --stat-color: var(--epi-m); }
+.stat-row[data-compartment="Z"]     { --stat-color: var(--epi-z); }
+.stat-row[data-compartment="empty"] { --stat-color: var(--text-secondary, #808696); }
+
+.stat-row[data-compartment] .stat-value { color: var(--stat-color); }
+
+/* Color swatch in the stat row label — inline-block square, color set inline by JS */
+.stat-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius);
+  display: inline-block;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Dim zero-count rows so non-zero entries stand out */
+.stat-row[data-zero="true"] { opacity: 0.4; }
+
+/* Population total + R_eff + status (hospital/quarantine) + Phase 5 mean age/health readout rows are role-tagged */
+.stat-row[data-role="population"] .stat-value,
+.stat-row[data-role="reff"] .stat-value,
+.stat-row[data-role="hospital"] .stat-value,
+.stat-row[data-role="quarantine"] .stat-value,
+.stat-row[data-role="mean-age"] .stat-value,
+.stat-row[data-role="mean-health"] .stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ═══════════════════════════════════════
+   STRAIN REGISTRY PANEL — prevalence bars
+   ═══════════════════════════════════════ */
+.strain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.strain-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.2s var(--ease-out);
+}
+
+.strain-row:hover { background: var(--bg-hover); }
+
+.strain-row.active { background: var(--accent-subtle); }
+
+.strain-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--strain-color, var(--epi-i));
+}
+
+.strain-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strain-prev {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.strain-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: var(--strain-bar-bg);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.strain-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--strain-color, var(--epi-i));
+  transition: width 0.3s var(--ease-out);
+}
+
+/* Phase 8: lineage-tree cladogram inside the strain-detail block. Muted
+   track-coloured background matches the time-series chart aesthetic;
+   fixed CSS height (the canvas backing buffer is sized by resizeCanvasDPR). */
+.lineage-tree-canvas {
+  display: block;
+  width: 100%;
+  height: 92px;
+  margin-top: 0.4rem;
+  background: var(--ts-track);
+  border-radius: var(--radius);
+}
+
+
+/* ═══════════════════════════════════════
+   PULSE DOT — active outbreak indicator
+   ═══════════════════════════════════════ */
+.pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--epi-i);
+  animation: pulse-dot 2.5s var(--ease-in-out) infinite;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-right: 0.35rem;
+}
+
+
+/* ═══════════════════════════════════════
+   TIME SERIES PANEL — bottom HUD overlay
+   ═══════════════════════════════════════ */
+#timeseries-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  width: min(72vw, 880px);
+  height: 140px;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  transition: opacity 0.2s var(--ease-out);
+}
+
+#timeseries-panel.hidden { opacity: 0; pointer-events: none; }
+
+.ts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ts-title {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.ts-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  background: var(--ts-track);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+#timeseries-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+
+/* ═══════════════════════════════════════
+   BRUSH SIZE INDICATOR — hover circle on the canvas while painting
+   Per-mode accent comes from inline --brush-accent (set by paint.js).
+   ═══════════════════════════════════════ */
+.brush-indicator {
+  position: fixed;
+  pointer-events: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brush-accent, var(--accent)) 28%, transparent);
+  border: 1.5px solid var(--brush-accent, var(--accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-base) 60%, transparent),
+              0 0 8px color-mix(in srgb, var(--brush-accent, var(--accent)) 35%, transparent);
+  z-index: 90;
+  transition: width 0.12s var(--ease-out), height 0.12s var(--ease-out);
+}
+
+
+/* ═══════════════════════════════════════
+   PAINT MODE — Interventions tab UI
+   3×2 grid of buttons (sidebar is narrow; bindModeGroup's single-row
+   sliding indicator doesn't tolerate wrapping). Per-mode active accent
+   recolors the active button background to its intervention target.
+   ═══════════════════════════════════════ */
+.paint-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 3px;
+  margin: 0.25rem 0 0.5rem;
+  background: var(--bg-hover);
+  border-radius: var(--radius);
+}
+
+.paint-mode-btn {
+  background: transparent;
+  border: none;
+  padding: 0.45rem 0.4rem;
+  font-family: var(--font-sans);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+  line-height: 1;
+  transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+
+.paint-mode-btn:hover  { color: var(--text); }
+.paint-mode-btn.active { color: var(--text-on-accent); background: var(--accent); }
+
+/* Per-mode accent on the active button — recolor the background fill to the
+   intervention's semantic compartment color. */
+.paint-mode-btn#mode-seed.active       { background: var(--epi-i); color: var(--text-on-accent); }
+.paint-mode-btn#mode-vaccinate.active  { background: var(--epi-v); color: var(--text-on-accent); }
+.paint-mode-btn#mode-quarantine.active { background: var(--epi-e); color: var(--text-on-accent); }
+.paint-mode-btn#mode-sanitize.active   { background: var(--epi-r); color: var(--text-on-accent); }
+.paint-mode-btn#mode-cull.active       { background: var(--epi-d); color: var(--text-on-accent); }
+
+.paint-undo-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+
+/* ═══════════════════════════════════════
+   PRESETS — preset chooser at top of Settings tab
+   Dropdown + Apply button on one row, description hint below.
+   ═══════════════════════════════════════ */
+.preset-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.preset-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.preset-apply-btn {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.9rem;
+  font-weight: 600;
+}
+
+.preset-apply-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.preset-desc {
+  margin-top: 0.25rem;
+}
+
+
+/* ═══════════════════════════════════════
+   STATS — scale-bounce animation on value change
+   ═══════════════════════════════════════ */
+.stat-value.bump { transform: scale(1.25); }
+
+
+/* ═══════════════════════════════════════
+   RESPONSIVE — Tablet (≤ 900px)
+   Sidebar collapses to bottom-sheet (handled by .sim-panel
+   in shared-base.css); time-series shrinks above it.
+   ═══════════════════════════════════════ */
+@media (max-width: 900px) {
+  main {
+    position: fixed;
+    inset: 0;
+    height: 100%;
+  }
+
+  #sim-container {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  #dashboard { z-index: 95; }
+
+  #timeseries-panel {
+    width: calc(100% - 1rem);
+    height: 100px;
+    bottom: 0.5rem;
+  }
+}
+
+
+/* ═══════════════════════════════════════
+   RESPONSIVE — Phone (≤ 600px)
+   Time-series panel collapses to a strip; sidebar takes over.
+   ═══════════════════════════════════════ */
+@media (max-width: 600px) {
+  #top-bar { gap: 0.4rem; }
+
+  #timeseries-panel {
+    height: 72px;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .ts-title { font-size: clamp(0.55rem, 1.8vw, 0.65rem); }
+}
+
+
+/* ═══════════════════════════════════════
+   ACCESSIBILITY — coarse pointer touch targets
+   ═══════════════════════════════════════ */
+@media (pointer: coarse) {
+  .tab-btn { padding: 0.65rem 0.4rem 0.55rem; }
+  .strain-row { padding: 0.4rem 0.5rem; }
+}
+
+
+/* ═══════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; opacity: 0.7; }
+  .strain-bar-fill { transition: none; }
+}
+
+
+/* ═══════════════════════════════════════
+   TOGGLES PANEL — Phase 3 compartment + flag toggles
+   Lives inside #tab-settings alongside the param sliders.
+   Reuses .settings-dd-row / .settings-dd-label / .checkbox-label
+   from shared-base.css; only the section headers + tiny layout
+   tweaks are sim-specific.
+   ═══════════════════════════════════════ */
+.toggles-section-header {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.toggles-section-header:first-child { margin-top: 0; }
+
+/* Row label can hold a swatch + text inline. Align baseline so the swatch
+   sits centered with the text. */
+.toggles-row-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* The right-hand wrapper holds only the checkbox toggle — let it shrink to
+   the control width rather than stretching. */
+.toggles-checkbox-wrap {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
