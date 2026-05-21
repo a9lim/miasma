@@ -1,33 +1,44 @@
 // render.js — canvas drawing for the hex grid.
-// Phase 1: flat-top hex outlines, filled by compartment color (read from
-// CSS vars set in miasma/colors.js).
-// Phase 3: flag-overlay pass on top of fills — L stripes on E, C rim on R,
-// F rim on D.
-// Phase 4: status-overlay pass on top of flags — H "+" badge on hospitalized
-// cells, Q darker outline ring on quarantined cells. Other view modes
-// (strain / age / health / status / susceptibility) wire in in Phase 13.
+//
+// Performance notes:
+// - CSS-var colors are read once per theme change via a MutationObserver on
+//   <html data-theme> rather than getComputedStyle on every render. Reading
+//   computed styles forces a synchronous style/layout pass; doing that at
+//   60 Hz was a major UI-stall source.
+// - Hex corner unit-offsets are computed once at module load. The per-cell
+//   inner loop pulls cx/cy from precomputed Float32Array caches keyed by
+//   viewport hash — no per-cell hexToPixel allocations, no per-cell trig.
+// - Fill + outline + flag/status overlays share the same precomputed
+//   geometry so the four old passes collapse into one viewport-pixel cache
+//   rebuild + tight per-cell render loops.
+//
+// View modes:
+//   compartment    — color by Compartment enum via --epi-* vars
+//   strain         — color cells with an active strain by strain-ID
+//                    hue (golden-ratio mapping)
+//   age            — green → amber → near-black ramp on age
+//   health         — red → amber → green ramp on per-cell health
+//   status         — H cyan, Q amber, others muted-slate, D dark
+//   susceptibility — red (no prior exposure) → green (saturated bloom)
 
-import { hexToPixel, hexCorners } from './grid.js';
-import { Animal, Compartment, COMPARTMENT_CSS_VAR, Flag, Status, ViewMode, DEFAULTS } from './config.js';
+import { Compartment, COMPARTMENT_CSS_VAR, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.js';
 
-// Cache CSS-var lookups per-render so we don't pay getComputedStyle per cell.
-function readCompartmentColors() {
-    const style = getComputedStyle(document.documentElement);
-    const out = {};
-    for (const key in COMPARTMENT_CSS_VAR) {
-        const varName = COMPARTMENT_CSS_VAR[key];
-        const v = style.getPropertyValue(varName).trim();
-        // Fall back to a visible neutral if a var is missing — Phase 1 may run
-        // before colors.js defines the full set.
-        out[key] = v || '#888';
-    }
-    return out;
+// ─── Color cache (theme-aware) ──────────────────────────────────────────────
+// Reading getComputedStyle is expensive (forces sync style recomputation), so
+// we resolve --epi-* + --text once and refresh only when the theme attribute
+// changes. The cache also pre-parses each color into r/g/b ints so the ramp
+// helpers don't re-parse on every cell.
+
+let _colorCache = null;
+let _colorCacheTheme = null;
+
+function readCss(varName, fallback) {
+    const v = getComputedStyle(document.documentElement)
+        .getPropertyValue(varName)
+        .trim();
+    return v || fallback;
 }
 
-// ─── Phase 13 — heatmap ramp helpers ───
-// Parse a #RGB / #RRGGBB / rgb(...) string into an {r, g, b} object once
-// per render so per-cell lerp doesn't keep re-parsing. Returns {r, g, b}
-// with each channel in [0, 255]. Unknown strings fall back to grey.
 function parseColor(s) {
     if (!s) return { r: 136, g: 136, b: 136 };
     s = s.trim();
@@ -58,6 +69,68 @@ function parseColor(s) {
     return { r: 136, g: 136, b: 136 };
 }
 
+function rebuildColorCache() {
+    const colors = {};
+    for (const key in COMPARTMENT_CSS_VAR) {
+        colors[key] = readCss(COMPARTMENT_CSS_VAR[key], '#888');
+    }
+    const text = readCss('--text', '#000');
+    const stroke = readCss('--hex-stroke', 'rgba(0, 0, 0, 0.06)');
+    const parsed = {
+        s: parseColor(colors[Compartment.S]),
+        e: parseColor(colors[Compartment.E]),
+        i: parseColor(colors[Compartment.I]),
+        r: parseColor(colors[Compartment.R]),
+        d: parseColor(colors[Compartment.D]),
+        v: parseColor(colors[Compartment.V]),
+        m: parseColor(colors[Compartment.M]),
+        empty: parseColor(colors[Compartment.EMPTY])
+    };
+    _colorCache = {
+        colors,
+        text,
+        stroke,
+        parsed,
+        statusBase: lerpColor(parsed.s, parsed.empty, 0.55),
+        ramps: {
+            age: makeGradient3(parsed.r, parsed.e, parsed.d),
+            health: makeGradient3(parsed.i, parsed.e, parsed.r),
+            susceptibility: makeGradient3(parsed.r, parsed.e, parsed.i)
+        }
+    };
+    _colorCacheTheme = document.documentElement.dataset.theme || '';
+}
+
+function getColors() {
+    const theme = document.documentElement.dataset.theme || '';
+    if (_colorCache === null || theme !== _colorCacheTheme) rebuildColorCache();
+    return _colorCache;
+}
+
+// Public hook used by main.js after theme toggles so callers don't need to
+// know about the cache. Cheap; the next render is the one that pays.
+export function invalidateColorCache() {
+    _colorCache = null;
+}
+
+// One-time MutationObserver: any change to <html data-theme> invalidates the
+// cache so the next render reads the new vars. Cheaper than calling
+// invalidateColorCache from every theme handler, and means CSS-only theme
+// switches (e.g. system prefers-color-scheme follow) also work.
+if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
+    const mo = new MutationObserver((muts) => {
+        for (const m of muts) {
+            if (m.attributeName === 'data-theme') {
+                _colorCache = null;
+                return;
+            }
+        }
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+
+// ─── Heatmap ramp helpers ───────────────────────────────────────────────────
+
 /** Linear interpolation in RGB space. t ∈ [0, 1]; returns a CSS rgb() string. */
 function lerpColor(c0, c1, t) {
     if (t < 0) t = 0; else if (t > 1) t = 1;
@@ -67,27 +140,38 @@ function lerpColor(c0, c1, t) {
     return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
-/**
- * 3-stop gradient on t ∈ [0, 1]: c0 → c1 → c2 at t = 0, 0.5, 1.
- * Useful when the meaningful axis has a clear midpoint (health/age).
- */
+/** 3-stop gradient on t ∈ [0, 1]: c0 → c1 → c2 at t = 0, 0.5, 1. */
 function lerpColor3(c0, c1, c2, t) {
     if (t < 0) t = 0; else if (t > 1) t = 1;
     if (t < 0.5) return lerpColor(c0, c1, t * 2);
     return lerpColor(c1, c2, (t - 0.5) * 2);
 }
 
-// 64-bit-bloom popcount. Reads 8 bytes from grid.strain_hist starting at
-// cellIdx * 8 and returns the number of set bits across the whole bloom.
-// Used by the susceptibility view as a cheap proxy for "how many strains
-// has this cell already seen?" (modulo bloom-filter false positives).
+function makeGradient3(c0, c1, c2) {
+    const out = new Array(256);
+    for (let i = 0; i < 256; i++) {
+        out[i] = lerpColor3(c0, c1, c2, i / 255);
+    }
+    return out;
+}
+
+const _strainFillCache = new Map();
+
+function strainFill(strainId) {
+    let fill = _strainFillCache.get(strainId);
+    if (fill !== undefined) return fill;
+    const hue = (strainId * 137.508) % 360;
+    fill = 'hsl(' + hue + ', 60%, 55%)';
+    _strainFillCache.set(strainId, fill);
+    return fill;
+}
+
+// 64-bit-bloom popcount over grid.strain_hist starting at cellIdx * 8.
 function bloomPopcount8(bloom, cellIdx) {
     let n = 0;
     const base = cellIdx * 8;
     for (let k = 0; k < 8; k++) {
         let b = bloom[base + k];
-        // SWAR popcount on a single byte. Cheaper than a 256-entry LUT for
-        // the volumes here (~10k cells × 8 bytes per render).
         b = (b & 0x55) + ((b >>> 1) & 0x55);
         b = (b & 0x33) + ((b >>> 2) & 0x33);
         b = (b & 0x0f) + ((b >>> 4) & 0x0f);
@@ -96,418 +180,533 @@ function bloomPopcount8(bloom, cellIdx) {
     return n;
 }
 
-// Build a flat-top hex path on the current context. Caller handles fill/stroke.
-function hexPath(ctx, corners) {
-    ctx.beginPath();
-    ctx.moveTo(corners[0].x, corners[0].y);
-    for (let k = 1; k < 6; k++) ctx.lineTo(corners[k].x, corners[k].y);
+// ─── Hex corner unit offsets (precomputed) ──────────────────────────────────
+// Flat-top hex: corner k sits at angle (60k - 30)°. Computing the trig once
+// at module load means the per-cell hex path is just six adds — no Math.cos
+// / Math.sin / array-of-{x,y}-objects allocations.
+const HEX_UNIT_X = new Float32Array(6);
+const HEX_UNIT_Y = new Float32Array(6);
+for (let k = 0; k < 6; k++) {
+    const angle = Math.PI / 180 * (60 * k - 30);
+    HEX_UNIT_X[k] = Math.cos(angle);
+    HEX_UNIT_Y[k] = Math.sin(angle);
+}
+
+/** Inline a hex path on the supplied context. cx,cy = center; size = radius. */
+function hexPathInline(ctx, cx, cy, size) {
+    ctx.moveTo(cx + HEX_UNIT_X[0] * size, cy + HEX_UNIT_Y[0] * size);
+    for (let k = 1; k < 6; k++) {
+        ctx.lineTo(cx + HEX_UNIT_X[k] * size, cy + HEX_UNIT_Y[k] * size);
+    }
     ctx.closePath();
 }
 
+// ─── Per-cell pixel-position cache ──────────────────────────────────────────
+// Cell (q, r) → (cx, cy) depends on hexSize + originX + originY. Two Float32
+// arrays keyed by the numeric viewport components, rebuilt only when the
+// viewport changes (resize / zoom / pan). The render loop reads from these
+// directly. Hash via separate numeric fields, not a concatenated string, so
+// cache hits don't allocate a 30-char string every frame.
+
+let _posCache = null;
+let _posCacheGrid = null;
+let _posCacheHexSize = NaN;
+let _posCacheOriginX = NaN;
+let _posCacheOriginY = NaN;
+let _posCacheW = 0;
+let _posCacheH = 0;
+
+function ensurePositionCache(grid, hexSize, originX, originY) {
+    if (
+        _posCache !== null &&
+        _posCacheGrid    === grid     &&
+        _posCacheHexSize === hexSize  &&
+        _posCacheOriginX === originX  &&
+        _posCacheOriginY === originY  &&
+        _posCacheW       === grid.W   &&
+        _posCacheH       === grid.H
+    ) {
+        return _posCache;
+    }
+    const N = grid.W * grid.H;
+    // Reuse the underlying buffers when the cell count hasn't changed —
+    // pinch-zoom / pan fires this many times per second and we don't want
+    // to allocate a 50kB+ pair of Float32Arrays each time.
+    let cx, cy;
+    if (_posCache !== null && _posCache.cx.length === N) {
+        cx = _posCache.cx;
+        cy = _posCache.cy;
+    } else {
+        cx = new Float32Array(N);
+        cy = new Float32Array(N);
+    }
+    const w = SQRT3 * hexSize;
+    const h = 1.5 * hexSize;
+    const active = grid.activeIndices;
+    if (active && active.length) {
+        for (let k = 0; k < active.length; k++) {
+            const i = active[k];
+            const r = (i / grid.W) | 0;
+            const q = i - r * grid.W;
+            cx[i] = w * (q + r / 2) + originX;
+            cy[i] = h * r + originY;
+        }
+    } else {
+        for (let r = 0; r < grid.H; r++) {
+            const baseY = h * r + originY;
+            for (let q = 0; q < grid.W; q++) {
+                const i = r * grid.W + q;
+                cx[i] = w * (q + r / 2) + originX;
+                cy[i] = baseY;
+            }
+        }
+    }
+    _posCache = { cx, cy };
+    _posCacheGrid    = grid;
+    _posCacheHexSize = hexSize;
+    _posCacheOriginX = originX;
+    _posCacheOriginY = originY;
+    _posCacheW       = grid.W;
+    _posCacheH       = grid.H;
+    return _posCache;
+}
+
+// ─── Main render ────────────────────────────────────────────────────────────
+
 /**
  * Draw the grid.
- * @param {CanvasRenderingContext2D} ctx — already transformed for DPR by resizeCanvasDPR
+ * @param {CanvasRenderingContext2D} ctx — DPR-transformed by resizeCanvasDPR
  * @param {Grid} grid
  * @param {string} mode — ViewMode value
  * @param {object} viewport — { cssWidth, cssHeight, hexSize, originX, originY }
+ * @param {object} [opts] — additional render options:
+ *   - animalDisplay: 'dots' | 'only' | 'off' (default 'dots')
+ *   - ageMax: number — AGE view ramp saturation (default 5000)
+ *   - paintOverlay: { q, r, brushSize, mode, inside } — when present and
+ *     `inside` is true, the cells under the brush footprint are filled with
+ *     a translucent paint-mode-accent tint. Replaces the DOM brush circle.
  */
-export function render(ctx, grid, mode, viewport) {
+export function render(ctx, grid, mode, viewport, opts) {
     const { cssWidth, cssHeight, hexSize, originX, originY } = viewport;
+    const animalDisplay = (opts && opts.animalDisplay) || 'dots';
+    const ageMax = (opts && opts.ageMax) || 5000;
+    const paintOverlay = (opts && opts.paintOverlay) || null;
 
-    // Clear in CSS-pixel coords (ctx is DPR-transformed by resizeCanvasDPR).
     ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    const colors = readCompartmentColors();
+    const {
+        colors,
+        text: textColor,
+        stroke: strokeColor,
+        ramps,
+        statusBase
+    } = getColors();
 
     // Slight overscale so hex tiles butt-join without sub-pixel seams.
     const drawSize = hexSize + 0.5;
 
-    ctx.lineWidth = 1;
-    ctx.lineJoin = 'miter';
-
-    // Cells with mask=0 are "void" — outside the hexagonal world. Skipping
-    // them in fill + outline passes leaves the canvas background showing
-    // through, so the rhombus storage reads visually as a regular hexagon.
-    // (Flag and status overlay passes early-exit on flags=0 / status=0,
-    // which applyHexMask already zeroed for void cells.)
-    //
-    // View modes (Phase 13):
-    //   compartment    — color by Compartment enum via --epi-* vars
-    //   strain         — color cells with an active strain by strain-ID
-    //                    hue (golden-ratio mapping)
-    //   age            — green → amber → near-black ramp on age
-    //   health         — red → amber → green ramp on per-cell health
-    //   status         — H cyan, Q amber, others muted-slate, D dark
-    //   susceptibility — red (no prior exposure) → green (saturated bloom)
-    //
-    // Each per-cell fill is computed by `pickFill(i, comp)` so the loop
-    // stays a single typed-array scan independent of mode.
     const mask = grid.mask;
+    const compartmentArr = grid.compartment;
+    const flagsArr = grid.flags;
+    const statusArr = grid.status;
+    const ageArr = grid.age;
+    const healthArr = grid.health;
     const strainIds = grid.strain_ids;
     const strainLoads = grid.strain_loads;
+    const strainHist = grid.strain_hist;
+    const animalArr = grid.animal;
+    const N = grid.W * grid.H;
+    const active = grid.activeIndices;
+    const activeCount = active ? active.length : N;
     const MAX_ACTIVE_RENDER = DEFAULTS.maxActiveStrains;
 
-    // Pre-parse ramp endpoints for heatmap modes so the per-cell loop only
-    // calls lerpColor (no string parsing). Tied to the current theme colors
-    // so dark/light flips automatically.
-    const cParse = {
-        s: parseColor(colors[Compartment.S]),
-        e: parseColor(colors[Compartment.E]),
-        i: parseColor(colors[Compartment.I]),
-        r: parseColor(colors[Compartment.R]),
-        d: parseColor(colors[Compartment.D]),
-        v: parseColor(colors[Compartment.V]),
-        m: parseColor(colors[Compartment.M])
-    };
+    const { cx: posX, cy: posY } = ensurePositionCache(grid, hexSize, originX, originY);
 
-    const pickFill = (cellIdx, comp) => {
-        if (mode === ViewMode.STRAIN) {
-            const base = cellIdx * MAX_ACTIVE_RENDER;
+    // Build a per-cell fill resolver bound to the current view mode. Resolving
+    // once per render instead of once per cell saves a stack of branches in
+    // the inner loop.
+    const pickFill = buildFillResolver(mode, colors, {
+        ageArr, healthArr, strainIds, strainLoads, strainHist, statusArr,
+        ageMax, maxActive: MAX_ACTIVE_RENDER, ramps, statusBase
+    });
+
+    const drawHumanLayer = (animalDisplay !== 'only');
+
+    if (drawHumanLayer) {
+        // Single fused pass: fill each cell, then stroke its outline. The path
+        // is built once per cell and used for both ops. Empty (unoccupied)
+        // cells skip both fill AND stroke so they render transparent — the
+        // canvas background shows through instead of the previous beige
+        // `--bg-base` fill, and there's no hex outline to read as "cell here."
+        ctx.lineWidth = 1;
+        ctx.lineJoin = 'miter';
+        ctx.strokeStyle = strokeColor;
+
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (mask && mask[i] === 0) continue;
+            const comp = compartmentArr[i];
+            if (comp === Compartment.EMPTY) continue;
+            const cx = posX[i];
+            const cy = posY[i];
+            ctx.beginPath();
+            hexPathInline(ctx, cx, cy, drawSize);
+            ctx.fillStyle = pickFill(i, comp);
+            ctx.fill();
+            ctx.stroke();
+        }
+
+        // Flag overlays (only in COMPARTMENT view — flags are modifiers on
+        // their base compartment, so other modes intentionally hide them).
+        if (mode === ViewMode.COMPARTMENT) {
+            renderFlagOverlays(ctx, grid, colors, drawSize, posX, posY, hexSize, active, activeCount);
+        }
+        // Status overlays (H badge, Q ring) render in both COMPARTMENT and
+        // STATUS views.
+        if (mode === ViewMode.COMPARTMENT || mode === ViewMode.STATUS) {
+            renderStatusOverlays(ctx, grid, textColor, drawSize, posX, posY, hexSize, active, activeCount);
+        }
+    } else {
+        // animalDisplay === 'only': skip the human-compartment fill entirely
+        // so the canvas background shows through. Animal dots draw on top.
+        // Previously we filled the inscribed region with `colors[EMPTY]`
+        // (beige) as a backdrop for dots — with EMPTY now transparent,
+        // dots read fine against the page background.
+    }
+
+    // Animal dots — three-way: 'dots' overlay, 'only' (skipped above's human
+    // pass), 'off' (skipped here). Below the min hex-size threshold the dots
+    // become indistinguishable from the cell center, so skip then too.
+    if (animalArr && hexSize >= 3 && animalDisplay !== 'off') {
+        renderAnimalDots(ctx, animalArr, mask, colors, hexSize, posX, posY, active, activeCount);
+    }
+
+    // Brush footprint overlay — translucent fill on every cell under the
+    // current brush, plus a thin outline tracing the outer edge of the
+    // footprint. Drawn last so it sits on top of every base/strain/age fill.
+    if (paintOverlay && paintOverlay.inside && paintOverlay.mode !== 'none') {
+        renderPaintOverlay(ctx, grid, paintOverlay, drawSize, posX, posY);
+    }
+}
+
+// ─── View-mode-specific fill resolvers ──────────────────────────────────────
+// Resolving (mode → fill function) once per render eliminates the per-cell
+// switch in the hot loop. Each resolver closes over the arrays it needs.
+
+function buildFillResolver(mode, colors, ctx) {
+    const { ageArr, healthArr, strainIds, strainLoads, strainHist, statusArr,
+            ageMax, maxActive, ramps, statusBase } = ctx;
+    const emptyFill = colors[Compartment.EMPTY];
+    const sFill = colors[Compartment.S];
+    const dFill = colors[Compartment.D];
+    const zFill = colors[Compartment.Z];
+    const vFill = colors[Compartment.V];
+    const mFill = colors[Compartment.M];
+    const eFill = colors[Compartment.E];
+
+    if (mode === ViewMode.STRAIN) {
+        return (i, comp) => {
+            const base = i * maxActive;
             let bestSid = 0xFFFF;
             let bestLoad = 0;
-            for (let s = 0; s < MAX_ACTIVE_RENDER; s++) {
+            for (let s = 0; s < maxActive; s++) {
                 const sid = strainIds[base + s];
                 if (sid === 0xFFFF) continue;
                 const ld = strainLoads ? strainLoads[base + s] : 1;
                 if (ld > bestLoad) { bestLoad = ld; bestSid = sid; }
             }
             if (bestSid !== 0xFFFF) {
-                const hue = (bestSid * 137.508) % 360;
-                return `hsl(${hue}, 60%, 55%)`;
+                return strainFill(bestSid);
             }
-            return colors[comp] || colors[Compartment.S];
-        }
-        if (mode === ViewMode.AGE) {
-            if (comp === Compartment.EMPTY) return colors[Compartment.EMPTY];
-            if (comp === Compartment.D) return colors[Compartment.D];
-            // Normalize against the natural-mortality saturation age. 5000
-            // ticks is the canonical "very old" point; anything past
-            // saturates to near-black via the third ramp stop.
-            const a = grid.age[cellIdx];
-            const t = a > 5000 ? 1 : (a / 5000);
-            // young (R green) → mid (E amber) → old (D near-black)
-            return lerpColor3(cParse.r, cParse.e, cParse.d, t);
-        }
-        if (mode === ViewMode.HEALTH) {
-            if (comp === Compartment.EMPTY) return colors[Compartment.EMPTY];
-            if (comp === Compartment.D)     return colors[Compartment.D];
-            if (comp === Compartment.Z)     return colors[Compartment.Z];
-            const h = grid.health[cellIdx];
+            return colors[comp] || sFill;
+        };
+    }
+
+    if (mode === ViewMode.AGE) {
+        return (i, comp) => {
+            if (comp === Compartment.EMPTY) return emptyFill;
+            if (comp === Compartment.D) return dFill;
+            const a = ageArr[i];
+            const t = a >= ageMax ? 1 : (a / ageMax);
+            // young (R) → mid (E) → old (D)
+            return ramps.age[(t * 255) | 0];
+        };
+    }
+
+    if (mode === ViewMode.HEALTH) {
+        return (i, comp) => {
+            if (comp === Compartment.EMPTY) return emptyFill;
+            if (comp === Compartment.D)     return dFill;
+            if (comp === Compartment.Z)     return zFill;
+            const h = healthArr[i];
             const t = h < 0 ? 0 : (h > 1 ? 1 : h);
-            // Health: low → I red, mid → E amber, high → R green.
-            return lerpColor3(cParse.i, cParse.e, cParse.r, t);
-        }
-        if (mode === ViewMode.STATUS) {
-            // Status overlay readout: highlight H (cyan) and Q (amber) cells
-            // strongly; other cells fade to a muted slate so the H/Q
-            // population pops. Dead stays near-black.
-            if (comp === Compartment.EMPTY) return colors[Compartment.EMPTY];
-            if (comp === Compartment.D)     return colors[Compartment.D];
-            const st = grid.status[cellIdx];
-            if (st === 1) return colors[Compartment.V]; // H → cyan
-            if (st === 2) return colors[Compartment.E]; // Q → amber
-            // Faded base — still readable but not competing with overlays.
-            // Mid-mix between slate and empty so status overlays dominate.
-            return lerpColor(cParse.s, parseColor(colors[Compartment.EMPTY]), 0.55);
-        }
-        if (mode === ViewMode.SUSCEPTIBILITY) {
-            if (comp === Compartment.EMPTY) return colors[Compartment.EMPTY];
-            if (comp === Compartment.D)     return colors[Compartment.D];
-            if (comp === Compartment.V)     return colors[Compartment.V];
-            // 64-bit bloom popcount approximates prior-exposure breadth.
-            // Each strain sets ~2 bits, so popcount 0..16 covers the
-            // typical range (saturating ≈ "fully exposed").
+            return ramps.health[(t * 255) | 0];
+        };
+    }
+
+    if (mode === ViewMode.STATUS) {
+        // Pre-compute the muted base color (mid-mix of slate and empty). Same
+        // across cells, so no need to re-lerp per cell.
+        const baseMuted = statusBase;
+        return (i, comp) => {
+            if (comp === Compartment.EMPTY) return emptyFill;
+            if (comp === Compartment.D)     return dFill;
+            const st = statusArr[i];
+            if (st === 1) return vFill; // H → cyan
+            if (st === 2) return eFill; // Q → amber
+            return baseMuted;
+        };
+    }
+
+    if (mode === ViewMode.SUSCEPTIBILITY) {
+        return (i, comp) => {
+            if (comp === Compartment.EMPTY) return emptyFill;
+            if (comp === Compartment.D)     return dFill;
+            if (comp === Compartment.V)     return vFill;
+            if (comp === Compartment.M)     return mFill;
             let suscept = 1;
-            if (grid.strain_hist) {
-                const pc = bloomPopcount8(grid.strain_hist, cellIdx);
-                // 16-bit cap so a single strain ≈ 0.875, two strains ≈ 0.75,
-                // etc — visually decays smoothly.
+            if (strainHist) {
+                const pc = bloomPopcount8(strainHist, i);
                 suscept = 1 - Math.min(1, pc / 16);
             }
-            // Q multiplier compresses susceptibility further (visual proxy
-            // for quarantine effectiveness on a target cell).
-            if (grid.status[cellIdx] === 2) suscept *= 0.5;
-            // Highly susceptible → I red; saturated immunity → R green.
-            return lerpColor3(cParse.r, cParse.e, cParse.i, suscept);
-        }
-        // Default: COMPARTMENT view.
-        return colors[comp] || colors[Compartment.S];
-    };
-
-    grid.forEach((q, r, i) => {
-        if (mask && mask[i] === 0) return;
-        const comp = grid.compartment[i];
-        const fill = pickFill(i, comp);
-        const center = hexToPixel(q, r, hexSize);
-        const cx = center.x + originX;
-        const cy = center.y + originY;
-
-        const corners = hexCorners(cx, cy, drawSize);
-        hexPath(ctx, corners);
-        ctx.fillStyle = fill;
-        ctx.fill();
-    });
-
-    // Faint outlines on top — graphic accent, not a container border.
-    // Drawn as a separate pass so fills can't paint over neighbor edges.
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
-    grid.forEach((q, r, i) => {
-        if (mask && mask[i] === 0) return;
-        const center = hexToPixel(q, r, hexSize);
-        const cx = center.x + originX;
-        const cy = center.y + originY;
-        const corners = hexCorners(cx, cy, drawSize);
-        hexPath(ctx, corners);
-        ctx.stroke();
-    });
-
-    // ─── Phase 3: flag overlay pass ───
-    // Only run in compartment view. Strain/age/health/status/susceptibility
-    // modes ignore flags for now (Phase 13).
-    if (mode === ViewMode.COMPARTMENT) {
-        renderFlagOverlays(ctx, grid, colors, hexSize, drawSize, originX, originY);
-        renderStatusOverlays(ctx, grid, colors, hexSize, drawSize, originX, originY);
+            if (statusArr[i] === 2) suscept *= 0.5;
+            return ramps.susceptibility[(suscept * 255) | 0];
+        };
     }
 
-    // ─── Phase 9: animal dot overlay ───
-    // Small filled dot in the center of cells where animal !== VOID. Visible
-    // in both compartment and strain views — the animal layer is orthogonal
-    // to whatever the cell fill represents. Colors:
-    //   S animal → muted slate dot (alive but not infectious)
-    //   I animal → red dot (infectious reservoir; spillover risk)
-    //   R animal → green dot (recovered; cleared the reservoir)
-    //   D animal → near-black dot (carcass)
-    // Keeps the dot small (hexSize * 0.22) so it overlays cleanly without
-    // dominating the underlying compartment color.
-    if (grid.animal && hexSize >= 3) {
-        renderAnimalDots(ctx, grid, colors, hexSize, originX, originY);
-    }
+    // Default: COMPARTMENT view — direct table lookup, no branching.
+    return (i, comp) => colors[comp] || sFill;
 }
 
-/**
- * Animal dot overlay pass. Small filled circle in each cell where the
- * animal layer is non-void, colored by animal state. Cheap early-exit
- * for VOID cells (which is most of the grid at default density 0.1).
- */
-function renderAnimalDots(ctx, grid, colors, hexSize, originX, originY) {
-    const mask = grid.mask;
-    const anim = grid.animal;
-    const W = grid.W;
-    const H = grid.H;
+// ─── Animal dot overlay ─────────────────────────────────────────────────────
+
+function renderAnimalDots(ctx, anim, mask, colors, hexSize, posX, posY, active, activeCount) {
     const dotR = Math.max(1, hexSize * 0.22);
 
-    // Pre-pick dot colors per state (read once per render).
-    // S animal: muted neutral so it doesn't compete with human compartment.
-    // I/R/D: reuse the disease palette — they read with the same semantic
-    // as their human counterparts (red = infectious, green = recovered).
-    const sColor = colors[Compartment.S] || '#888';
-    const iColor = colors[Compartment.I] || '#e11107';
-    const rColor = colors[Compartment.R] || '#0a7';
-    const dColor = colors[Compartment.D] || '#222';
+    // Index dot-color by Animal enum so the inner loop avoids the if-else
+    // chain. Indices match Animal.VOID/S/I/R/D enum values.
+    const dotColors = [
+        null,                                  // VOID — never drawn
+        colors[Compartment.S] || '#888',       // S
+        colors[Compartment.I] || '#e11107',    // I
+        colors[Compartment.R] || '#0a7',       // R
+        colors[Compartment.D] || '#222'        // D
+    ];
 
-    for (let r = 0; r < H; r++) {
-        for (let q = 0; q < W; q++) {
-            const i = r * W + q;
+    // Group draws by color so we minimize fillStyle changes (canvas state
+    // changes are cheap individually but add up across thousands of cells).
+    const TWO_PI = Math.PI * 2;
+    for (let state = 1; state <= 4; state++) {
+        const color = dotColors[state];
+        if (!color) continue;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        let any = false;
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
             if (mask && mask[i] === 0) continue;
-            const a = anim[i];
-            if (a === Animal.VOID) continue;
-            let fill;
-            if      (a === Animal.S) fill = sColor;
-            else if (a === Animal.I) fill = iColor;
-            else if (a === Animal.R) fill = rColor;
-            else                     fill = dColor;
-            const center = hexToPixel(q, r, hexSize);
-            const cx = center.x + originX;
-            const cy = center.y + originY;
-            ctx.fillStyle = fill;
-            ctx.beginPath();
-            ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-            ctx.fill();
+            if (anim[i] !== state) continue;
+            ctx.moveTo(posX[i] + dotR, posY[i]);
+            ctx.arc(posX[i], posY[i], dotR, 0, TWO_PI);
+            any = true;
         }
+        if (any) ctx.fill();
     }
 }
 
-/**
- * Third render pass — draw L stripes on E, C rim on R, F rim on D.
- * Cheap early-exit for all cells without a relevant flag set.
- *
- * Aesthetic choices (a9 to iterate):
- * - Stripe angle: ~60° from horizontal so it's diagonal on flat-top hexes.
- *   Spacing chosen to give 2-3 visible stripes inside a hexSize=6 hex.
- * - Stripe color: --epi-s (S slate) at alpha 0.55 over E amber.
- * - C rim: stroke a smaller hex (drawSize * 0.82) inside the outline at
- *   --epi-i alpha 0.5, lineWidth ~1.8. Same treatment as F-corpse —
- *   distinguished from F by the base compartment color (R green vs D near-black).
- * - F rim: same as C rim. Distinguishing signal is the underlying fill.
- */
-function renderFlagOverlays(ctx, grid, colors, hexSize, drawSize, originX, originY) {
+// ─── Flag overlays (L stripes on E, C rim on R, F rim on D) ─────────────────
+
+function renderFlagOverlays(ctx, grid, colors, drawSize, posX, posY, hexSize, active, activeCount) {
     const stripeColor = colors[Compartment.S] || '#888';
     const rimColor    = colors[Compartment.I] || '#e11107';
 
-    // Stripe geometry — precomputed once per render.
-    // 60° from horizontal: direction vector (cos60°, sin60°) = (0.5, √3/2).
-    // Normal to stripe (the spacing axis) is (-sin60°, cos60°) = (-√3/2, 0.5).
-    const SQ3 = Math.sqrt(3);
-    const stripeDx = 0.5;          // along-stripe x
-    const stripeDy = SQ3 / 2;      // along-stripe y
-    const stripeNx = -SQ3 / 2;     // across-stripe x (offset axis)
-    const stripeNy = 0.5;          // across-stripe y
-    // Half-length along the stripe direction needs to span the hex's bounding
-    // box. drawSize * 1.2 is a safe over-cover; we clip to the hex anyway.
+    // 60° stripe geometry — direction (cos60°, sin60°), normal (-sin60°, cos60°).
+    const stripeDx = 0.5;
+    const stripeDy = SQRT3 / 2;
+    const stripeNx = -SQRT3 / 2;
+    const stripeNy = 0.5;
     const stripeHalf = drawSize * 1.2;
-    // Spacing between adjacent stripes (in pixels). hexSize * 0.55 gives ~2-3
-    // visible stripes per hex at the default size.
     const stripeSpacing = hexSize * 0.55;
     const stripeOffsets = [-stripeSpacing, 0, stripeSpacing];
 
-    // Inner rim geometry (shared by C and F).
     const rimSize = drawSize * 0.82;
 
-    const W = grid.W;
-    const H = grid.H;
     const compartmentArr = grid.compartment;
     const flagsArr = grid.flags;
 
-    for (let r = 0; r < H; r++) {
-        for (let q = 0; q < W; q++) {
-            const i = r * W + q;
-            const flags = flagsArr[i];
-            if (flags === Flag.NONE) continue;
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
+        const flags = flagsArr[i];
+        if (flags === Flag.NONE) continue;
 
-            const comp = compartmentArr[i];
-            // The flags field can carry multiple bits in principle; in
-            // practice only one of (LATENT, CARRIER, F_CORPSE) is meaningful
-            // per compartment. Mask to the relevant bit per comp.
-            const isLatentE  = comp === Compartment.E && (flags & Flag.LATENT);
-            const isCarrierR = comp === Compartment.R && (flags & Flag.CARRIER);
-            const isCorpseFD = comp === Compartment.D && (flags & Flag.F_CORPSE);
-            if (!isLatentE && !isCarrierR && !isCorpseFD) continue;
+        const comp = compartmentArr[i];
+        const isLatentE  = comp === Compartment.E && (flags & Flag.LATENT);
+        const isCarrierR = comp === Compartment.R && (flags & Flag.CARRIER);
+        const isCorpseFD = comp === Compartment.D && (flags & Flag.F_CORPSE);
+        if (!isLatentE && !isCarrierR && !isCorpseFD) continue;
 
-            const center = hexToPixel(q, r, hexSize);
-            const cx = center.x + originX;
-            const cy = center.y + originY;
+        const cx = posX[i];
+        const cy = posY[i];
 
-            if (isLatentE) {
-                // Clip to hex, draw 3 diagonal stripes. α bumped from 0.55
-                // to 0.78 per Phase 14 polish — slate-on-amber at 0.55 was
-                // barely visible.
-                const corners = hexCorners(cx, cy, drawSize);
-                ctx.save();
-                hexPath(ctx, corners);
-                ctx.clip();
-                ctx.globalAlpha = 0.78;
-                ctx.strokeStyle = stripeColor;
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                for (let s = 0; s < stripeOffsets.length; s++) {
-                    const off = stripeOffsets[s];
-                    const ox = cx + stripeNx * off;
-                    const oy = cy + stripeNy * off;
-                    ctx.moveTo(ox - stripeDx * stripeHalf, oy - stripeDy * stripeHalf);
-                    ctx.lineTo(ox + stripeDx * stripeHalf, oy + stripeDy * stripeHalf);
-                }
-                ctx.stroke();
-                ctx.restore();
-            } else if (isCarrierR) {
-                // Inner-hex rim — same treatment as F-corpse. Underlying R
-                // green vs D near-black does the distinguishing work.
-                // C alpha bumped to 0.75 (vs F's 0.5) per Phase 14 to
-                // compensate for red-on-green being lower contrast than
-                // red-on-near-black.
-                const innerCorners = hexCorners(cx, cy, rimSize);
-                ctx.save();
-                ctx.globalAlpha = 0.75;
-                ctx.strokeStyle = rimColor;
-                ctx.lineWidth = 1.8;
-                hexPath(ctx, innerCorners);
-                ctx.stroke();
-                ctx.restore();
-            } else if (isCorpseFD) {
-                // Inner-hex rim — slightly smaller than drawSize so it sits
-                // inside the faint outline pass.
-                const innerCorners = hexCorners(cx, cy, rimSize);
-                ctx.save();
-                ctx.globalAlpha = 0.5;
-                ctx.strokeStyle = rimColor;
-                ctx.lineWidth = 1.8;
-                hexPath(ctx, innerCorners);
-                ctx.stroke();
-                ctx.restore();
+        if (isLatentE) {
+            ctx.save();
+            ctx.beginPath();
+            hexPathInline(ctx, cx, cy, drawSize);
+            ctx.clip();
+            ctx.globalAlpha = 0.78;
+            ctx.strokeStyle = stripeColor;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            for (let s = 0; s < stripeOffsets.length; s++) {
+                const off = stripeOffsets[s];
+                const ox = cx + stripeNx * off;
+                const oy = cy + stripeNy * off;
+                ctx.moveTo(ox - stripeDx * stripeHalf, oy - stripeDy * stripeHalf);
+                ctx.lineTo(ox + stripeDx * stripeHalf, oy + stripeDy * stripeHalf);
             }
+            ctx.stroke();
+            ctx.restore();
+        } else if (isCarrierR) {
+            ctx.save();
+            ctx.globalAlpha = 0.75;
+            ctx.strokeStyle = rimColor;
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            hexPathInline(ctx, cx, cy, rimSize);
+            ctx.stroke();
+            ctx.restore();
+        } else {
+            ctx.save();
+            ctx.globalAlpha = 0.5;
+            ctx.strokeStyle = rimColor;
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            hexPathInline(ctx, cx, cy, rimSize);
+            ctx.stroke();
+            ctx.restore();
         }
     }
 }
 
-/**
- * Fourth render pass — draw status overlays. H "+" badge on hospitalized
- * cells, Q darker outline ring on quarantined cells. Status is orthogonal
- * to compartment, so this runs over the flag pass. Cheap early-exit for
- * cells with Status.NONE.
- *
- * Aesthetic choices (a9 to iterate):
- * - H "+" badge: two short line segments centered in the hex, length
- *   hexSize * 0.45, lineWidth 1.2, color --text, alpha 0.85. Small enough
- *   to hint at hospital admission without dominating the fill readout.
- * - Q ring: re-stroke the standard hex path at --text alpha 0.55,
- *   lineWidth 1.5. Sits AT the cell boundary (not inset like C/F rims)
- *   so it reads as a darker outline rather than an inner ring.
- */
-function renderStatusOverlays(ctx, grid, colors, hexSize, drawSize, originX, originY) {
-    // Cache the canonical text color once per render — auto-flips with theme.
-    const textColor = getComputedStyle(document.documentElement)
-        .getPropertyValue('--text').trim() || '#000';
+// ─── Status overlays (H "+" badge, Q ring) ──────────────────────────────────
 
-    // H badge geometry.
-    const crossHalf = hexSize * 0.225; // segment half-length → total length 0.45 * hexSize
+function renderStatusOverlays(ctx, grid, textColor, drawSize, posX, posY, hexSize, active, activeCount) {
+    const crossHalf = hexSize * 0.225;
     const crossLineWidth = 1.2;
     const crossAlpha = 0.85;
-
-    // Q ring geometry.
     const ringAlpha = 0.55;
     const ringLineWidth = 1.5;
 
-    const W = grid.W;
-    const H = grid.H;
     const statusArr = grid.status;
 
-    for (let r = 0; r < H; r++) {
-        for (let q = 0; q < W; q++) {
-            const i = r * W + q;
-            const status = statusArr[i];
-            if (status === Status.NONE) continue;
+    // Batch Q rings into one stroke, H badges into one stroke. Same color +
+    // line settings → drastically fewer ctx state changes.
+    let anyQ = false;
+    let anyH = false;
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
+        const s = statusArr[i];
+        if (s === Status.Q) { anyQ = true; if (anyH) break; }
+        else if (s === Status.H) { anyH = true; if (anyQ) break; }
+    }
 
-            const center = hexToPixel(q, r, hexSize);
-            const cx = center.x + originX;
-            const cy = center.y + originY;
+    if (anyQ) {
+        ctx.save();
+        ctx.globalAlpha = ringAlpha;
+        ctx.strokeStyle = textColor;
+        ctx.lineWidth = ringLineWidth;
+        ctx.beginPath();
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (statusArr[i] !== Status.Q) continue;
+            hexPathInline(ctx, posX[i], posY[i], drawSize);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
 
-            // Q ring first so the H badge sits on top if a cell has both.
-            if (status === Status.Q) {
-                const corners = hexCorners(cx, cy, drawSize);
-                ctx.save();
-                ctx.globalAlpha = ringAlpha;
-                ctx.strokeStyle = textColor;
-                ctx.lineWidth = ringLineWidth;
-                hexPath(ctx, corners);
-                ctx.stroke();
-                ctx.restore();
-            }
+    if (anyH) {
+        ctx.save();
+        ctx.globalAlpha = crossAlpha;
+        ctx.strokeStyle = textColor;
+        ctx.lineWidth = crossLineWidth;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (statusArr[i] !== Status.H) continue;
+            const cx = posX[i];
+            const cy = posY[i];
+            ctx.moveTo(cx - crossHalf, cy);
+            ctx.lineTo(cx + crossHalf, cy);
+            ctx.moveTo(cx, cy - crossHalf);
+            ctx.lineTo(cx, cy + crossHalf);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+}
 
-            if (status === Status.H) {
-                ctx.save();
-                ctx.globalAlpha = crossAlpha;
-                ctx.strokeStyle = textColor;
-                ctx.lineWidth = crossLineWidth;
-                ctx.lineCap = 'round';
-                ctx.beginPath();
-                ctx.moveTo(cx - crossHalf, cy);
-                ctx.lineTo(cx + crossHalf, cy);
-                ctx.moveTo(cx, cy - crossHalf);
-                ctx.lineTo(cx, cy + crossHalf);
-                ctx.stroke();
-                ctx.restore();
-            }
+// ─── Brush footprint overlay ───────────────────────────────────────────────
+// Tint the cells under the current brush with the paint-mode accent color
+// so the user sees exactly which hexes a stroke would affect. Replaces the
+// old DOM .brush-indicator circle — the cell-accurate outline is the whole
+// point on a hex lattice (a circle never matches the seven/nineteen-hex
+// footprints precisely).
+//
+// The paint mode → accent var mapping mirrors paint.js's hover color logic;
+// keep them in sync.
+const PAINT_ACCENT_VARS = {
+    seed:       '--epi-i',
+    vaccinate:  '--epi-v',
+    quarantine: '--epi-e',
+    sanitize:   '--epi-r',
+    cull:       '--epi-d'
+};
+
+function readAccentColor(paintMode) {
+    const varName = PAINT_ACCENT_VARS[paintMode];
+    if (!varName) return '#888';
+    return readCss(varName, '#888');
+}
+
+function renderPaintOverlay(ctx, grid, overlay, drawSize, posX, posY) {
+    const { q, r, brushSize } = overlay;
+    const accent = readAccentColor(overlay.mode);
+    const parsed = parseColor(accent);
+    const fillAlpha = 0.28;
+    const strokeAlpha = 0.85;
+    const fillStyle = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${fillAlpha})`;
+    const strokeStyle = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${strokeAlpha})`;
+
+    // Walk the (q, r) ± brushSize triangular axial bound — same enumeration
+    // as paint.js hexesInRadius, inlined to avoid the array allocation.
+    ctx.save();
+    ctx.fillStyle = fillStyle;
+    ctx.beginPath();
+    let any = false;
+    for (let dq = -brushSize; dq <= brushSize; dq++) {
+        const drLo = Math.max(-brushSize, -dq - brushSize);
+        const drHi = Math.min(brushSize,  -dq + brushSize);
+        for (let dr = drLo; dr <= drHi; dr++) {
+            const cq = q + dq;
+            const cr = r + dr;
+            if (cq < 0 || cq >= grid.W || cr < 0 || cr >= grid.H) continue;
+            const i = cr * grid.W + cq;
+            if (grid.mask && grid.mask[i] === 0) continue;
+            hexPathInline(ctx, posX[i], posY[i], drawSize);
+            any = true;
         }
     }
+    if (any) {
+        ctx.fill();
+        // Restroke the same path so the footprint reads as a coherent
+        // outline even when neighboring cells share edges.
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = strokeStyle;
+        ctx.stroke();
+    }
+    ctx.restore();
 }
 
 /** Compute a viewport that fits a W×H grid into the canvas. */
@@ -516,9 +715,6 @@ export function computeViewport(canvas, grid) {
     const cssWidth = rect.width || canvas.clientWidth;
     const cssHeight = rect.height || canvas.clientHeight;
 
-    // Flat-top hex extents (axial → pixel, last hex sits at q=W-1, r=H-1).
-    // Width spans about SQRT3 * hexSize * (W + H/2); height spans 1.5 * hexSize * H + hexSize.
-    const SQRT3 = Math.sqrt(3);
     const widthPerUnit  = SQRT3 * (grid.W + grid.H / 2);
     const heightPerUnit = 1.5 * grid.H + 1;
 

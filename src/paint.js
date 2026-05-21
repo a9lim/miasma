@@ -46,6 +46,11 @@ const SEED_STRAIN_ID = 0;
 
 const MAX_SLOTS = DEFAULTS.maxActiveStrains;
 const EMPTY_SLOT = 0xFFFF;
+const RADIUS_OFFSETS = [
+    new Int8Array([0, 0]),
+    buildRadiusOffsets(1),
+    buildRadiusOffsets(2)
+];
 
 // ─── Hexagonal-radius cell enumeration ──────────────────────────────────────
 // gerry's getHexesInRadius returns "q,r" strings; we want axial pairs to feed
@@ -61,14 +66,23 @@ const EMPTY_SLOT = 0xFFFF;
  */
 export function hexesInRadius(q, r, radius) {
     const out = [];
+    const offsets = RADIUS_OFFSETS[radius] || buildRadiusOffsets(radius);
+    for (let k = 0; k < offsets.length; k += 2) {
+        out.push({ q: q + offsets[k], r: r + offsets[k + 1] });
+    }
+    return out;
+}
+
+function buildRadiusOffsets(radius) {
+    const pairs = [];
     for (let dq = -radius; dq <= radius; dq++) {
         const drLo = Math.max(-radius, -dq - radius);
         const drHi = Math.min(radius, -dq + radius);
         for (let dr = drLo; dr <= drHi; dr++) {
-            out.push({ q: q + dq, r: r + dr });
+            pairs.push(dq, dr);
         }
     }
-    return out;
+    return new Int8Array(pairs);
 }
 
 // ─── Per-cell snapshot capture / restore ────────────────────────────────────
@@ -225,96 +239,123 @@ function paintCell(grid, q, r, mode, toggles) {
  * @param {() => object} opts.getViewport — returns { originX, originY, hexSize }.
  * @param {() => void} [opts.onMutate] — called after any cell change so the
  *   integrator can mark renderDirty / statsDirty.
- * @returns {{
- *   setMode: (m:string) => void,
- *   getMode: () => string,
- *   setBrushSize: (s:number) => void,
- *   getBrushSize: () => number,
- *   applyAtHex: (q:number, r:number) => boolean,
- *   undo: () => boolean,
- *   canUndo: () => boolean,
- *   clearUndo: () => void,
- *   detach: () => void
- * }}
+ * @param {() => void} [opts.onHover] — called when the brush footprint moves
+ *   onto a different cell (or leaves/enters the canvas). Lets the integrator
+ *   flip renderDirty so the cell-overlay refreshes without a tick.
+ * @param {() => void} [opts.onHistoryChange] — called whenever undo/redo
+ *   stacks change so the integrator can sync toolbar button disabled state.
+ * @returns {object} controller handle (see below)
  */
 export function createPaintController(opts) {
-    const { canvas, getGrid, getToggles, getViewport, onMutate } = opts || {};
+    const { canvas, getGrid, getToggles, getViewport, onMutate, onHover, onHistoryChange } = opts || {};
     if (!canvas) throw new Error('paint: canvas required');
     if (typeof getGrid !== 'function') throw new Error('paint: getGrid required');
     if (typeof getViewport !== 'function') throw new Error('paint: getViewport required');
 
     let mode = PaintMode.SEED;   // default preserves single-tap-to-seed UX
     let brushSize = 0;            // 0/1/2 → 1/7/19 hex
-    let activeStroke = null;      // Map<cellIdx, snapshot>
+    // ─── Stroke state ───
+    // activeUndoStroke and activeRedoStroke are two parallel Maps captured
+    // during a single pointer-down → pointer-up. The undo map holds pre-
+    // stroke snapshots; the redo map captures the post-stroke state at
+    // endStroke so a subsequent redo can replay exactly the same outcome
+    // without re-running paintCell (which depends on the live grid state).
+    let activeUndoStroke = null;
+    let activeRedoStroke = null;
     let pointerDown = false;
     let lastApplied = -1;         // last cell idx painted this stroke (dedupe drag-paint)
+    // Stroke-suppression flag flipped by external owners (e.g. main.js pinch
+    // handler) so two-finger gestures don't trigger paint. When set during an
+    // active stroke we cleanly end it so the undo stack stays sane.
+    let suppressed = false;
+    // Each undo/redo entry is { pre: Map<i, snap>, post: Map<i, snap> } so
+    // redo can restore the post-stroke state without re-deriving it from
+    // mode + brush + live grid (which would be wrong if a subsequent tick
+    // mutated the cells between undo and redo).
     const undoStack = [];
+    const redoStack = [];
 
-    // ─── Brush indicator overlay ───
-    // Visual hint of brush size on hover. Single absolutely-positioned div
-    // appended to <body>. Hidden when mode === NONE or pointer is outside
-    // the canvas. Re-sized in CSS pixels each pointermove to match the
-    // current brush radius in hex coordinates → world pixels.
-    const indicator = document.createElement('div');
-    indicator.className = 'brush-indicator';
-    indicator.setAttribute('aria-hidden', 'true');
-    indicator.style.display = 'none';
-    document.body.appendChild(indicator);
-
-    function hideIndicator() {
-        indicator.style.display = 'none';
+    function notifyHistoryChange() {
+        if (onHistoryChange) onHistoryChange();
     }
 
-    function showIndicatorAt(clientX, clientY) {
-        if (mode === PaintMode.NONE) {
-            hideIndicator();
-            return;
-        }
-        const vp = getViewport();
-        if (!vp) return;
-        // Brush radius in cells → axial-pixel radius. drawSize = hexSize.
-        // The brush covers (2*radius+1) cells across the long diameter, so
-        // its CSS diameter ≈ (2*radius+1) * hexSize * sqrt(3).
-        const SQRT3 = Math.sqrt(3);
-        const diameter = (2 * brushSize + 1) * vp.hexSize * SQRT3;
-        indicator.style.display = 'block';
-        indicator.style.left   = (clientX - diameter / 2) + 'px';
-        indicator.style.top    = (clientY - diameter / 2) + 'px';
-        indicator.style.width  = diameter + 'px';
-        indicator.style.height = diameter + 'px';
-        // Color-code the indicator by current paint mode using the same
-        // semantic accents as the mode buttons.
-        const accent = {
-            [PaintMode.SEED]:       'var(--epi-i)',
-            [PaintMode.VACCINATE]:  'var(--epi-v)',
-            [PaintMode.QUARANTINE]: 'var(--epi-e)',
-            [PaintMode.SANITIZE]:   'var(--epi-r)',
-            [PaintMode.CULL]:       'var(--epi-d)'
-        }[mode] || 'var(--accent)';
-        indicator.style.setProperty('--brush-accent', accent);
+    // ─── Brush footprint hover state ───
+    // The brush no longer renders as a DOM circle hovering above the canvas;
+    // instead the cells under the brush are highlighted via a render-pass
+    // overlay (see main.js + render.js). We track only the cell the cursor
+    // is currently over and emit onHover whenever that changes — main.js
+    // flips renderDirty so the next frame redraws with the new footprint.
+    let hoverQ = -1;
+    let hoverR = -1;
+    let hoverInside = false;
+
+    function setHover(q, r, inside) {
+        const next = inside ? q : -1;
+        const nextR = inside ? r : -1;
+        if (next === hoverQ && nextR === hoverR && inside === hoverInside) return;
+        hoverQ = next;
+        hoverR = nextR;
+        hoverInside = inside;
+        if (onHover) onHover();
+    }
+
+    function clearHover() {
+        if (!hoverInside && hoverQ === -1 && hoverR === -1) return;
+        hoverQ = -1;
+        hoverR = -1;
+        hoverInside = false;
+        if (onHover) onHover();
+    }
+
+    function getHoverFootprint() {
+        // Returned object is read synchronously by main.js's render path —
+        // safe to share a fresh literal each call since hover only fires on
+        // actual cell changes (not 60 Hz).
+        return { q: hoverQ, r: hoverR, brushSize, mode, inside: hoverInside };
     }
 
     function setMode(m) {
         mode = m || PaintMode.NONE;
+        // The hover footprint's accent color depends on mode, so a mode
+        // change without pointer movement still needs a render bump.
+        if (onHover) onHover();
     }
     function getMode() { return mode; }
 
     function setBrushSize(s) {
         const n = (s | 0);
         brushSize = n < 0 ? 0 : (n > 2 ? 2 : n);
+        if (onHover) onHover();
     }
     function getBrushSize() { return brushSize; }
 
     function startStroke() {
-        activeStroke = new Map();
+        activeUndoStroke = new Map();
+        activeRedoStroke = new Map();
         lastApplied = -1;
     }
+
     function endStroke() {
-        if (activeStroke && activeStroke.size > 0) {
-            undoStack.push(activeStroke);
+        if (activeUndoStroke && activeUndoStroke.size > 0) {
+            // Capture post-stroke state for every cell the stroke touched.
+            // applyAtHex only snapshots pre-state on the first touch; we do
+            // the post-state sweep here so a single cell touched multiple
+            // times during the stroke still maps to its final state.
+            const grid = getGrid();
+            if (grid) {
+                for (const i of activeUndoStroke.keys()) {
+                    activeRedoStroke.set(i, captureCellState(grid, i));
+                }
+            }
+            undoStack.push({ pre: activeUndoStroke, post: activeRedoStroke });
             while (undoStack.length > MAX_UNDO) undoStack.shift();
+            // Any fresh stroke invalidates the redo stack — the user has
+            // diverged from the saved future. Same convention as gerry.
+            redoStack.length = 0;
+            notifyHistoryChange();
         }
-        activeStroke = null;
+        activeUndoStroke = null;
+        activeRedoStroke = null;
         lastApplied = -1;
     }
 
@@ -322,20 +363,21 @@ export function createPaintController(opts) {
         const grid = getGrid();
         if (!grid) return false;
         const toggles = getToggles ? getToggles() : null;
-        const cells = hexesInRadius(q, r, brushSize);
+        const cells = RADIUS_OFFSETS[brushSize] || buildRadiusOffsets(brushSize);
         let changed = 0;
-        for (let k = 0; k < cells.length; k++) {
-            const c = cells[k];
-            if (c.q < 0 || c.q >= grid.W || c.r < 0 || c.r >= grid.H) continue;
-            const i = grid.idx(c.q, c.r);
+        for (let k = 0; k < cells.length; k += 2) {
+            const cq = q + cells[k];
+            const cr = r + cells[k + 1];
+            if (cq < 0 || cq >= grid.W || cr < 0 || cr >= grid.H) continue;
+            const i = grid.idx(cq, cr);
             if (grid.mask && grid.mask[i] === 0) continue;
             // Snapshot before first modify in this stroke. Subsequent drag-
             // paint hits on the same cell don't re-snapshot (the original
             // pre-stroke state is what undo needs).
-            if (activeStroke && !activeStroke.has(i)) {
-                activeStroke.set(i, captureCellState(grid, i));
+            if (activeUndoStroke && !activeUndoStroke.has(i)) {
+                activeUndoStroke.set(i, captureCellState(grid, i));
             }
-            if (paintCell(grid, c.q, c.r, mode, toggles)) changed++;
+            if (paintCell(grid, cq, cr, mode, toggles)) changed++;
         }
         if (changed > 0 && onMutate) onMutate();
         return changed > 0;
@@ -346,15 +388,58 @@ export function createPaintController(opts) {
         if (!entry) return false;
         const grid = getGrid();
         if (!grid) return false;
-        for (const [i, snap] of entry) {
+        for (const [i, snap] of entry.pre) {
             restoreCellState(grid, i, snap);
         }
+        redoStack.push(entry);
+        while (redoStack.length > MAX_UNDO) redoStack.shift();
         if (onMutate) onMutate();
+        notifyHistoryChange();
+        return true;
+    }
+
+    function redo() {
+        const entry = redoStack.pop();
+        if (!entry) return false;
+        const grid = getGrid();
+        if (!grid) return false;
+        for (const [i, snap] of entry.post) {
+            restoreCellState(grid, i, snap);
+        }
+        undoStack.push(entry);
+        while (undoStack.length > MAX_UNDO) undoStack.shift();
+        if (onMutate) onMutate();
+        notifyHistoryChange();
         return true;
     }
 
     function canUndo() { return undoStack.length > 0; }
-    function clearUndo() { undoStack.length = 0; }
+    function canRedo() { return redoStack.length > 0; }
+    function clearUndo() {
+        const hadAny = undoStack.length > 0 || redoStack.length > 0;
+        undoStack.length = 0;
+        redoStack.length = 0;
+        if (hadAny) notifyHistoryChange();
+    }
+
+    // ─── Stroke suppression ───
+    // External owners (main.js's zoom/pinch handler) toggle this so two-
+    // finger gestures don't paint. When flipping to true mid-stroke we end
+    // the active stroke cleanly so its snapshot still lands on the undo
+    // stack rather than dangling. Pointer-down while suppressed early-exits
+    // in onPointerDown; pointer-up still runs, but pointerDown is false so
+    // it's a no-op.
+    function setSuppressed(v) {
+        const next = !!v;
+        if (next === suppressed) return;
+        suppressed = next;
+        if (suppressed && pointerDown) {
+            pointerDown = false;
+            endStroke();
+            clearHover();
+        }
+    }
+    function isSuppressed() { return suppressed; }
 
     function hitTest(event) {
         const grid = getGrid();
@@ -376,25 +461,34 @@ export function createPaintController(opts) {
 
     function onPointerDown(e) {
         if (mode === PaintMode.NONE) return;
+        // Pinch/zoom in progress — skip the stroke entirely. main.js's pinch
+        // handler flips suppressed=true on second-finger touchstart.
+        if (suppressed) return;
         // Allow only the primary pointer button (left mouse, or any touch/pen).
         if (e.button !== undefined && e.button !== 0) return;
         if (e.cancelable) e.preventDefault();
         try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ok */ }
         pointerDown = true;
         startStroke();
-        showIndicatorAt(e.clientX, e.clientY);
         const hit = hitTest(e);
         if (hit) {
             const grid = getGrid();
             lastApplied = grid.idx(hit.q, hit.r);
+            setHover(hit.q, hit.r, true);
             applyAtHex(hit.q, hit.r);
+        } else {
+            clearHover();
         }
     }
 
     function onPointerMove(e) {
-        showIndicatorAt(e.clientX, e.clientY);
-        if (!pointerDown || mode === PaintMode.NONE) return;
         const hit = hitTest(e);
+        if (hit) {
+            setHover(hit.q, hit.r, true);
+        } else {
+            clearHover();
+        }
+        if (!pointerDown || mode === PaintMode.NONE || suppressed) return;
         if (!hit) return;
         const grid = getGrid();
         const i = grid.idx(hit.q, hit.r);
@@ -406,7 +500,7 @@ export function createPaintController(opts) {
     }
 
     function onPointerLeave() {
-        hideIndicator();
+        clearHover();
     }
 
     function onPointerUp(e) {
@@ -444,6 +538,25 @@ export function createPaintController(opts) {
         PaintMode.SANITIZE,   // 5
         PaintMode.CULL        // 6
     ];
+    function syncModeButtons() {
+        const grid = document.getElementById('paint-mode-grid');
+        if (!grid) return;
+        grid.querySelectorAll('.paint-mode-btn').forEach((b) => {
+            const on = (b.dataset.paint === mode);
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    function syncBrushButtons() {
+        const group = document.getElementById('brush-size-group');
+        if (!group) return;
+        group.querySelectorAll('.mode-btn').forEach((b) => {
+            const on = (b.dataset.brush === String(brushSize));
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+
     function onKeyDown(e) {
         const t = e.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
@@ -454,37 +567,28 @@ export function createPaintController(opts) {
             const newMode = MODE_ORDER[idx];
             if (newMode) {
                 setMode(newMode);
-                // Sync the active button in the Interventions tab if rendered.
-                const grid = document.getElementById('paint-mode-grid');
-                if (grid) {
-                    grid.querySelectorAll('.paint-mode-btn').forEach((b) => {
-                        const on = (b.dataset.paint === newMode);
-                        b.classList.toggle('active', on);
-                        b.setAttribute('aria-selected', on ? 'true' : 'false');
-                    });
-                }
+                syncModeButtons();
                 e.preventDefault();
             }
             return;
         }
         if (e.key === '[' || e.key === ']') {
             setBrushSize(brushSize + (e.key === '[' ? -1 : 1));
-            // Sync the brush slider if rendered.
-            const row = document.querySelector('[data-role="brush"]');
-            if (row) {
-                const slider = row.querySelector('input[type="range"]');
-                const valEl = row.querySelector('[data-role="value"]');
-                if (slider) slider.value = String(brushSize);
-                if (valEl) {
-                    const labels = ['1 cell', '7 cells', '19 cells'];
-                    valEl.textContent = labels[brushSize] || labels[0];
-                }
-            }
+            syncBrushButtons();
             e.preventDefault();
             return;
         }
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-            if (undo()) e.preventDefault();
+        // Cmd/Ctrl+Z = undo; Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y = redo
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+            if (e.shiftKey) {
+                if (redo()) e.preventDefault();
+            } else {
+                if (undo()) e.preventDefault();
+            }
+            return;
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+            if (redo()) e.preventDefault();
         }
     }
     document.addEventListener('keydown', onKeyDown);
@@ -496,14 +600,15 @@ export function createPaintController(opts) {
         canvas.removeEventListener('pointerup', onPointerUp);
         canvas.removeEventListener('pointercancel', onPointerCancel);
         document.removeEventListener('keydown', onKeyDown);
-        if (indicator.parentNode) indicator.parentNode.removeChild(indicator);
     }
 
     return {
         setMode, getMode,
         setBrushSize, getBrushSize,
         applyAtHex,
-        undo, canUndo, clearUndo,
+        undo, redo, canUndo, canRedo, clearUndo,
+        getHoverFootprint,
+        setSuppressed, isSuppressed,
         detach
     };
 }
@@ -534,7 +639,14 @@ const MODE_SPECS = [
     { key: PaintMode.CULL,       label: 'Cull',       hint: 'Force-kill cells (S/E/I/R/V/M/Z → D)' }
 ];
 
-const BRUSH_SIZE_LABELS = ['1 cell', '7 cells', '19 cells'];
+// Brush footprint counts at radius 0/1/2 — mirrors gerry's "1/3/7" pattern
+// but with the hex-radius cell counts (1, 7, 19). Displayed as a three-
+// button mode-group; clicking a button calls setBrushSize directly.
+const BRUSH_SIZE_OPTIONS = [
+    { value: 0, label: '1',  hint: 'Single cell (1 hex)' },
+    { value: 1, label: '7',  hint: 'Small brush (7 hexes)' },
+    { value: 2, label: '19', hint: 'Wide brush (19 hexes)' }
+];
 
 function buildSectionHeader(text) {
     const hdr = document.createElement('div');
@@ -585,61 +697,53 @@ function buildModeRow(controller, onChange) {
 }
 
 function buildBrushRow(controller, onChange) {
+    // Segmented control with three buttons (1 / 7 / 19) replacing the old
+    // slider. The mode-toggles styling gives us the sliding accent indicator
+    // for free, and matches the topology / viewmode / animal-display rows.
     const row = document.createElement('div');
-    row.className = 'settings-dd-row';
+    row.className = 'settings-dd-row animal-display-row';
     row.dataset.role = 'brush';
 
-    const lbl = document.createElement('label');
-    lbl.className = 'settings-dd-label';
+    const lbl = document.createElement('span');
+    lbl.className = 'toggle-label';
     lbl.textContent = 'Brush size';
+    row.appendChild(lbl);
 
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.className = 'sim-slider';
-    slider.min = '0';
-    slider.max = '2';
-    slider.step = '1';
-    slider.value = String(controller.getBrushSize());
-    slider.setAttribute('aria-label', 'Brush size');
+    const group = document.createElement('div');
+    group.id = 'brush-size-group';
+    group.className = 'mode-toggles inline-mode-toggles';
+    group.setAttribute('role', 'tablist');
+    group.setAttribute('aria-label', 'Brush size');
 
-    const valEl = document.createElement('span');
-    valEl.className = 'settings-dd-val';
-    valEl.dataset.role = 'value';
-    valEl.textContent = BRUSH_SIZE_LABELS[controller.getBrushSize()] || BRUSH_SIZE_LABELS[0];
-
-    const handler = (v) => {
-        const n = Math.round(v);
-        controller.setBrushSize(n);
-        valEl.textContent = BRUSH_SIZE_LABELS[n] || BRUSH_SIZE_LABELS[0];
-        if (onChange) onChange('brush', n);
-    };
-
-    if (window._forms && typeof window._forms.bindSlider === 'function') {
-        window._forms.bindSlider(slider, null, handler);
-    } else {
-        slider.addEventListener('input', () => handler(parseFloat(slider.value)));
+    const initial = controller.getBrushSize();
+    const buttons = [];
+    for (const opt of BRUSH_SIZE_OPTIONS) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mode-btn' + (opt.value === initial ? ' active' : '');
+        btn.dataset.brush = String(opt.value);
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', opt.value === initial ? 'true' : 'false');
+        btn.title = opt.hint;
+        btn.textContent = opt.label;
+        group.appendChild(btn);
+        buttons.push(btn);
     }
-
-    row.append(lbl, slider, valEl);
-    return row;
-}
-
-function buildUndoRow(controller, onChange) {
-    const row = document.createElement('div');
-    row.className = 'settings-dd-row';
-    row.dataset.role = 'undo';
-
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tool-btn paint-undo-btn';
-    btn.textContent = 'Undo last stroke';
-    btn.setAttribute('aria-label', 'Undo last paint stroke');
-    btn.addEventListener('click', () => {
-        const ok = controller.undo();
-        if (ok && onChange) onChange('undo', null);
+    group.addEventListener('click', (e) => {
+        const btn = e.target.closest('.mode-btn');
+        if (!btn) return;
+        const v = parseInt(btn.dataset.brush, 10);
+        if (Number.isNaN(v)) return;
+        for (const b of buttons) {
+            const on = (b === btn);
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        }
+        controller.setBrushSize(v);
+        if (onChange) onChange('brush', v);
     });
 
-    row.appendChild(btn);
+    row.appendChild(group);
     return row;
 }
 
@@ -670,14 +774,12 @@ export function buildInterventionsPanel(panelEl, controller, onChange) {
     panelEl.appendChild(buildHint(
         'Click or drag on the canvas to apply the selected mode. ' +
         'Seed places strain α infections; Vaccinate, Quarantine, ' +
-        'Sanitize, and Cull act on the cells under the brush.'
+        'Sanitize, and Cull act on the cells under the brush. ' +
+        'Undo / redo strokes live in the top bar.'
     ));
 
     panelEl.appendChild(buildSectionHeader('Brush'));
     panelEl.appendChild(buildBrushRow(controller, onChange));
-
-    panelEl.appendChild(buildSectionHeader('Undo'));
-    panelEl.appendChild(buildUndoRow(controller, onChange));
 
     panelEl.dataset.interventionsReady = '1';
 }

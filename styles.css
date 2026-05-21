@@ -20,6 +20,14 @@ html {
   text-size-adjust: 100%;
 }
 
+/* ───── Speed button — widen for fractional speeds (0.25x, 0.5x) so the
+   four-character label doesn't clip the fixed 34px tool-btn box. Shared
+   .tool-btn pins width:34px; we override with width:auto + a side-pad. ───── */
+#speed-btn {
+  width: auto;
+  padding: 0 0.45rem;
+}
+
 body {
   display: flex;
   flex-direction: column;
@@ -27,9 +35,7 @@ body {
 
 
 /* ═══════════════════════════════════════
-   MAIN LAYOUT — canvas + bottom time-series strip
-   Canvas fills viewport behind HUD sidebar/toolbar.
-   Time-series panel is layered HUD at the bottom edge.
+   MAIN LAYOUT — full-viewport canvas behind HUD sidebar/toolbar.
    ═══════════════════════════════════════ */
 main {
   flex: 1;
@@ -141,30 +147,54 @@ main {
 .stat-row[data-compartment="Z"]     { --stat-color: var(--epi-z); }
 .stat-row[data-compartment="empty"] { --stat-color: var(--text-secondary, #808696); }
 
-.stat-row[data-compartment] .stat-value { color: var(--stat-color); }
+/* Dark theme: --epi-d collapses to canvas background so D cells render as
+   "holes" — but the same color on text disappears against the panel. Swap
+   in --text for the D row's label/value so the row stays readable; we lose
+   the per-compartment hue for D in dark mode, which is unavoidable when the
+   hue IS the background. */
+:root[data-theme="dark"] .stat-row[data-compartment="D"] { --stat-color: var(--text); }
 
-/* Color swatch in the stat row label — inline-block square, color set inline by JS */
-.stat-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius);
-  display: inline-block;
-  margin-right: 0.5rem;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
+.stat-row[data-compartment] .stat-value,
+.stat-row[data-compartment] .stat-label { color: var(--stat-color); }
+
+/* Sub-rows (Latent under E, Carrier under R, Infectious-corpse under D)
+   inherit --stat-color from their parent compartment via [data-compartment]
+   above. Override .stat-sub's muted defaults so the label/value stay on the
+   parent's hue — slight alpha softening keeps the visual hierarchy without
+   washing the color out. */
+.stat-sub[data-compartment] .stat-label,
+.stat-sub[data-compartment] .stat-value { color: var(--stat-color); opacity: 0.85; }
 
 /* Dim zero-count rows so non-zero entries stand out */
 .stat-row[data-zero="true"] { opacity: 0.4; }
 
-/* Population total + R_eff + status (hospital/quarantine) + Phase 5 mean age/health readout rows are role-tagged */
+/* Population total + observed Re + status (hospital/quarantine) + Phase 5 mean age/health readout rows are role-tagged */
 .stat-row[data-role="population"] .stat-value,
 .stat-row[data-role="reff"] .stat-value,
 .stat-row[data-role="hospital"] .stat-value,
 .stat-row[data-role="quarantine"] .stat-value,
 .stat-row[data-role="mean-age"] .stat-value,
-.stat-row[data-role="mean-health"] .stat-value {
+.stat-row[data-role="mean-health"] .stat-value,
+.stat-row[data-role="animal-total"] .stat-value,
+.stat-row[data-role="animal-mean-age"] .stat-value {
   font-variant-numeric: tabular-nums;
+}
+
+/* Phase-17: animal-reservoir census group. The animal S/I/R/D rows reuse the
+   --epi-* hues via [data-compartment] above (matching the animal-dot
+   overlay). A small uppercase heading separates the group from the human
+   compartments above it — spacing + heading, no container border (per the
+   command-center design language: surfaces differ by spacing, not lines). */
+.stat-animal-group {
+  margin-top: 0.65rem;
+}
+
+.stat-subhead {
+  font: 600 var(--font-sm) / 1.4 var(--font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #808696);
+  margin-bottom: 0.25rem;
 }
 
 
@@ -230,16 +260,20 @@ main {
   transition: width 0.3s var(--ease-out);
 }
 
-/* Phase 8: lineage-tree cladogram inside the strain-detail block. Muted
-   track-coloured background matches the time-series chart aesthetic;
-   fixed CSS height (the canvas backing buffer is sized by resizeCanvasDPR). */
-.lineage-tree-canvas {
+/* Phase D: force-directed strain forest at the top of the strain panel.
+   Replaces the Phase 8 ancestor-chain canvas (`.lineage-tree-canvas`) which
+   was removed in Phase C. Muted track-coloured background matches the time-
+   series chart aesthetic; fixed CSS height (the canvas backing buffer is
+   sized by resizeCanvasDPR). cursor: pointer because the canvas is
+   click-targetable — each node selects the corresponding strain. */
+.strain-forest-canvas {
   display: block;
   width: 100%;
-  height: 92px;
-  margin-top: 0.4rem;
+  height: 200px;
+  margin-bottom: 0.5rem;
   background: var(--ts-track);
   border-radius: var(--radius);
+  cursor: pointer;
 }
 
 
@@ -260,48 +294,67 @@ main {
 
 
 /* ═══════════════════════════════════════
-   TIME SERIES PANEL — bottom HUD overlay
+   TIME SERIES PANEL — Compartments-tab chart
    ═══════════════════════════════════════ */
+/* Phase-17: the stacked compartment chart docks at the top of the sidebar's
+   Compartments tab (it was a floating canvas-corner HUD through Phase 15-16).
+   Plain block, full panel width, fixed 16:9 chart area; the human compartment
+   census stacks below it. The --bg-base fill matches the chart's "empty"
+   band so unfilled headroom above the stack reads as depopulated land. */
 #timeseries-panel {
-  position: fixed;
-  left: 50%;
-  bottom: 1rem;
-  transform: translateX(-50%);
-  width: min(72vw, 880px);
-  height: 140px;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius);
-  z-index: 80;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  transition: opacity 0.2s var(--ease-out);
-}
-
-#timeseries-panel.hidden { opacity: 0; pointer-events: none; }
-
-.ts-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.ts-title {
-  font-family: var(--font-mono);
-  font-size: var(--font-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-.ts-canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  background: var(--ts-track);
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 0.75rem;
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--bg-base);
 }
+
+/* Surface and map-view controls live in Settings. */
+.settings-map-controls {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-mode-group {
+  width: 100%;
+  justify-content: stretch;
+}
+
+.settings-mode-group .mode-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.25rem 0.25rem;
+  font-size: var(--font-sm);
+}
+
+/* Phase-15: Advanced Parameters section — shoals-style inline collapsible.
+   The toggle button spans the panel width; the section underneath holds the
+   slider rows and animates in/out via .hidden (display:none). */
+.advanced-wrap {
+  margin-top: 0.5rem;
+}
+
+.advanced-toggle-btn {
+  width: 100%;
+  font-size: var(--font-base);
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+}
+
+.advanced-toggle-btn.active {
+  color: var(--text-on-accent);
+  background: var(--accent);
+}
+
+.advanced-section {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.advanced-section.hidden { display: none; }
 
 #timeseries-canvas {
   display: block;
@@ -310,21 +363,9 @@ main {
 }
 
 
-/* ═══════════════════════════════════════
-   BRUSH SIZE INDICATOR — hover circle on the canvas while painting
-   Per-mode accent comes from inline --brush-accent (set by paint.js).
-   ═══════════════════════════════════════ */
-.brush-indicator {
-  position: fixed;
-  pointer-events: none;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--brush-accent, var(--accent)) 28%, transparent);
-  border: 1.5px solid var(--brush-accent, var(--accent));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-base) 60%, transparent),
-              0 0 8px color-mix(in srgb, var(--brush-accent, var(--accent)) 35%, transparent);
-  z-index: 90;
-  transition: width 0.12s var(--ease-out), height 0.12s var(--ease-out);
-}
+/* (Removed) Brush size indicator — the DOM circle hovering above the canvas
+   was replaced by a render-pass overlay that tints the actual cells under
+   the brush footprint. See renderPaintOverlay() in src/render.js. */
 
 
 /* ═══════════════════════════════════════
@@ -368,9 +409,25 @@ main {
 .paint-mode-btn#mode-sanitize.active   { background: var(--epi-r); color: var(--text-on-accent); }
 .paint-mode-btn#mode-cull.active       { background: var(--epi-d); color: var(--text-on-accent); }
 
-.paint-undo-btn {
-  width: 100%;
-  justify-content: center;
+/* Brush-size mode group: same inline-mode-toggles container as the animal-
+   display row, but with explicit active styling because the three buttons
+   carry single-character labels and need a clear visual selection cue.
+   bindModeGroup isn't called here (paint.js handles clicks directly so the
+   controller stays the source of truth), so we paint the active button's
+   background inline via this rule instead of via the sliding indicator. */
+#brush-size-group {
+  flex: 0 0 auto;
+  min-width: 160px;
+}
+#brush-size-group .mode-btn {
+  padding: 0.25rem 0.7rem;
+  min-width: 38px;
+  border-radius: var(--radius);
+  font-variant-numeric: tabular-nums;
+}
+#brush-size-group .mode-btn.active {
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
 
@@ -431,28 +488,14 @@ main {
   }
 
   #dashboard { z-index: 95; }
-
-  #timeseries-panel {
-    width: calc(100% - 1rem);
-    height: 100px;
-    bottom: 0.5rem;
-  }
 }
 
 
 /* ═══════════════════════════════════════
    RESPONSIVE — Phone (≤ 600px)
-   Time-series panel collapses to a strip; sidebar takes over.
    ═══════════════════════════════════════ */
 @media (max-width: 600px) {
   #top-bar { gap: 0.4rem; }
-
-  #timeseries-panel {
-    height: 72px;
-    padding: 0.35rem 0.5rem;
-  }
-
-  .ts-title { font-size: clamp(0.55rem, 1.8vw, 0.65rem); }
 }
 
 
@@ -495,7 +538,8 @@ main {
 .toggles-section-header:first-child { margin-top: 0; }
 
 /* Row label can hold a swatch + text inline. Align baseline so the swatch
-   sits centered with the text. */
+   sits centered with the text. (Legacy — kept for back-compat with any
+   pre-restyle markup.) */
 .toggles-row-label {
   display: inline-flex;
   align-items: center;
@@ -503,8 +547,86 @@ main {
 }
 
 /* The right-hand wrapper holds only the checkbox toggle — let it shrink to
-   the control width rather than stretching. */
+   the control width rather than stretching. (Legacy — superseded by
+   .toggle-row + .tog-wrap below.) */
 .toggles-checkbox-wrap {
   flex: 0 0 auto;
   justify-content: flex-end;
+}
+
+/* ───── Phase-14 restyle: geon-style colored toggles + shoals-style
+   colored label text. The row binds a per-key `tog-{key}` class that
+   sets a single `--tog-color` CSS custom property; the .tog switch in
+   shared-base.css picks it up for the on-state gradient, and the label
+   text on the row inherits the same color. ───── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.toggle-row .toggle-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--tog-color, var(--text));
+  /* Slightly darker base; the colored letter prefix (V — Vaccinated, ...)
+     reads as the affordance. Match the geon-on-blue feel. */
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: opacity 0.2s var(--ease-out);
+}
+
+.toggle-row .tog-wrap {
+  flex: 0 0 auto;
+}
+
+/* Per-compartment color bindings. The base `.tog` rules in shared-base.css
+   read `--tog-color`; we just point it at the appropriate --epi-* var.
+   Flag-row toggles inherit their parent-compartment color (L→E, C→R, F→D)
+   so the visual register matches the rendered overlay. */
+.tog-s, .toggle-row.tog-s { --tog-color: var(--epi-s); }
+.tog-e, .toggle-row.tog-e { --tog-color: var(--epi-e); }
+.tog-i, .toggle-row.tog-i { --tog-color: var(--epi-i); }
+.tog-r, .toggle-row.tog-r { --tog-color: var(--epi-r); }
+.tog-d, .toggle-row.tog-d { --tog-color: var(--epi-d); }
+.tog-v, .toggle-row.tog-v { --tog-color: var(--epi-v); }
+.tog-m, .toggle-row.tog-m { --tog-color: var(--epi-m); }
+.tog-z, .toggle-row.tog-z { --tog-color: var(--epi-z); }
+
+/* Disabled rows (via `bindDeps` enable-mode → adds `.ctrl-disabled`) get
+   muted across both label and switch. Existing shared rules already fade
+   .ctrl-disabled — repeat for the label text under our color binding. */
+.toggle-row.ctrl-disabled .toggle-label,
+.toggle-row.ctrl-disabled .tog { opacity: 0.4; pointer-events: none; }
+
+/* Animal-display row uses the inline mode-group layout — sits the buttons
+   on the right of the label and gives them the same tinted feel as the
+   topology / view-mode toggles. */
+.animal-display-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.inline-mode-toggles {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 0;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-panel-solid) 60%, transparent);
+}
+
+.inline-mode-toggles .mode-btn {
+  font-size: var(--font-sm);
+  padding: 0.2rem 0.55rem;
+}
+
+.inline-mode-toggles .mode-btn.active {
+  background: var(--accent);
+  color: var(--text-on-accent);
 }

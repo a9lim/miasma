@@ -24,25 +24,31 @@
 //   7. health       — I cells lose health_degrade_per_tick (clamped to 0)
 //   8. mortality    — per-cell age-curve roll → D (Z, EMPTY, D exempt)
 //   9. Z dynamics   — D→Z, I→Z, Z→neighbor, Z exhaustion
-//  10. Animal dyn.  — animal SIR (S→I via animal neighbors, I→{R,D}, D→VOID
-//                     disposal) + bidirectional spillover (animal I → human
-//                     S→E with strain α; human I → animal S→I)
+//  10. Animal dyn.  — delegated to dynamics-animal.js: animal SIR (S→I via
+//                     animal neighbors, I→{R,D}, D→VOID disposal) plus
+//                     strain-aware bidirectional spillover.
 // Z writes overwrite anything earlier steps wrote (intentional: "Z wins").
 // Animal dynamics run AFTER Z so Z's conversion of an I human into Z cannot
 // then spillover-flow to its co-located animal within the same tick.
 
 import { Animal, Compartment, DEFAULTS, Flag, Status } from './config.js';
-import { neighbors } from './topology.js';
+import { DEFAULT_PARAMS } from './default-params.js';
+import { DEFAULT_TOGGLES } from './default-toggles.js';
+import { getNeighborTable } from './topology.js';
+import { runExtinctionSweep } from './strain-extinction.js';
+import { runAnimalDynamics } from './dynamics-animal.js';
+import { ensureTickScratch, recycleTickScratch } from './dynamics-scratch.js';
 import {
     bloomHas,
     bloomSet,
     EMPTY_STRAIN,
-    getStrain,
     mutateStrain,
     recombineStrains
 } from './strains.js';
 
 const MAX_ACTIVE = DEFAULTS.maxActiveStrains;
+
+export { DEFAULT_PARAMS };
 
 // Per-cell scratch reused inside the transmission branches for strain
 // attribution. Sized to the hex max-neighbor count (6). Module-level so we
@@ -56,253 +62,6 @@ const MAX_ACTIVE = DEFAULTS.maxActiveStrains;
 const _edgeStrainBuf = new Uint16Array(6);
 const _edgeWeightBuf = new Float64Array(6);
 const _edgeNbrIdxBuf = new Int32Array(6);
-
-// Default SEIR(D) + flag/maternal/Z rates. Tunable per-preset later; these
-// match the values in the Phase-3 task spec.
-export const DEFAULT_PARAMS = Object.freeze({
-    // Core SEIR(D)
-    beta:  0.3,   // transmission probability per S-I contact per tick
-    sigma: 0.2,   // E → I rate per tick (1/sigma ≈ incubation period)
-    gamma: 0.1,   // I → R rate per tick (1/gamma ≈ infectious period)
-    mu:    0.01,  // I → D rate per tick
-
-    // Maternal immunity decay + flag dynamics
-    m_decay:         0.02,   // M → S per-tick probability
-    l_reactivate:    0.001,  // E-with-L → I per-tick probability (slow reactivation)
-    c_transmit_mult: 0.3,    // multiplier on β for R-with-C transmission
-    f_decay:         0.05,   // F flag clears per-tick (D-with-F → plain D)
-    f_transmit_mult: 0.7,    // multiplier on β for D-with-F transmission
-
-    // Zombie dynamics
-    dz_dead:             0.05,   // D → Z per-tick probability
-    dz_alive:            0.005,  // I → Z per-tick probability
-    z_infect:            0.85,   // per-Z-neighbor conversion probability for non-Z cells
-    z_exhaust_threshold: 4,      // Z neighbors required for exhaustion
-    z_exhaust:           0.08,   // Z → D probability when exhausted (≥ threshold Z neighbors)
-
-    // Status (H / Q) — Phase 4
-    h_capacity_frac:           0.02,  // hospital capacity as fraction of W*H
-    h_recover_mult:            1.8,   // γ multiplier for H-status I cells
-    h_mortality_mult:          0.4,   // μ multiplier for H-status I cells
-    h_overflow_mortality_mult: 1.5,   // μ multiplier for I cells denied a bed
-    q_transmit_mult:           0.1,   // Q-status source: transmission weight ×
-    q_susceptibility_mult:     0.3,   // Q-status target: per-cell infection prob ×
-
-    // Aging / births / health — Phase 5
-    d_disposal:              0.02,    // D (no F flag) → EMPTY per-tick probability
-    birth_rate:              0.04,    // per-neighbor base probability when ≥ threshold neighbors
-    birth_threshold:         3,       // min inhabited neighbors for births
-    health_degrade_per_tick: 0.02,    // I cells lose this much health/tick
-    mortality_baseline:      0.0002,  // natural death per tick at age 0
-    mortality_age_max:       0.004,   // natural death per tick at mortality_max_age
-    mortality_max_age:       5000,    // age at which natural mortality saturates
-    age_susceptibility_mult: 1.5,     // susceptibility multiplier at saturated age
-    age_severity_mult:       2.0,     // mortality multiplier at saturated age
-    health_mortality_mult:   3.0,     // mortality multiplier when health = 0
-
-    // Multi-strain — Phase 7
-    mutation_rate:       0.005,  // per-transmission probability of spawning a mutant strain
-    mutation_strength:   0.05,   // multiplicative gaussian noise std-dev per param
-    cross_immunity_mult: 1.0,    // global multiplier on cross-immunity from prior exposure (0 disables)
-
-    // Coinfection / recombination — Phase 8
-    coinfection_load_delta: 0.30,   // load taken by an incoming strain on coinfection
-    competition_strength:   0.05,   // replicator-dynamics selection strength per tick
-    recombination_rate:     0.01,   // per-coinfected-cell per-tick recombination probability
-    min_strain_load:        0.02,   // strains below this threshold get pruned from a cell
-
-    // Vector / reservoir (animal SIR + spillover) — Phase 9
-    animal_density:          0.10,   // fraction of in-world cells seeded with S animal
-    animal_beta:             0.20,   // animal-to-animal per S-I contact transmission
-    animal_gamma:            0.05,   // animal I → R rate per tick
-    animal_mu:               0.005,  // animal I → D rate per tick
-    animal_d_disposal:       0.10,   // animal D → VOID disposal per tick
-    spillover_rate:          0.02,   // animal I → co-located human S → E per tick
-    reverse_spillover_rate:  0.005   // human I → co-located animal S → I per tick
-});
-
-// Permissive default toggles when the caller omits the toggles arg. Z stays
-// off — it's the one mechanic the plan explicitly says defaults to off.
-const DEFAULT_TOGGLES = Object.freeze({
-    V: true, M: true, Z: false, L: true, C: true, F: true
-});
-
-// Scratch buffers reused across ticks so we don't allocate per tick on a
-// 120×120 grid. Sized to match the grid the first time `tick` is called
-// against it and grown if the grid ever changes size. Nine buffers now:
-// compartment (Uint8), flags (Uint8), status (Uint8), age (Uint16), health
-// (Float32), strain_ids (Uint16, N*MAX_ACTIVE wide), strain_loads (Float32,
-// N*MAX_ACTIVE wide), strain_hist (Uint8, N*8 wide), animal (Uint8).
-let _scratch = null;
-let _flagScratch = null;
-let _statusScratch = null;
-let _ageScratch = null;
-let _healthScratch = null;
-let _strainIdsScratch = null;
-let _strainLoadsScratch = null;
-let _strainHistScratch = null;
-let _animalScratch = null;
-
-function ensureScratch(N) {
-    if (_scratch === null || _scratch.length !== N) {
-        _scratch = new Uint8Array(N);
-    }
-    if (_flagScratch === null || _flagScratch.length !== N) {
-        _flagScratch = new Uint8Array(N);
-    }
-    if (_statusScratch === null || _statusScratch.length !== N) {
-        _statusScratch = new Uint8Array(N);
-    }
-    if (_ageScratch === null || _ageScratch.length !== N) {
-        _ageScratch = new Uint16Array(N);
-    }
-    if (_healthScratch === null || _healthScratch.length !== N) {
-        _healthScratch = new Float32Array(N);
-    }
-    const idsLen = N * MAX_ACTIVE;
-    if (_strainIdsScratch === null || _strainIdsScratch.length !== idsLen) {
-        _strainIdsScratch = new Uint16Array(idsLen);
-    }
-    if (_strainLoadsScratch === null || _strainLoadsScratch.length !== idsLen) {
-        _strainLoadsScratch = new Float32Array(idsLen);
-    }
-    const histLen = N * 8;
-    if (_strainHistScratch === null || _strainHistScratch.length !== histLen) {
-        _strainHistScratch = new Uint8Array(histLen);
-    }
-    if (_animalScratch === null || _animalScratch.length !== N) {
-        _animalScratch = new Uint8Array(N);
-    }
-}
-
-/**
- * One-time initialization of grid health/age for a freshly-constructed
- * grid. Grid.js constructs with Float32Array zero-fill, which would mean
- * every alive cell starts at health=0 and immediately maxes out the
- * health-modulated mortality multiplier. Call this once after Grid
- * construction (and on reset) to give every non-D, non-EMPTY cell a
- * baseline health of 1.0 and age of 0.
- *
- * Not auto-invoked inside `tick` — the dispatcher (main.js) is expected
- * to wire it.
- *
- * NB Phase 9: the animal layer is NOT seeded here. Call
- * `initializeAnimals(grid, params, rng)` separately after `initializeGrid`
- * if you want a non-empty animal reservoir. Keeping this separate gives
- * the integrator control over whether a preset uses animals at all and
- * lets the density be tuned independently from human-side reset.
- *
- * @param {import('./grid.js').Grid} grid
- */
-export function initializeGrid(grid) {
-    // Shape the storage rhombus into a regular hexagon by masking out the
-    // two acute-angle corners. mask=0 cells are treated as "void" — never
-    // rendered, never tallied, never births-eligible, never clickable. The
-    // dynamics pass over them is cheap because they sit as EMPTY forever.
-    applyHexMask(grid);
-
-    const { compartment, mask, age, health, strain_ids, strain_loads, strain_hist } = grid;
-    const N = compartment.length;
-    // Defensive: Grid constructor already fills strain_ids with 0xFFFF, but a
-    // reset path may reuse the same arrays after Phase 7 cells have written
-    // strain IDs into them. Wipe the strain state to the empty sentinel and
-    // clear the bloom for a fresh-population start. Loads parallel ids — any
-    // empty slot must have load 0.
-    if (strain_ids) strain_ids.fill(EMPTY_STRAIN);
-    if (strain_loads) strain_loads.fill(0);
-    if (strain_hist) strain_hist.fill(0);
-    for (let i = 0; i < N; i++) {
-        age[i] = 0;
-        if (mask[i] === 0) {
-            // Void cell — stays cold, dead, empty.
-            health[i] = 0;
-            continue;
-        }
-        const c = compartment[i];
-        if (c === Compartment.D || c === Compartment.EMPTY) {
-            health[i] = 0;
-        } else {
-            health[i] = 1.0;
-        }
-    }
-}
-
-/**
- * Inscribe a regular hexagon inside the W×H axial-coord rhombus.
- * Sets grid.mask[i] = 1 for cells inside the hexagon, 0 for cells in the
- * two acute corners of the rhombus. Outside cells are also wiped to a
- * cold EMPTY state (compartment, status, flags, age, health all zeroed).
- *
- * Hex axial-distance formula: d(q1,r1, q2,r2) = max(|dq|, |dr|, |dq+dr|).
- * Centered at (floor(W/2), floor(H/2)) with radius min(cq, cr, W-1-cq, H-1-cr).
- * For the default 120×120 storage that's center (60, 60), radius 59 — about
- * 10800 in-world cells (~75% of the rhombus storage).
- */
-export function applyHexMask(grid) {
-    const { W, H, mask, compartment, status, flags, age, health, animal } = grid;
-    const cq = Math.floor(W / 2);
-    const cr = Math.floor(H / 2);
-    // Largest R that fits entirely inside the rhombus on every axis.
-    const R = Math.min(cq, cr, W - 1 - cq, H - 1 - cr);
-    for (let r = 0; r < H; r++) {
-        const rowBase = r * W;
-        const dr = r - cr;
-        for (let q = 0; q < W; q++) {
-            const dq = q - cq;
-            const ds = -dq - dr;
-            const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
-            const i = rowBase + q;
-            if (dist <= R) {
-                mask[i] = 1;
-            } else {
-                mask[i] = 0;
-                compartment[i] = Compartment.EMPTY;
-                status[i] = 0;
-                flags[i] = 0;
-                age[i] = 0;
-                health[i] = 0;
-                // Phase 9: void cells carry no animal. Animal defaults to VOID
-                // (=0) on Grid construction; we re-assert here so a re-mask
-                // (e.g. after dimension change) wipes any stale animal state.
-                if (animal) animal[i] = Animal.VOID;
-            }
-        }
-    }
-}
-
-/**
- * Phase 9: seed the per-cell animal layer with S animals at the given
- * density. mask=0 cells stay VOID; in-world cells are independently rolled
- * — `params.animal_density` fraction become Animal.S, the rest stay
- * Animal.VOID. Idempotent on a fresh grid; on a non-fresh grid this
- * overwrites the animal layer wholesale (deliberate — animals are a
- * "background ecology" not a state to preserve across resets).
- *
- * Called explicitly by the integrator after `initializeGrid` — never
- * auto-invoked from inside `tick`. The rng arg is passed through so a
- * seeded run reproduces.
- *
- * @param {import('./grid.js').Grid} grid
- * @param {object} [params] — uses params.animal_density (default 0.10)
- * @param {() => number} [rng] — uniform [0, 1); defaults to Math.random
- */
-export function initializeAnimals(grid, params, rng) {
-    const { animal, mask } = grid;
-    if (!animal) return;
-    const p = params || DEFAULT_PARAMS;
-    const r = rng || Math.random;
-    const density = typeof p.animal_density === 'number'
-        ? (p.animal_density < 0 ? 0 : (p.animal_density > 1 ? 1 : p.animal_density))
-        : 0;
-    const N = animal.length;
-    for (let i = 0; i < N; i++) {
-        if (mask && mask[i] === 0) {
-            animal[i] = Animal.VOID;
-            continue;
-        }
-        animal[i] = (r() < density) ? Animal.S : Animal.VOID;
-    }
-}
 
 const UINT16_MAX = 65535;
 
@@ -334,34 +93,50 @@ const UINT16_MAX = 65535;
  * @returns {{
  *   sToE:number, eToI:number, iToR:number, iToD:number,
  *   mToS:number, lReact:number, fDecay:number,
- *   dToZ:number, iToZ:number, zInfect:number, zExhaust:number,
+ *   dToZ:number, iToZ:number, lToZ:number,
+ *   zInfect:number, zExhaust:number,
+ *   zFightKill:number, zFightInfect:number, zFightExpose:number,
+ *   zDieFighting:number, zDieNatural:number,
  *   hAssigned:number, hOverflow:number,
  *   births:number, ageOut:number, dToEmpty:number,
  *   coinfections:number, recombinations:number, prunes:number,
  *   spillovers:number, reverseSpillovers:number,
  *   animalSToI:number, animalIToR:number, animalIToD:number,
- *   animalDisposed:number
+ *   animalDisposed:number, animalBirths:number, animalAgeOut:number,
+ *   vaxRollout:number, autoQuarantined:number
  * }}
  */
 export function tick(grid, params, toggles, topology, rng, strainRegistry, simTick) {
     const p = params || DEFAULT_PARAMS;
     const t = toggles || DEFAULT_TOGGLES;
     const r = rng || Math.random;
-    const { W, H, compartment, flags, status, age, health, strain_ids, strain_loads, strain_hist, animal } = grid;
+    const { W, H, compartment, flags, status, age, health, strain_ids, strain_loads, strain_hist, animal, animal_age, animal_strain } = grid;
     const N = W * H;
+    const active = grid.activeIndices;
+    const activeCount = active ? active.length : N;
     const useStrains = !!strainRegistry;
     const tickIdx = simTick | 0;
 
-    ensureScratch(N);
-    const next = _scratch;
-    const nextFlags = _flagScratch;
-    const nextStatus = _statusScratch;
-    const nextAge = _ageScratch;
-    const nextHealth = _healthScratch;
-    const nextStrainIds = _strainIdsScratch;
-    const nextStrainLoads = _strainLoadsScratch;
-    const nextStrainHist = _strainHistScratch;
-    const nextAnimal = _animalScratch;
+    // Neighbor index table — precomputed per (W,H,topology) and reused across
+    // every tick. Replaces ~350k neighbors() allocations per tick with table
+    // lookups. `nbrIdx[i*6 + d]` is the flat cell index of cell i's neighbor
+    // in direction d (-1 when there's no neighbor at that edge under the
+    // current topology).
+    const nbrTable = getNeighborTable(W, H, topology);
+    const nbrIdx = nbrTable.idx;
+
+    const scratch = ensureTickScratch(N, MAX_ACTIVE);
+    const next = scratch.compartment;
+    const nextFlags = scratch.flags;
+    const nextStatus = scratch.status;
+    const nextAge = scratch.age;
+    const nextHealth = scratch.health;
+    const nextStrainIds = scratch.strainIds;
+    const nextStrainLoads = scratch.strainLoads;
+    const nextStrainHist = scratch.strainHist;
+    const nextAnimal = scratch.animal;
+    const nextAnimalAge = scratch.animalAge;
+    const nextAnimalStrain = scratch.animalStrain;
     // Copy start-of-tick state into scratch buffers. Cells we don't act on
     // pass through unchanged.
     next.set(compartment);
@@ -377,25 +152,46 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     else nextStrainHist.fill(0);
     if (animal) nextAnimal.set(animal);
     else nextAnimal.fill(Animal.VOID);
+    if (animal_age) nextAnimalAge.set(animal_age);
+    else nextAnimalAge.fill(0);
+    if (animal_strain) nextAnimalStrain.set(animal_strain);
+    else nextAnimalStrain.fill(EMPTY_STRAIN);
 
     const {
         beta, sigma, gamma, mu,
-        m_decay, l_reactivate, c_transmit_mult, f_decay, f_transmit_mult,
-        dz_dead, dz_alive, z_infect, z_exhaust_threshold, z_exhaust,
+        m_decay, l_seed, l_reactivate, l_transform, c_seed, c_transmit_mult, f_decay, f_transmit_mult,
+        dz_dead, dz_alive,
+        z_convert_unopposed, z_fight_kill, z_fight_infect, z_fight_expose,
+        z_die_fighting, z_die_natural,
+        z_exhaust_threshold, z_exhaust,
         h_capacity_frac, h_recover_mult, h_mortality_mult,
         h_overflow_mortality_mult, q_transmit_mult, q_susceptibility_mult,
+        quarantine_trace_rate,
         d_disposal, birth_rate, birth_threshold, health_degrade_per_tick,
         mortality_baseline, mortality_age_max, mortality_max_age,
         age_susceptibility_mult, age_severity_mult, health_mortality_mult,
         mutation_rate, mutation_strength, cross_immunity_mult,
         coinfection_load_delta, competition_strength, recombination_rate,
         min_strain_load,
-        animal_beta, animal_gamma, animal_mu, animal_d_disposal,
-        spillover_rate, reverse_spillover_rate
+        vax_rollout_rate,
+        r_susceptibility_mult, vax_efficacy
     } = p;
     // Clamp cross-immunity multiplier into [0, 1]; values outside the range
     // would invert the bloom check or push survival negative.
     const xImm = cross_immunity_mult > 1 ? 1 : (cross_immunity_mult < 0 ? 0 : cross_immunity_mult);
+    // Reinfection / breakthrough multipliers, clamped to [0, 1]. R cells'
+    // pInf is multiplied by rSuscMult; V cells' pInf is multiplied by
+    // (1 - vaxEff). Defaults keep both mechanisms partially live; presets
+    // that want textbook immunity override these values.
+    const rSuscMult = r_susceptibility_mult > 1
+        ? 1
+        : (r_susceptibility_mult < 0 ? 0 : r_susceptibility_mult);
+    const vaxEff = vax_efficacy > 1
+        ? 1
+        : (vax_efficacy < 0 ? 0 : vax_efficacy);
+    // Clamp the seed-roll probabilities too.
+    const lSeed = l_seed > 1 ? 1 : (l_seed < 0 ? 0 : l_seed);
+    const cSeed = c_seed > 1 ? 1 : (c_seed < 0 ? 0 : c_seed);
     const mutRate = mutation_rate > 0 ? mutation_rate : 0;
     const mutStrength = mutation_strength > 0 ? mutation_strength : 0;
     // Phase 8 clamps. coinfection_load_delta in [0, 1) so existing loads have
@@ -412,6 +208,71 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         ? (min_strain_load < 1 ? min_strain_load : 0.999)
         : 0;
 
+    // ─── Phase A: per-strain field resolvers ─────────────────────────────
+    //
+    // After Phase A, most "rate" parameters live on the strain (registry
+    // rows) instead of sim-wide. The seed strain α starts with the values
+    // from `params` (via createRegistry(params)) but cells with later-born
+    // strains read their own per-strain values.
+    //
+    // `sidOf(i)` returns the strain id at cell i's slot 0, or -1 if there
+    // isn't one (useStrains=false, or slot 0 is empty / out of range).
+    // Cells that carry "strain memory" without active infection (M from
+    // R-parent, R-with-CARRIER, D-with-F_CORPSE, Z) keep slot 0 populated
+    // with load=0 (or load=1 for Z, which is an active state). The
+    // resolver returns that id for those cells too, so the relevant
+    // per-strain rate (m_decay, c_transmit_mult, f_transmit_mult, f_decay,
+    // dz_dead, z_*) reads off the right strain.
+    //
+    // `pickField(sid, fieldName, fallback)` reads reg[fieldName][sid] when
+    // sid is valid, else falls back. We don't cache reg.<field> references
+    // out here because the field accessed varies per call site and the
+    // overhead is one indexed array read either way.
+    const reg = strainRegistry;
+    const regLen = useStrains ? reg.ids.length : 0;
+    function sidOf(i) {
+        if (!useStrains || !strain_ids) return -1;
+        const sid = strain_ids[i * MAX_ACTIVE];
+        if (sid === EMPTY_STRAIN || sid < 0 || sid >= regLen) return -1;
+        return sid;
+    }
+    // Convenience: closure factories so call sites read like
+    //   const gammaSrc = gammaOf(i);
+    // and we don't repeat the same if/else inline. JS engines will inline
+    // these in the hot path after a few tick iterations.
+    const sigmaOf  = (i) => { const s = sidOf(i); return s >= 0 ? reg.sigma[s]  : sigma; };
+    const gammaOf  = (i) => { const s = sidOf(i); return s >= 0 ? reg.gamma[s]  : gamma; };
+    const muOf     = (i) => { const s = sidOf(i); return s >= 0 ? reg.mu[s]     : mu;    };
+    const lReactOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.l_reactivate[s] : l_reactivate; };
+    const lTransformOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.l_transform[s] : l_transform; };
+    const cSeedOf  = (i) => { const s = sidOf(i); const v = s >= 0 ? reg.c_seed[s] : cSeed; return v > 1 ? 1 : (v < 0 ? 0 : v); };
+    const fDecayOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.f_decay[s] : f_decay; };
+    const mDecayOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.m_decay[s] : m_decay; };
+    const dzDeadOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.dz_dead[s] : dz_dead; };
+    const dzAliveOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.dz_alive[s] : dz_alive; };
+    const zConvertOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_convert_unopposed[s] : z_convert_unopposed; };
+    const zFightKillOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_fight_kill[s] : z_fight_kill; };
+    const zFightInfectOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_fight_infect[s] : z_fight_infect; };
+    const zFightExposeOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_fight_expose[s] : z_fight_expose; };
+    const zDieFightOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_die_fighting[s] : z_die_fighting; };
+    const zDieNatOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_die_natural[s] : z_die_natural; };
+    const zExhaustOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.z_exhaust[s] : z_exhaust; };
+    const healthDegradeOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.health_degrade_per_tick[s] : health_degrade_per_tick; };
+    const healthMortMultOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.health_mortality_mult[s] : health_mortality_mult; };
+    // f_transmit_mult and c_transmit_mult are read at the *neighbor* side in
+    // pickIncomingStrain (the transmitter). Same resolver, called with the
+    // neighbor's index.
+    const fTransmitMultOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.f_transmit_mult[s] : f_transmit_mult; };
+    const cTransmitMultOf = (i) => { const s = sidOf(i); return s >= 0 ? reg.c_transmit_mult[s] : c_transmit_mult; };
+    // l_seed is special: it's "fraction of fresh exposures going latent"
+    // and reads off the *incoming* picked strain (not the target cell's
+    // existing slot 0). Called with the strain id directly, not a cell idx.
+    const lSeedOfPick = (pickId) => {
+        if (!useStrains || pickId === EMPTY_STRAIN || pickId < 0 || pickId >= regLen) return lSeed;
+        const v = reg.l_seed[pickId];
+        return v > 1 ? 1 : (v < 0 ? 0 : v);
+    };
+
     let sToE = 0;
     let eToI = 0;
     let iToR = 0;
@@ -421,8 +282,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     let fDecay = 0;
     let dToZ = 0;
     let iToZ = 0;
-    let zInfect = 0;
+    let lToZ = 0;            // E-with-LATENT → Z (oncoviral transformation)
+    let zInfect = 0;         // any Z generation via neighbor encounter (convert + fight_infect→F path counted at conversion site)
     let zExhaust = 0;
+    let zFightKill = 0;      // Z neighbor → target D (clean kill)
+    let zFightInfect = 0;    // Z neighbor → target D + F-corpse
+    let zFightExpose = 0;    // Z neighbor → target E
+    let zDieFighting = 0;    // Z → D from being fought back
+    let zDieNatural = 0;     // Z → D from natural decay (lifespan)
     let hAssigned = 0;
     let hOverflow = 0;
     let births = 0;
@@ -437,6 +304,10 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     let animalIToR = 0;
     let animalIToD = 0;
     let animalDisposed = 0;
+    let animalBirths = 0;
+    let animalAgeOut = 0;
+    let vaxRollout = 0;
+    let autoQuarantined = 0; // cells traced into Q by auto-quarantine this tick
 
     // Guard against zero/negative max_age (would NaN the linear interp).
     const safeMaxAge = mortality_max_age > 0 ? mortality_max_age : 1;
@@ -450,7 +321,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // are reset to age 0 (clean slate for next birth). This runs against
     // start-of-tick compartment so newly-born M cells in this same tick
     // get age=0 from the births pass instead of being incremented here.
-    for (let i = 0; i < N; i++) {
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
         if (compartment[i] === Compartment.EMPTY) {
             nextAge[i] = 0;
         } else {
@@ -462,52 +334,80 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // ─── Step 2: Births ────────────────────────────────────────────────
     // EMPTY cells with ≥ birth_threshold inhabited (non-EMPTY, non-D)
     // neighbors roll 1 - (1 - birth_rate)^count for spawn probability. On
-    // success: compartment=M, age=0, health=1, flags=0, status=0. We
-    // treat D as not contributing to neighbor count — corpses don't beget
+    // success, the parent compartment determines the newborn:
+    //   • At least one R parent  → M (maternal-antibody newborn — only R
+    //     parents actually transferred antibodies). Gated on t.M; falls
+    //     back to S when M is disabled.
+    //   • All-S/E/I/V/M parents  → S (no antibodies to transfer).
+    // We treat D as not contributing to neighbor count — corpses don't beget
     // newborns. Z is also excluded from neighbor count (no neighborly
     // procreation with the undead).
     if (birth_rate > 0 && birth_threshold > 0) {
-        const mask = grid.mask;
-        for (let row = 0; row < H; row++) {
-            const rowBase = row * W;
-            for (let q = 0; q < W; q++) {
-                const i = rowBase + q;
-                if (compartment[i] !== Compartment.EMPTY) continue;
-                // Void cells (outside the hex shape) are EMPTY by definition
-                // but never birth — they're not part of the simulated world.
-                if (mask && mask[i] === 0) continue;
-                const ns = neighbors(q, row, topology, W, H);
-                let count = 0;
-                for (let j = 0; j < ns.length; j++) {
-                    const nb = ns[j];
-                    const nc = compartment[nb.r * W + nb.q];
-                    if (nc !== Compartment.EMPTY && nc !== Compartment.D && nc !== Compartment.Z) {
-                        count++;
-                    }
+        const newbornM = !!t.M; // gate the maternal-immunity newborn pathway
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (compartment[i] !== Compartment.EMPTY) continue;
+            const nbase = i * 6;
+            let count = 0;
+            let rCount = 0;
+            for (let d = 0; d < 6; d++) {
+                const ni = nbrIdx[nbase + d];
+                if (ni < 0) continue;
+                const nc = compartment[ni];
+                if (nc !== Compartment.EMPTY && nc !== Compartment.D && nc !== Compartment.Z) {
+                    count++;
+                    if (nc === Compartment.R) rCount++;
                 }
-                if (count >= birth_threshold) {
-                    // 1 - (1 - birth_rate)^count
-                    const pBirth = 1 - Math.pow(1 - birth_rate, count);
-                    if (r() < pBirth) {
-                        next[i] = Compartment.M;
-                        nextAge[i] = 0;
-                        nextHealth[i] = 1.0;
-                        nextFlags[i] = Flag.NONE;
-                        nextStatus[i] = Status.NONE;
-                        // Newborn: no active strain, fresh-slate bloom. Clear
-                        // all MAX_ACTIVE slots in case stale IDs lingered. Zero
-                        // loads in parallel — newborn carries no infection.
-                        const slotBase = i * MAX_ACTIVE;
-                        for (let s = 0; s < MAX_ACTIVE; s++) {
-                            nextStrainIds[slotBase + s] = EMPTY_STRAIN;
-                            nextStrainLoads[slotBase + s] = 0;
+            }
+            if (count >= birth_threshold) {
+                // 1 - (1 - birth_rate)^count
+                const pBirth = 1 - Math.pow(1 - birth_rate, count);
+                if (r() < pBirth) {
+                    // Pick a parent uniformly from the inhabited neighbors.
+                    // If that parent is R (and M is enabled), newborn carries
+                    // maternal antibodies → M. Otherwise → S.
+                    const parentIsR = newbornM && rCount > 0 &&
+                        (r() * count) < rCount;
+                    // Phase A: when becoming M we need to identify *which* R
+                    // parent so we can copy its slot-0 strain id onto the M
+                    // newborn (with load=0). m_decay then reads off the
+                    // inherited strain.
+                    let mStrainId = EMPTY_STRAIN;
+                    if (parentIsR && useStrains && strain_ids) {
+                        const pickIdx = (r() * rCount) | 0;
+                        let seen = 0;
+                        for (let d = 0; d < 6; d++) {
+                            const ni = nbrIdx[nbase + d];
+                            if (ni < 0) continue;
+                            if (compartment[ni] !== Compartment.R) continue;
+                            if (seen === pickIdx) {
+                                const candidate = strain_ids[ni * MAX_ACTIVE];
+                                if (candidate !== EMPTY_STRAIN
+                                    && candidate >= 0 && candidate < regLen) {
+                                    mStrainId = candidate;
+                                }
+                                break;
+                            }
+                            seen++;
                         }
-                        const histBase = i * 8;
-                        for (let b = 0; b < 8; b++) {
-                            nextStrainHist[histBase + b] = 0;
-                        }
-                        births++;
                     }
+                    next[i] = parentIsR ? Compartment.M : Compartment.S;
+                    nextAge[i] = 0;
+                    nextHealth[i] = 1.0;
+                    nextFlags[i] = Flag.NONE;
+                    nextStatus[i] = Status.NONE;
+                    const slotBase = i * MAX_ACTIVE;
+                    for (let s = 0; s < MAX_ACTIVE; s++) {
+                        nextStrainIds[slotBase + s] = EMPTY_STRAIN;
+                        nextStrainLoads[slotBase + s] = 0;
+                    }
+                    if (mStrainId !== EMPTY_STRAIN) {
+                        nextStrainIds[slotBase] = mStrainId;
+                        nextStrainLoads[slotBase] = 0;
+                    }
+                    const histBase = i * 8;
+                    for (let b = 0; b < 8; b++) nextStrainHist[histBase + b] = 0;
+                    births++;
                 }
             }
         }
@@ -524,7 +424,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // `nextStrainLoads`. Gated on useStrains because the single-strain
     // legacy path doesn't allocate registry / loads in any meaningful way.
     if (useStrains && strain_ids && strain_loads) {
-        for (let i = 0; i < N; i++) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
             if (compartment[i] !== Compartment.I) continue;
             const slot0 = i * MAX_ACTIVE;
 
@@ -706,52 +607,65 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // Output: nextStatus reflects post-allocation H assignment. Step 5 reads
     // it to pick the I-transition rate modifiers, and clears H on cells that
     // leave I via recovery/death.
-    const cap = Math.floor(h_capacity_frac * N);
-    // First pass: count I cells eligible for a bed (compartment I, not Q).
-    let iQueue = 0;
-    for (let i = 0; i < N; i++) {
-        if (compartment[i] === Compartment.I && status[i] !== Status.Q) iQueue++;
-    }
-    const overflowRegime = iQueue > cap;
-    let bedsLeft = cap;
-    for (let i = 0; i < N; i++) {
-        const c0 = compartment[i];
-        const s0 = status[i];
-        if (c0 === Compartment.I) {
-            if (s0 === Status.Q) {
-                // Quarantined infectious: never hospitalized. Q persists.
-                // Treated as overflow for mortality regardless of capacity.
-                nextStatus[i] = Status.Q;
-                hOverflow++;
-            } else if (bedsLeft > 0) {
-                nextStatus[i] = Status.H;
-                bedsLeft--;
-                // Newly assigned only if start-of-tick status wasn't already H.
-                if (s0 !== Status.H) hAssigned++;
-            } else {
-                // No bed left — overflow regime is true by definition here.
-                nextStatus[i] = Status.NONE;
-                hOverflow++;
-            }
-        } else if (s0 === Status.H) {
-            // Stale H on a non-I cell (e.g. left I last tick without clearing).
-            // Strip it; Q would have been preserved by the s0 !== H branches.
-            nextStatus[i] = Status.NONE;
+    // Gated on t.auto_hospital. When the hospital system is off: no beds are
+    // assigned, every H status is stripped (stale H would keep granting the
+    // recover/mortality bonus indefinitely), and overflowRegime stays false —
+    // "no hospital system" means baseline γ/μ for all I cells, NOT a
+    // grid-wide overflow mortality penalty. The Q-cell / overflow mortality
+    // branch in Step 5 is gated on t.auto_hospital for the same reason.
+    let overflowRegime = false;
+    if (t.auto_hospital) {
+        const cap = Math.floor(h_capacity_frac * N);
+        // First pass: count I cells eligible for a bed (compartment I, not Q).
+        let iQueue = 0;
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (compartment[i] === Compartment.I && status[i] !== Status.Q) iQueue++;
         }
-        // Non-I cells without H stay as-is (Q preserved, NONE preserved).
+        overflowRegime = iQueue > cap;
+        let bedsLeft = cap;
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            const c0 = compartment[i];
+            const s0 = status[i];
+            if (c0 === Compartment.I) {
+                if (s0 === Status.Q) {
+                    // Quarantined infectious: never hospitalized. Q persists.
+                    // Treated as overflow for mortality regardless of capacity.
+                    nextStatus[i] = Status.Q;
+                    hOverflow++;
+                } else if (bedsLeft > 0) {
+                    nextStatus[i] = Status.H;
+                    bedsLeft--;
+                    // Newly assigned only if start-of-tick status wasn't already H.
+                    if (s0 !== Status.H) hAssigned++;
+                } else {
+                    // No bed left — overflow regime is true by definition here.
+                    nextStatus[i] = Status.NONE;
+                    hOverflow++;
+                }
+            } else if (s0 === Status.H) {
+                // Stale H on a non-I cell (e.g. left I last tick without clearing).
+                // Strip it; Q would have been preserved by the s0 !== H branches.
+                nextStatus[i] = Status.NONE;
+            }
+            // Non-I cells without H stay as-is (Q preserved, NONE preserved).
+        }
+    } else {
+        // Hospital system disabled — strip every H status (on I and non-I
+        // cells alike). Q and NONE pass through untouched.
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (status[i] === Status.H) nextStatus[i] = Status.NONE;
+        }
     }
 
-    // Combined rates for I cells. We sample once against (γ_eff + μ_eff) and
-    // split the outcome — mutually exclusive in a single tick. The effective
-    // rates depend on this cell's post-allocation H status / overflow flag.
-    // Per-cell μ then gets multiplied by age-severity and health-severity
-    // factors inside the I-branch.
-    const iLeaveBaseGamma = gamma;
-    const iLeaveBaseMu    = mu;
-    const iLeaveHGamma    = gamma * h_recover_mult;
-    const iLeaveHMu       = mu * h_mortality_mult;
-    const iLeaveOverGamma = gamma;
-    const iLeaveOverMu    = mu * h_overflow_mortality_mult;
+    // Phase A: I cells now read γ/μ from their slot-0 strain, so the
+    // single-tick precomputed iLeave* constants were dropped — the I
+    // branch derives H / Q / overflow / baseline modifiers inline from
+    // per-strain γ/μ. Costs one branch per I cell; mu/gamma access is
+    // already a typed-array read regardless of where the constant
+    // multiplier comes from.
 
     // ─── Steps 4 + 5 in a single pass ───────────────────────────────────
     // Reading from `compartment` / `flags` / `age` / `health` (start-of-tick)
@@ -771,17 +685,24 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     //
     // The helper assumes the caller has already verified the cell should be
     // a target (S → always; I → only when the cell stayed I after step 5).
-    function pickIncomingStrain(qq, rr, ii) {
-        const nslist = neighbors(qq, rr, topology, W, H);
+    function pickIncomingStrain(ii) {
+        const nbase = ii * 6;
         let prodSurvive = 1.0;
         let anyContrib = false;
         const edgeWeights = useStrains ? _edgeWeightBuf : null;
         const edgeNbrIdx = useStrains ? _edgeNbrIdxBuf : null;
         const edgeStrains = useStrains ? _edgeStrainBuf : null;
         let edgeWeightSum = 0;
-        for (let j = 0; j < nslist.length; j++) {
-            const nb = nslist[j];
-            const ni = nb.r * W + nb.q;
+        for (let d = 0; d < 6; d++) {
+            const ni = nbrIdx[nbase + d];
+            if (ni < 0) {
+                if (useStrains) {
+                    edgeWeights[d] = 0;
+                    edgeNbrIdx[d] = -1;
+                    edgeStrains[d] = EMPTY_STRAIN;
+                }
+                continue;
+            }
             const nc = compartment[ni];
             const nf = flags[ni];
             const nstat = status[ni];
@@ -790,9 +711,16 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             if (nc === Compartment.I) {
                 w = 1.0;
             } else if (nc === Compartment.R && t.C && (nf & Flag.CARRIER)) {
-                w = c_transmit_mult;
+                // Per-strain: read the carrier's strain memory at slot 0
+                // (kept populated with load=0 when I→R retained carrier
+                // status). Falls back to params c_transmit_mult when the
+                // slot is empty (legacy state or useStrains=false).
+                w = cTransmitMultOf(ni);
             } else if (nc === Compartment.D && t.F && (nf & Flag.F_CORPSE)) {
-                w = f_transmit_mult;
+                // Per-strain: F-corpse cells keep slot 0 = strain that
+                // killed them (load=0 memory). f_transmit_mult reads off
+                // that strain.
+                w = fTransmitMultOf(ni);
             }
             if (w > 0 && nstat === Status.Q) {
                 w *= q_transmit_mult;
@@ -803,18 +731,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 let sawAnyStrain = false;
                 let attributableId = EMPTY_STRAIN;
                 if (useStrains && strain_ids && strain_loads) {
-                    const nbase = ni * MAX_ACTIVE;
+                    const sbase = ni * MAX_ACTIVE;
                     for (let s = 0; s < MAX_ACTIVE; s++) {
-                        const sid = strain_ids[nbase + s];
+                        const sid = strain_ids[sbase + s];
                         if (sid === EMPTY_STRAIN) continue;
-                        const sld = strain_loads[nbase + s];
+                        const sld = strain_loads[sbase + s];
                         if (sld <= 0) continue;
                         sawAnyStrain = true;
-                        let strainBeta = beta;
-                        const sParams = getStrain(strainRegistry, sid);
-                        if (sParams && typeof sParams.beta === 'number') {
-                            strainBeta = sParams.beta;
-                        }
+                        const strainBeta = sid < regLen ? reg.beta[sid] : beta;
                         let slotContrib = strainBeta * sld;
                         if (xImm > 0 && strain_hist
                             && bloomHas(strain_hist, ii, sid)) {
@@ -823,6 +747,33 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         edgeBeta += slotContrib;
                         if (attributableId === EMPTY_STRAIN) attributableId = sid;
                     }
+                    // Memory-state neighbour fallback. R+CARRIER and
+                    // D+F_CORPSE cells carry their strain at slot 0 with
+                    // load=0 (Phase A memory-marker convention). The
+                    // active-load scan above skipped that slot, so without
+                    // this fallback the source's strain identity is lost —
+                    // attributableId stays EMPTY_STRAIN, edgeBeta falls
+                    // back to global β, and infections from carriers /
+                    // F-corpses produce E cells with no strain at slot 0.
+                    // That broke prevalence accounting (and per-strain
+                    // dynamics downstream — σ, γ, μ all fall through to
+                    // global values on the orphaned E cells). Treat the
+                    // memory slot as a single-strain source at effective
+                    // load 1.
+                    if (!sawAnyStrain) {
+                        const memSid = strain_ids[sbase];
+                        if (memSid !== EMPTY_STRAIN) {
+                            sawAnyStrain = true;
+                            const strainBeta = memSid < regLen ? reg.beta[memSid] : beta;
+                            let slotContrib = strainBeta;
+                            if (xImm > 0 && strain_hist
+                                && bloomHas(strain_hist, ii, memSid)) {
+                                slotContrib *= (1 - xImm);
+                            }
+                            edgeBeta += slotContrib;
+                            attributableId = memSid;
+                        }
+                    }
                 }
                 if (!sawAnyStrain) edgeBeta = beta;
                 let pStep = edgeBeta * w;
@@ -830,15 +781,15 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 prodSurvive *= (1 - clamped);
                 anyContrib = true;
                 if (useStrains) {
-                    edgeWeights[j] = clamped;
-                    edgeNbrIdx[j] = ni;
-                    edgeStrains[j] = attributableId;
+                    edgeWeights[d] = clamped;
+                    edgeNbrIdx[d] = ni;
+                    edgeStrains[d] = attributableId;
                     edgeWeightSum += clamped;
                 }
             } else if (useStrains) {
-                edgeWeights[j] = 0;
-                edgeNbrIdx[j] = -1;
-                edgeStrains[j] = EMPTY_STRAIN;
+                edgeWeights[d] = 0;
+                edgeNbrIdx[d] = -1;
+                edgeStrains[d] = EMPTY_STRAIN;
             }
         }
         if (!anyContrib) return { infected: false, pick: EMPTY_STRAIN };
@@ -846,6 +797,17 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         let pInf = 1 - prodSurvive;
         if (status[ii] === Status.Q) {
             pInf *= q_susceptibility_mult;
+        }
+        // Compartment-level susceptibility multipliers. R cells (recovered
+        // with broad infection-derived immunity) get rSuscMult; V cells
+        // (vaccinated) get (1 - vaxEff). Per-strain
+        // bloom-history scaling already happened above (slotContrib *=
+        // (1 - xImm)) so a previously-seen strain is further suppressed.
+        const tc = compartment[ii];
+        if (tc === Compartment.R) {
+            pInf *= rSuscMult;
+        } else if (tc === Compartment.V) {
+            pInf *= (1 - vaxEff);
         }
         const aN = Math.min(1, age[ii] / safeMaxAge);
         pInf *= (1 + ageSuscDelta * aN);
@@ -859,22 +821,22 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             if (edgeWeightSum > 0) {
                 let roll = r() * edgeWeightSum;
                 let picked = false;
-                for (let j = 0; j < nslist.length; j++) {
-                    const w = edgeWeights[j];
+                for (let d = 0; d < 6; d++) {
+                    const w = edgeWeights[d];
                     if (w <= 0) continue;
                     roll -= w;
                     if (roll <= 0) {
-                        pickedNi = edgeNbrIdx[j];
-                        pick = edgeStrains[j];
+                        pickedNi = edgeNbrIdx[d];
+                        pick = edgeStrains[d];
                         picked = true;
                         break;
                     }
                 }
                 if (!picked) {
-                    for (let j = nslist.length - 1; j >= 0; j--) {
-                        if (edgeWeights[j] > 0) {
-                            pickedNi = edgeNbrIdx[j];
-                            pick = edgeStrains[j];
+                    for (let d = 5; d >= 0; d--) {
+                        if (edgeWeights[d] > 0) {
+                            pickedNi = edgeNbrIdx[d];
+                            pick = edgeStrains[d];
                             break;
                         }
                     }
@@ -882,16 +844,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             }
             // In-neighbor slot pick by (β_s · load_s · xImm-factor).
             if (pickedNi >= 0 && strain_ids && strain_loads) {
-                const nbase = pickedNi * MAX_ACTIVE;
+                const sbase = pickedNi * MAX_ACTIVE;
                 let slotWeightSum = 0;
                 for (let s = 0; s < MAX_ACTIVE; s++) {
-                    const sid = strain_ids[nbase + s];
+                    const sid = strain_ids[sbase + s];
                     if (sid === EMPTY_STRAIN) continue;
-                    const sld = strain_loads[nbase + s];
+                    const sld = strain_loads[sbase + s];
                     if (sld <= 0) continue;
-                    let bS = beta;
-                    const sParams = getStrain(strainRegistry, sid);
-                    if (sParams && typeof sParams.beta === 'number') bS = sParams.beta;
+                    const bS = sid < regLen ? reg.beta[sid] : beta;
                     let sw = bS * sld;
                     if (xImm > 0 && strain_hist
                         && bloomHas(strain_hist, ii, sid)) {
@@ -904,13 +864,11 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     let picked = false;
                     let lastValid = EMPTY_STRAIN;
                     for (let s = 0; s < MAX_ACTIVE; s++) {
-                        const sid = strain_ids[nbase + s];
+                        const sid = strain_ids[sbase + s];
                         if (sid === EMPTY_STRAIN) continue;
-                        const sld = strain_loads[nbase + s];
+                        const sld = strain_loads[sbase + s];
                         if (sld <= 0) continue;
-                        let bS = beta;
-                        const sParams = getStrain(strainRegistry, sid);
-                        if (sParams && typeof sParams.beta === 'number') bS = sParams.beta;
+                        const bS = sid < regLen ? reg.beta[sid] : beta;
                         let sw = bS * sld;
                         if (xImm > 0 && strain_hist
                             && bloomHas(strain_hist, ii, sid)) {
@@ -940,250 +898,424 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         return { infected: true, pick };
     }
 
-    for (let row = 0; row < H; row++) {
-        const rowBase = row * W;
-        for (let q = 0; q < W; q++) {
-            const i = rowBase + q;
-            const c = compartment[i];
-            const f = flags[i];
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
+        const c = compartment[i];
+        const f = flags[i];
 
-            switch (c) {
-                case Compartment.I: {
-                    // Step 5: I → {R, D}. Effective γ/μ depend on the
-                    // post-allocation H status set in the pre-pass. Then μ
-                    // is multiplied by age-severity and health-severity:
-                    //   age_factor    = 1 + (age_severity_mult - 1)
-                    //                       × min(1, age / mortality_max_age)
-                    //   health_factor = 1 + (health_mortality_mult - 1)
-                    //                       × (1 - health)
-                    // Combined iLeaveRate = γ_eff + μ_eff*age_factor*health_factor,
-                    // clamped to ≤ 1. After leaving I, H clears; Q persists.
-                    const ns = nextStatus[i];
-                    let gammaEff, muEff;
-                    if (ns === Status.H) {
-                        gammaEff = iLeaveHGamma;
-                        muEff    = iLeaveHMu;
-                    } else if (ns === Status.Q || overflowRegime) {
-                        gammaEff = iLeaveOverGamma;
-                        muEff    = iLeaveOverMu;
-                    } else {
-                        // Fallback baseline; not reached under normal flow.
-                        gammaEff = iLeaveBaseGamma;
-                        muEff    = iLeaveBaseMu;
-                    }
-                    const aNorm = Math.min(1, age[i] / safeMaxAge);
-                    const ageFactor = 1 + ageSevDelta * aNorm;
-                    const hFactor = 1 + healthMortDelta * (1 - health[i]);
-                    muEff = muEff * ageFactor * hFactor;
-
-                    let leaveRate = gammaEff + muEff;
-                    if (leaveRate > 1) leaveRate = 1;
-                    const recoverShare = leaveRate > 0 ? gammaEff / (gammaEff + muEff) : 0;
-
-                    if (r() < leaveRate) {
-                        if (r() < recoverShare) {
-                            next[i] = Compartment.R;
-                            // Phase 7/8: recovery confers strain-specific
-                            // immunity to ALL strains the cell was carrying.
-                            // Loop over every active slot and bloom-set its
-                            // strain ID, then clear ids + loads.
-                            if (useStrains) {
-                                const slot0 = i * MAX_ACTIVE;
-                                if (strain_ids) {
-                                    for (let s = 0; s < MAX_ACTIVE; s++) {
-                                        const sid = strain_ids[slot0 + s];
-                                        if (sid !== EMPTY_STRAIN) {
-                                            bloomSet(nextStrainHist, i, sid);
-                                        }
-                                    }
-                                }
-                                for (let s = 0; s < MAX_ACTIVE; s++) {
-                                    nextStrainIds[slot0 + s] = EMPTY_STRAIN;
-                                    nextStrainLoads[slot0 + s] = 0;
-                                }
-                            }
-                            iToR++;
-                        } else {
-                            next[i] = Compartment.D;
-                            // Death via infection: F flag is the existing
-                            // F_CORPSE behavior — this step does not set F.
-                            // (Preset / strain-level rules attach F elsewhere.)
-                            nextHealth[i] = 0;
-                            // Dead cells don't carry an active strain. We do
-                            // NOT set the bloom — the dead don't accrue
-                            // immunity memory.
-                            if (useStrains) {
-                                const slot0 = i * MAX_ACTIVE;
-                                for (let s = 0; s < MAX_ACTIVE; s++) {
-                                    nextStrainIds[slot0 + s] = EMPTY_STRAIN;
-                                    nextStrainLoads[slot0 + s] = 0;
-                                }
-                            }
-                            iToD++;
-                        }
-                        // Cell left I — clear H (if any). Q persists.
-                        if (nextStatus[i] === Status.H) {
-                            nextStatus[i] = Status.NONE;
-                        }
-                    } else if (useStrains) {
-                        // Phase 8: cell stayed I. Roll for coinfection by a
-                        // neighbor's strain. Skipped under single-strain
-                        // legacy mode — coinfection is meaningless there.
-                        const tx = pickIncomingStrain(q, row, i);
-                        if (tx.infected && tx.pick !== EMPTY_STRAIN) {
-                            const slot0 = i * MAX_ACTIVE;
-                            const pick = tx.pick;
-                            // Cross-immunity gate: bloom hit ⇒ skip. The
-                            // per-slot xImm scaling in pickIncomingStrain
-                            // softens this probabilistically, but the
-                            // contract is to also hard-skip when the bloom
-                            // already records exposure.
-                            let blocked = false;
-                            if (xImm > 0 && strain_hist
-                                && bloomHas(strain_hist, i, pick)) {
-                                blocked = true;
-                            }
-                            // Already-present check: no-op if pick is in
-                            // any active slot of the target.
-                            if (!blocked) {
-                                for (let s = 0; s < MAX_ACTIVE; s++) {
-                                    if (nextStrainIds[slot0 + s] === pick) {
-                                        blocked = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!blocked) {
-                                // Slot placement: empty first; else evict
-                                // the lowest-load existing slot.
-                                let hostSlot = -1;
-                                for (let s = 0; s < MAX_ACTIVE; s++) {
-                                    if (nextStrainIds[slot0 + s] === EMPTY_STRAIN) {
-                                        hostSlot = s;
-                                        break;
-                                    }
-                                }
-                                if (hostSlot === -1) {
-                                    let minLd = Infinity;
-                                    for (let s = 0; s < MAX_ACTIVE; s++) {
-                                        const ld = nextStrainLoads[slot0 + s];
-                                        if (ld < minLd) {
-                                            minLd = ld;
-                                            hostSlot = s;
-                                        }
-                                    }
-                                }
-                                if (hostSlot >= 0) {
-                                    // Sum existing loads (excluding host)
-                                    // → scale them by (1 - coDelta) /
-                                    // existingSum, then insert pick at
-                                    // load coDelta. If host eviction left
-                                    // nothing else, hybrid gets full load.
-                                    let existingSum = 0;
-                                    for (let s = 0; s < MAX_ACTIVE; s++) {
-                                        if (s === hostSlot) continue;
-                                        if (nextStrainIds[slot0 + s] !== EMPTY_STRAIN) {
-                                            existingSum += nextStrainLoads[slot0 + s];
-                                        }
-                                    }
-                                    nextStrainIds[slot0 + hostSlot] = pick;
-                                    if (existingSum > 0) {
-                                        const scale = (1 - coDelta) / existingSum;
-                                        for (let s = 0; s < MAX_ACTIVE; s++) {
-                                            if (s === hostSlot) continue;
-                                            if (nextStrainIds[slot0 + s] !== EMPTY_STRAIN) {
-                                                nextStrainLoads[slot0 + s] *= scale;
-                                            }
-                                        }
-                                        nextStrainLoads[slot0 + hostSlot] = coDelta;
-                                    } else {
-                                        nextStrainLoads[slot0 + hostSlot] = 1;
-                                    }
-                                    coinfections++;
-                                }
-                            }
-                        }
-                    }
-                    break;
+        switch (c) {
+            case Compartment.I: {
+                // Step 5: I → {R, D}. Effective γ/μ depend on the
+                // post-allocation H status set in the pre-pass. Then μ
+                // is multiplied by age-severity and health-severity:
+                //   age_factor    = 1 + (age_severity_mult - 1)
+                //                       × min(1, age / mortality_max_age)
+                //   health_factor = 1 + (health_mortality_mult - 1)
+                //                       × (1 - health)
+                // Combined iLeaveRate = γ_eff + μ_eff*age_factor*health_factor,
+                // clamped to ≤ 1. After leaving I, H clears; Q persists.
+                //
+                // Phase A: γ, μ, health_mortality_mult are read from
+                // the cell's slot-0 strain when present. The status-
+                // pre-pass-derived modifiers (iLeaveHGamma etc) were
+                // computed against sim-wide γ/μ — instead of
+                // precomputing them we now derive H/Q/baseline branches
+                // from per-strain γ/μ inline. Slightly more work per
+                // I cell but the modifier branch is already cold.
+                const sidI = sidOf(i);
+                const gammaSrc = sidI >= 0 ? reg.gamma[sidI] : gamma;
+                const muSrc    = sidI >= 0 ? reg.mu[sidI]    : mu;
+                const hMortMult = sidI >= 0 ? reg.health_mortality_mult[sidI] : health_mortality_mult;
+                const ns = nextStatus[i];
+                let gammaEff, muEff;
+                if (ns === Status.H) {
+                    gammaEff = gammaSrc * h_recover_mult;
+                    muEff    = muSrc    * h_mortality_mult;
+                } else if (t.auto_hospital && (ns === Status.Q || overflowRegime)) {
+                    gammaEff = gammaSrc;
+                    muEff    = muSrc    * h_overflow_mortality_mult;
+                } else {
+                    // Baseline (non-H, non-Q, no overflow). Reached
+                    // when capacity is plentiful and the cell isn't
+                    // quarantined — or when the hospital system is off
+                    // entirely (no system ⇒ no overflow penalty) —
+                    // same as having no status modifier.
+                    gammaEff = gammaSrc;
+                    muEff    = muSrc;
                 }
-                case Compartment.E: {
-                    // Step 5: E → I. Two paths depending on LATENT flag.
-                    const isLatent = t.L && (f & Flag.LATENT) !== 0;
-                    if (isLatent) {
-                        // Slow reactivation; clears the LATENT flag on success.
-                        if (r() < l_reactivate) {
-                            next[i] = Compartment.I;
-                            nextFlags[i] = f & ~Flag.LATENT;
-                            lReact++;
-                            eToI++;
+                const aNorm = Math.min(1, age[i] / safeMaxAge);
+                const ageFactor = 1 + ageSevDelta * aNorm;
+                const hFactor = 1 + (hMortMult - 1) * (1 - health[i]);
+                muEff = muEff * ageFactor * hFactor;
+
+                let leaveRate = gammaEff + muEff;
+                if (leaveRate > 1) leaveRate = 1;
+                const recoverShare = leaveRate > 0 ? gammaEff / (gammaEff + muEff) : 0;
+
+                if (r() < leaveRate) {
+                    if (r() < recoverShare) {
+                        next[i] = Compartment.R;
+                        // Carrier roll: per-strain c_seed read from
+                        // the strain at slot 0. A fraction of
+                        // recoveries leave with the C (chronic carrier)
+                        // flag set, making them low-rate transmission
+                        // sources via cTransmitMultOf in
+                        // pickIncomingStrain. Gated on t.C so toggle-
+                        // off disables the mechanic entirely.
+                        const cSeedHere = cSeedOf(i);
+                        const becameCarrier = (t.C && cSeedHere > 0 && r() < cSeedHere);
+                        if (becameCarrier) {
+                            nextFlags[i] = nextFlags[i] | Flag.CARRIER;
                         }
-                    } else {
-                        // Default σ progression (also covers L-flagged E
-                        // when toggles.L is false — toggle off = ignore flag).
-                        if (r() < sigma) {
-                            next[i] = Compartment.I;
-                            eToI++;
-                        }
-                    }
-                    break;
-                }
-                case Compartment.S: {
-                    // Step 4: transmission. See `pickIncomingStrain` above for
-                    // the per-neighbor weight + strain-aware β aggregation +
-                    // two-stage weighted pick (edge, then slot) + mutation
-                    // roll. On infection success, set the cell to E with
-                    // slot 0 carrying the picked strain at load 1.0 and all
-                    // other slots cleared.
-                    const tx = pickIncomingStrain(q, row, i);
-                    if (tx.infected) {
-                        next[i] = Compartment.E;
+                        // Phase 7/8: recovery confers strain-specific
+                        // immunity to ALL strains the cell was carrying.
+                        // Loop over every active slot and bloom-set its
+                        // strain ID, then clear loads + ids.
+                        //
+                        // Phase A: if the cell became a CARRIER, the
+                        // strain at slot 0 is RETAINED with load=0 so
+                        // cTransmitMultOf can read its per-strain
+                        // transmit multiplier at the source side.
+                        // Bloom is still set for all slots (recovery
+                        // memory is independent of carrier memory).
                         if (useStrains) {
                             const slot0 = i * MAX_ACTIVE;
-                            nextStrainIds[slot0] = tx.pick;
-                            nextStrainLoads[slot0] = tx.pick !== EMPTY_STRAIN ? 1.0 : 0;
-                            for (let s = 1; s < MAX_ACTIVE; s++) {
+                            const carrierStrain = becameCarrier && strain_ids
+                                ? strain_ids[slot0]
+                                : EMPTY_STRAIN;
+                            if (strain_ids) {
+                                for (let s = 0; s < MAX_ACTIVE; s++) {
+                                    const sid = strain_ids[slot0 + s];
+                                    if (sid !== EMPTY_STRAIN) {
+                                        bloomSet(nextStrainHist, i, sid);
+                                    }
+                                }
+                            }
+                            for (let s = 0; s < MAX_ACTIVE; s++) {
                                 nextStrainIds[slot0 + s] = EMPTY_STRAIN;
                                 nextStrainLoads[slot0 + s] = 0;
                             }
+                            if (carrierStrain !== EMPTY_STRAIN) {
+                                // Slot 0 = "I am a carrier of this
+                                // strain" memory. load=0 keeps it out
+                                // of replicator/recombination math.
+                                nextStrainIds[slot0] = carrierStrain;
+                                nextStrainLoads[slot0] = 0;
+                            }
                         }
-                        sToE++;
-                    }
-                    break;
-                }
-                case Compartment.M: {
-                    // Step 5: maternal immunity decay. Only auto-decays when
-                    // the M mechanic is enabled.
-                    if (t.M && r() < m_decay) {
-                        next[i] = Compartment.S;
-                        mToS++;
-                    }
-                    break;
-                }
-                case Compartment.D: {
-                    // Step 5: F-flag decay on corpses, then D→EMPTY
-                    // disposal (only when F is not set — F-flagged corpses
-                    // hang around until F decays). F decay runs first; the
-                    // simultaneous-update read of `f` means an F-flagged
-                    // corpse this tick is not eligible for disposal even
-                    // if F clears here.
-                    if (t.F && (f & Flag.F_CORPSE) && r() < f_decay) {
-                        nextFlags[i] = f & ~Flag.F_CORPSE;
-                        fDecay++;
-                    } else if (!(f & Flag.F_CORPSE) && r() < d_disposal) {
-                        // Plain D (no F flag): disposal.
-                        next[i] = Compartment.EMPTY;
-                        nextFlags[i] = Flag.NONE;
-                        nextStatus[i] = Status.NONE;
+                        iToR++;
+                    } else {
+                        next[i] = Compartment.D;
+                        // Death via infection: when the F (infectious-
+                        // corpse) flag is enabled, mark the corpse as
+                        // F-flagged. The f_decay path strips it after
+                        // ~1/f_decay ticks. The F-flag is what gates
+                        // D→Z conversion (step 9) — natural-cause
+                        // corpses never zombify.
+                        const becameFCorpse = !!t.F;
+                        if (becameFCorpse) nextFlags[i] = nextFlags[i] | Flag.F_CORPSE;
                         nextHealth[i] = 0;
-                        nextAge[i] = 0;
-                        dToEmpty++;
+                        // Dead cells don't carry an active strain. We do
+                        // NOT set the bloom — the dead don't accrue
+                        // immunity memory.
+                        //
+                        // Phase A: F-corpse cells keep slot 0 = the
+                        // strain that killed them (load=0 memory) so
+                        // fTransmitMultOf, fDecayOf, and dzDeadOf can
+                        // all resolve to the right strain at the
+                        // F-corpse source side. Non-F deaths wipe
+                        // slot 0 (natural corpses carry no payload).
+                        if (useStrains) {
+                            const slot0 = i * MAX_ACTIVE;
+                            const fStrain = becameFCorpse && strain_ids
+                                ? strain_ids[slot0]
+                                : EMPTY_STRAIN;
+                            for (let s = 0; s < MAX_ACTIVE; s++) {
+                                nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                                nextStrainLoads[slot0 + s] = 0;
+                            }
+                            if (fStrain !== EMPTY_STRAIN) {
+                                nextStrainIds[slot0] = fStrain;
+                                nextStrainLoads[slot0] = 0;
+                            }
+                        }
+                        iToD++;
                     }
-                    break;
+                    // Cell left I — clear H (if any). Q persists.
+                    if (nextStatus[i] === Status.H) {
+                        nextStatus[i] = Status.NONE;
+                    }
+                } else if (useStrains) {
+                    // Phase 8: cell stayed I. Roll for coinfection by a
+                    // neighbor's strain. Skipped under single-strain
+                    // legacy mode — coinfection is meaningless there.
+                    const tx = pickIncomingStrain(i);
+                    if (tx.infected && tx.pick !== EMPTY_STRAIN) {
+                        const slot0 = i * MAX_ACTIVE;
+                        const pick = tx.pick;
+                        // Cross-immunity gate: bloom hit ⇒ skip. The
+                        // per-slot xImm scaling in pickIncomingStrain
+                        // softens this probabilistically, but the
+                        // contract is to also hard-skip when the bloom
+                        // already records exposure.
+                        let blocked = false;
+                        if (xImm > 0 && strain_hist
+                            && bloomHas(strain_hist, i, pick)) {
+                            blocked = true;
+                        }
+                        // Already-present check: no-op if pick is in
+                        // any active slot of the target.
+                        if (!blocked) {
+                            for (let s = 0; s < MAX_ACTIVE; s++) {
+                                if (nextStrainIds[slot0 + s] === pick) {
+                                    blocked = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!blocked) {
+                            // Slot placement: empty first; else evict
+                            // the lowest-load existing slot.
+                            let hostSlot = -1;
+                            for (let s = 0; s < MAX_ACTIVE; s++) {
+                                if (nextStrainIds[slot0 + s] === EMPTY_STRAIN) {
+                                    hostSlot = s;
+                                    break;
+                                }
+                            }
+                            if (hostSlot === -1) {
+                                let minLd = Infinity;
+                                for (let s = 0; s < MAX_ACTIVE; s++) {
+                                    const ld = nextStrainLoads[slot0 + s];
+                                    if (ld < minLd) {
+                                        minLd = ld;
+                                        hostSlot = s;
+                                    }
+                                }
+                            }
+                            if (hostSlot >= 0) {
+                                // Sum existing loads (excluding host)
+                                // → scale them by (1 - coDelta) /
+                                // existingSum, then insert pick at
+                                // load coDelta. If host eviction left
+                                // nothing else, hybrid gets full load.
+                                let existingSum = 0;
+                                for (let s = 0; s < MAX_ACTIVE; s++) {
+                                    if (s === hostSlot) continue;
+                                    if (nextStrainIds[slot0 + s] !== EMPTY_STRAIN) {
+                                        existingSum += nextStrainLoads[slot0 + s];
+                                    }
+                                }
+                                nextStrainIds[slot0 + hostSlot] = pick;
+                                if (existingSum > 0) {
+                                    const scale = (1 - coDelta) / existingSum;
+                                    for (let s = 0; s < MAX_ACTIVE; s++) {
+                                        if (s === hostSlot) continue;
+                                        if (nextStrainIds[slot0 + s] !== EMPTY_STRAIN) {
+                                            nextStrainLoads[slot0 + s] *= scale;
+                                        }
+                                    }
+                                    nextStrainLoads[slot0 + hostSlot] = coDelta;
+                                } else {
+                                    nextStrainLoads[slot0 + hostSlot] = 1;
+                                }
+                                coinfections++;
+                            }
+                        }
+                    }
                 }
-                // R, V, Z, EMPTY: untouched in steps 4/5.
-                default:
-                    break;
+                break;
             }
+            case Compartment.E: {
+                // Step 5: E → I. Two paths depending on LATENT flag.
+                // Phase A: σ and l_reactivate read from this cell's
+                // slot-0 strain (always set on E cells — they got
+                // there via an S/R/V→E transition that set slot 0).
+                const isLatent = t.L && (f & Flag.LATENT) !== 0;
+                if (isLatent) {
+                    // Slow reactivation; clears the LATENT flag on success.
+                    if (r() < lReactOf(i)) {
+                        next[i] = Compartment.I;
+                        nextFlags[i] = f & ~Flag.LATENT;
+                        lReact++;
+                        eToI++;
+                    }
+                } else {
+                    // Default σ progression (also covers L-flagged E
+                    // when toggles.L is false — toggle off = ignore flag).
+                    if (r() < sigmaOf(i)) {
+                        next[i] = Compartment.I;
+                        eToI++;
+                    }
+                }
+                break;
+            }
+            case Compartment.S: {
+                // Step 4: transmission. See `pickIncomingStrain` above for
+                // the per-neighbor weight + strain-aware β aggregation +
+                // two-stage weighted pick (edge, then slot) + mutation
+                // roll. On infection success, set the cell to E with
+                // slot 0 carrying the picked strain at load 1.0 and all
+                // other slots cleared.
+                const tx = pickIncomingStrain(i);
+                if (tx.infected) {
+                    next[i] = Compartment.E;
+                    // Latent roll: a fraction of fresh exposures enter
+                    // with the L flag set, routing E→I through the slow
+                    // l_reactivate path instead of σ. Gated on t.L so
+                    // toggle-off disables the mechanic. Don't OR onto
+                    // the carried-over flags byte — a fresh E has no
+                    // prior flags worth preserving (S can't carry L/C/F).
+                    // Phase A: l_seed reads off the incoming picked
+                    // strain — TB-like strains can ship latent at high
+                    // rate while flu-like strains skip the L pathway.
+                    const lSeedS = lSeedOfPick(tx.pick);
+                    if (t.L && lSeedS > 0 && r() < lSeedS) {
+                        nextFlags[i] = Flag.LATENT;
+                    } else {
+                        nextFlags[i] = Flag.NONE;
+                    }
+                    if (useStrains) {
+                        const slot0 = i * MAX_ACTIVE;
+                        nextStrainIds[slot0] = tx.pick;
+                        nextStrainLoads[slot0] = tx.pick !== EMPTY_STRAIN ? 1.0 : 0;
+                        for (let s = 1; s < MAX_ACTIVE; s++) {
+                            nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                            nextStrainLoads[slot0 + s] = 0;
+                        }
+                    }
+                    sToE++;
+                }
+                break;
+            }
+            case Compartment.R: {
+                // Reinfection. R cells are normally fully immune (default
+                // r_susceptibility_mult = 0 would scale pInf to 0 inside
+                // pickIncomingStrain. When the param is > 0 they become
+                // partially susceptible: the bloom-filter cross-immunity
+                // already softens contributions from previously-seen
+                // strains via (1 - xImm), so reinfections favor strains
+                // the cell hasn't seen — which is the right shape (novel
+                // antigens slip past prior immunity at reduced rate).
+                //
+                // On breakthrough: R → E. Strain slots get the picked
+                // strain at load 1; the bloom history is preserved (it's
+                // a record of past exposures, not a clean slate).
+                // Carrier flag (if any) clears — the cell is no longer
+                // recovered.
+                if (rSuscMult <= 0) break;
+                const txR = pickIncomingStrain(i);
+                if (txR.infected) {
+                    next[i] = Compartment.E;
+                    const lSeedR = lSeedOfPick(txR.pick);
+                    if (t.L && lSeedR > 0 && r() < lSeedR) {
+                        nextFlags[i] = Flag.LATENT;
+                    } else {
+                        nextFlags[i] = Flag.NONE;
+                    }
+                    if (useStrains) {
+                        const slot0 = i * MAX_ACTIVE;
+                        nextStrainIds[slot0] = txR.pick;
+                        nextStrainLoads[slot0] = txR.pick !== EMPTY_STRAIN ? 1.0 : 0;
+                        for (let s = 1; s < MAX_ACTIVE; s++) {
+                            nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                            nextStrainLoads[slot0 + s] = 0;
+                        }
+                    }
+                    // Counted in sToE so observed Re (which divides by recent
+                    // recovery counts) reflects all new infection events,
+                    // not just S-derived ones. Same reasoning for V below.
+                    sToE++;
+                }
+                break;
+            }
+            case Compartment.V: {
+                // Vaccine breakthrough. V cells are normally fully
+                // immune when vax_efficacy = 1 → pInf scaled to 0
+                // inside pickIncomingStrain. When efficacy < 1, the
+                // residual (1 - vaxEff) factor lets infection through.
+                // Bloom history is preserved — vaccinated cells that
+                // were previously R keep their cross-immunity record.
+                //
+                // Gated on t.V so toggle-off skips the case entirely
+                // (and on vax_efficacy < 1 — perfect efficacy is a
+                // free early-out).
+                if (!t.V || vaxEff >= 1) break;
+                const txV = pickIncomingStrain(i);
+                if (txV.infected) {
+                    next[i] = Compartment.E;
+                    const lSeedV = lSeedOfPick(txV.pick);
+                    if (t.L && lSeedV > 0 && r() < lSeedV) {
+                        nextFlags[i] = Flag.LATENT;
+                    } else {
+                        nextFlags[i] = Flag.NONE;
+                    }
+                    if (useStrains) {
+                        const slot0 = i * MAX_ACTIVE;
+                        nextStrainIds[slot0] = txV.pick;
+                        nextStrainLoads[slot0] = txV.pick !== EMPTY_STRAIN ? 1.0 : 0;
+                        for (let s = 1; s < MAX_ACTIVE; s++) {
+                            nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                            nextStrainLoads[slot0 + s] = 0;
+                        }
+                    }
+                    sToE++;
+                }
+                break;
+            }
+            case Compartment.M: {
+                // Step 5: maternal immunity decay. Only auto-decays when
+                // the M mechanic is enabled.
+                // Phase A: per-strain m_decay reads off the mother's
+                // strain inherited at birth (slot 0, load=0). Falls
+                // back to params m_decay if no inherited strain.
+                // Clear slot 0 on transition out of M (antibody memory
+                // is gone once they decay).
+                if (t.M && r() < mDecayOf(i)) {
+                    next[i] = Compartment.S;
+                    if (useStrains) {
+                        const slot0 = i * MAX_ACTIVE;
+                        nextStrainIds[slot0] = EMPTY_STRAIN;
+                        nextStrainLoads[slot0] = 0;
+                    }
+                    mToS++;
+                }
+                break;
+            }
+            case Compartment.D: {
+                // Step 5: F-flag decay on corpses, then D→EMPTY
+                // disposal (only when F is not set — F-flagged corpses
+                // hang around until F decays). F decay runs first; the
+                // simultaneous-update read of `f` means an F-flagged
+                // corpse this tick is not eligible for disposal even
+                // if F clears here.
+                // Phase A: f_decay reads off the F-corpse's slot-0
+                // strain (the strain that killed it). On flag clear,
+                // also clear slot 0 — the corpse's strain memory was
+                // only useful for f_transmit_mult / dz_dead lookups
+                // while the F flag was active.
+                if (t.F && (f & Flag.F_CORPSE) && r() < fDecayOf(i)) {
+                    nextFlags[i] = f & ~Flag.F_CORPSE;
+                    if (useStrains) {
+                        const slot0 = i * MAX_ACTIVE;
+                        nextStrainIds[slot0] = EMPTY_STRAIN;
+                        nextStrainLoads[slot0] = 0;
+                    }
+                    fDecay++;
+                } else if (!(f & Flag.F_CORPSE) && r() < d_disposal) {
+                    // Plain D (no F flag): disposal.
+                    next[i] = Compartment.EMPTY;
+                    nextFlags[i] = Flag.NONE;
+                    nextStatus[i] = Status.NONE;
+                    nextHealth[i] = 0;
+                    nextAge[i] = 0;
+                    dToEmpty++;
+                }
+                break;
+            }
+            // R, V, Z, EMPTY: untouched in steps 4/5.
+            default:
+                break;
         }
     }
 
@@ -1192,16 +1324,146 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // start-of-tick compartment so cells that transitioned out of I this
     // tick (recovered/died) skip this pass — their nextHealth is already
     // correct (R preserves health; D set to 0 above).
-    if (health_degrade_per_tick > 0) {
-        for (let i = 0; i < N; i++) {
-            if (compartment[i] === Compartment.I) {
-                // Only degrade if the cell is still I after step 5 — if it
-                // recovered/died, its nextHealth is already set.
-                if (next[i] === Compartment.I) {
-                    let h = nextHealth[i] - health_degrade_per_tick;
-                    if (h < 0) h = 0;
-                    nextHealth[i] = h;
+    //
+    // Phase A: per-strain. Different strains can damage hosts at very
+    // different rates (HIV vs flu). Read from the I cell's slot-0 strain.
+    // Sim-wide health_degrade_per_tick === 0 still short-circuits the
+    // whole pass — if α has 0 here AND no faster mutants are alive, the
+    // pass is wasted work. We don't have alive-max-degrade tracking yet,
+    // so just run the pass and let the per-cell roll degenerate to 0.
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
+        if (compartment[i] === Compartment.I && next[i] === Compartment.I) {
+            const degrade = healthDegradeOf(i);
+            if (degrade > 0) {
+                let h = nextHealth[i] - degrade;
+                if (h < 0) h = 0;
+                nextHealth[i] = h;
+            }
+        }
+    }
+
+    // ─── Step 7.5: Vaccination rollout ──────────────────────────────────
+    // Per-tick S/E/R/M → V conversion gated on t.V && t.vax_rollout. Models
+    // a real-world vaccination campaign: even without painting, doses roll
+    // out at `vax_rollout_rate` per eligible cell per tick. Reads from
+    // `next[i]` (so a cell that recovered this tick is eligible immediately
+    // on the next), writes to `next[i]` only if the cell is still S/E/R/M.
+    // I and Z are intentionally not eligible — vaccinating an active
+    // infection doesn't suppress it (sanitize handles that), and Z is its
+    // own pathogen class. D/EMPTY are no-ops.
+    //
+    // Vaccinated cells get their strain slots and flags wiped (clean slate)
+    // and their bloom-history is preserved (a vaccinated R cell keeps its
+    // earned immunity record).
+    if (t.V && t.vax_rollout && vax_rollout_rate > 0) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            const nc = next[i];
+            if (nc !== Compartment.S && nc !== Compartment.E &&
+                nc !== Compartment.R && nc !== Compartment.M) continue;
+            if (r() < vax_rollout_rate) {
+                next[i] = Compartment.V;
+                nextFlags[i] = Flag.NONE;
+                nextStatus[i] = Status.NONE;
+                if (useStrains) {
+                    const slot0 = i * MAX_ACTIVE;
+                    for (let s = 0; s < MAX_ACTIVE; s++) {
+                        nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                        nextStrainLoads[slot0 + s] = 0;
+                    }
                 }
+                vaxRollout++;
+            }
+        }
+    }
+
+    // ─── Step 7.6: Auto-quarantine (contact tracing) ────────────────────
+    // Gated on t.auto_quarantine. Models contact tracing: an I cell (a
+    // detected case) and every living quarantinable cell adjacent to an I
+    // cell (a traced contact) is a quarantine candidate. Each un-quarantined
+    // candidate is traced into Q with probability quarantine_trace_rate per
+    // tick (imperfect detection) and tagged Flag.AUTO_Q so the release pass
+    // can tell auto-set Q from manually-painted Q.
+    //
+    // Release: an AUTO_Q cell drops Q the tick it is no longer a case or a
+    // contact (not I, no I neighbour). No timer — pure contact-tracing
+    // steady state. Manually-painted Q (no AUTO_Q flag) is never touched.
+    //
+    // Reads next[] (post-transition compartment) so this tick's recoveries
+    // and infections are reflected; writes nextStatus / nextFlags, so the
+    // status change lands for next tick's transmission + hospital pre-pass
+    // (same one-tick lag as Step 7.5 vax rollout).
+    //
+    // D / EMPTY / Z cells can't be quarantined — they pass through, and any
+    // stale AUTO_Q they carry (e.g. a quarantined cell that just died) is
+    // cleared. When the toggle is off, every auto-set Q is released so
+    // flipping it off doesn't strand cells in quarantine.
+
+    // Provenance-restore pass (runs regardless of the toggle). Step 5
+    // compartment transitions overwrite nextFlags with compartment-specific
+    // flag sets (LATENT / CARRIER / F_CORPSE) — an absolute write that
+    // clobbers the AUTO_Q provenance bit. A cell that still carries
+    // Status.Q but had AUTO_Q at start-of-tick is an orphaned auto-quarantine
+    // (e.g. a quarantined S contact that caught the infection: S→E wipes its
+    // flags). Re-mark it so the release / toggle-off logic below can still
+    // recognise and clear it — without this it would stay quarantined
+    // forever, even after the whole grid recovers. Cells that legitimately
+    // left quarantine (vaccination clears Q + flags together) have
+    // nextStatus !== Q and are correctly skipped.
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = active ? active[ak] : ak;
+        if ((flags[i] & Flag.AUTO_Q) && nextStatus[i] === Status.Q &&
+            !(nextFlags[i] & Flag.AUTO_Q)) {
+            nextFlags[i] |= Flag.AUTO_Q;
+        }
+    }
+
+    if (t.auto_quarantine) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            const c = next[i];
+            const quarantinable = c === Compartment.S || c === Compartment.E ||
+                c === Compartment.I || c === Compartment.R ||
+                c === Compartment.V || c === Compartment.M;
+            if (!quarantinable) {
+                // Corpse / empty / zombie — strip any stale auto-set Q.
+                if (nextFlags[i] & Flag.AUTO_Q) {
+                    nextFlags[i] &= ~Flag.AUTO_Q;
+                    if (nextStatus[i] === Status.Q) nextStatus[i] = Status.NONE;
+                }
+                continue;
+            }
+            // Case (I) or contact (adjacent to an I)?
+            let isContact = (c === Compartment.I);
+            if (!isContact) {
+                const nbase = i * 6;
+                for (let d = 0; d < 6; d++) {
+                    const ni = nbrIdx[nbase + d];
+                    if (ni >= 0 && next[ni] === Compartment.I) { isContact = true; break; }
+                }
+            }
+            if (isContact) {
+                // Acquire: only un-quarantined cells, imperfect detection.
+                // Cells already Q (auto or manual) are left as-is.
+                if (nextStatus[i] === Status.NONE && r() < quarantine_trace_rate) {
+                    nextStatus[i] = Status.Q;
+                    nextFlags[i] |= Flag.AUTO_Q;
+                    autoQuarantined++;
+                }
+            } else if (nextFlags[i] & Flag.AUTO_Q) {
+                // No longer a case or contact — release the auto-set Q.
+                nextFlags[i] &= ~Flag.AUTO_Q;
+                if (nextStatus[i] === Status.Q) nextStatus[i] = Status.NONE;
+            }
+        }
+    } else {
+        // Toggle off — release every auto-set Q. Manual Q is left alone.
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            if (nextFlags[i] & Flag.AUTO_Q) {
+                nextFlags[i] &= ~Flag.AUTO_Q;
+                if (nextStatus[i] === Status.Q) nextStatus[i] = Status.NONE;
             }
         }
     }
@@ -1217,7 +1479,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // overwrite freely; the conservation invariant is preserved because
     // every overwrite is still one cell → one compartment).
     if (mortDelta > 0 || mortality_baseline > 0) {
-        for (let i = 0; i < N; i++) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
             const c = compartment[i];
             if (c === Compartment.EMPTY || c === Compartment.D || c === Compartment.Z) continue;
             const aNorm = Math.min(1, age[i] / safeMaxAge);
@@ -1254,14 +1517,51 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // `next`. Z writes overwrite earlier writes (transmission / I→R / I→D
     // / D→cleared-F / disposal / age-out) — "Z wins" by design.
     //
-    // Multiple Z neighbors converting the same target: each Z rolls
-    // independently against the target. Effective per-tick conversion
-    // probability is 1 - (1 - z_infect)^k, matching the spec.
+    // Five sub-mechanics, all gated on t.Z:
+    //   (a) Spontaneous D → Z   — F-corpse reanimation at dz_dead
+    //   (b) Spontaneous I → Z   — live cell zombification at dz_alive
+    //   (c) E-with-L → Z        — oncoviral transformation at l_transform
+    //                             (also gated on t.L so the pathway is inert
+    //                             when LATENT flag is disabled wholesale)
+    //   (d) Z natural decay      — Z → D per-tick at z_die_natural; gives a
+    //                             finite lifespan (the macro reading)
+    //   (e) Z encounter loop     — per (Z, non-Z neighbor) pair, single
+    //                             uniform roll bucketed across four
+    //                             mutually-exclusive target outcomes:
+    //                               [0, z_fight_kill)                      → D
+    //                               [z_fight_kill, +z_fight_infect)        → D + F_CORPSE
+    //                               [..., +z_fight_expose)                 → E
+    //                               [..., +z_convert_unopposed)            → Z
+    //                               leftover                               → nothing
+    //                             plus a separate roll for z_die_fighting
+    //                             so the zombie can die in the same
+    //                             encounter where it kills or converts.
+    //                             First-affect-wins on the target side:
+    //                             once a target's `next[ni]` differs from
+    //                             its start-of-tick state, subsequent Zs
+    //                             skip it (the human is dead, exposed, or
+    //                             converted — there's no fight). This makes
+    //                             P(target affected | k zombies) scale as
+    //                             1 - P(nothing)^k as expected.
+    //
+    // Macro reading (zombie pandemic): high z_fight_*, finite lifespan via
+    // z_die_natural, low z_convert_unopposed, F-spawn pathway active.
+    // Micro reading (oncoviral): low z_fight_* (cells don't fight back; the
+    // small nonzero rate represents NK / CTL immune surveillance), no
+    // lifespan (transformed cells are immortal), high z_convert_unopposed
+    // (clonal expansion), exhaust-by-crowding on for tumor-core necrosis,
+    // L-spawn pathway via l_transform.
     if (t.Z) {
-        // Local helper to wipe the strain slot for any cell converting into
-        // Z (or otherwise leaving its disease state via the Z dynamics).
-        // Z is its own pseudo-strain at a fixed slot — it doesn't participate
-        // in the registry's cross-immunity, so we drop any active strain ID.
+        // Phase A: Z is now strain-aware. Each Z cell carries the strain
+        // that drove its conversion at slot 0 (load 1). All per-strain Z
+        // rates (dz_*, z_*, l_transform) read off that strain.
+        //
+        // setZStrain: target becomes Z, slot 0 = srcStrain at load 1.
+        // setMemoryStrain: target becomes D+F-corpse, slot 0 = srcStrain
+        //   at load 0 — memory for f_transmit_mult / dz_dead / f_decay.
+        // clearStrainSlot: target carries no strain payload (clean kill,
+        //   Z→D from natural decay, encounter→D no-F, Z→D from exhaustion
+        //   or fighting back).
         const clearStrainSlot = (idx) => {
             if (!useStrains) return;
             const slot0 = idx * MAX_ACTIVE;
@@ -1270,195 +1570,227 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 nextStrainLoads[slot0 + s] = 0;
             }
         };
-        for (let row = 0; row < H; row++) {
-            const rowBase = row * W;
-            for (let q = 0; q < W; q++) {
-                const i = rowBase + q;
-                const c = compartment[i];
+        const setZStrain = (idx, srcStrainId) => {
+            if (!useStrains) return;
+            const slot0 = idx * MAX_ACTIVE;
+            nextStrainIds[slot0] = srcStrainId;
+            nextStrainLoads[slot0] = srcStrainId !== EMPTY_STRAIN ? 1 : 0;
+            for (let s = 1; s < MAX_ACTIVE; s++) {
+                nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                nextStrainLoads[slot0 + s] = 0;
+            }
+        };
+        const setMemoryStrain = (idx, srcStrainId) => {
+            if (!useStrains) return;
+            const slot0 = idx * MAX_ACTIVE;
+            nextStrainIds[slot0] = srcStrainId;
+            nextStrainLoads[slot0] = 0;
+            for (let s = 1; s < MAX_ACTIVE; s++) {
+                nextStrainIds[slot0 + s] = EMPTY_STRAIN;
+                nextStrainLoads[slot0 + s] = 0;
+            }
+        };
+        // Read slot-0 strain id from start-of-tick state. Returns
+        // EMPTY_STRAIN when there isn't one.
+        const slot0Read = (idx) => {
+            if (!useStrains || !strain_ids) return EMPTY_STRAIN;
+            return strain_ids[idx * MAX_ACTIVE];
+        };
 
-                if (c === Compartment.D) {
-                    if (r() < dz_dead) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = active ? active[ak] : ak;
+            const c = compartment[i];
+
+            if (c === Compartment.D) {
+                    // (a) F-corpse reanimation. Per-strain dz_dead reads
+                    // off the F-corpse's slot-0 strain memory. Z inherits
+                    // that strain at slot 0 with load 1.
+                    if ((flags[i] & Flag.F_CORPSE) && r() < dzDeadOf(i)) {
+                        const srcStrain = slot0Read(i);
                         next[i] = Compartment.Z;
-                        clearStrainSlot(i);
+                        setZStrain(i, srcStrain);
                         dToZ++;
                     }
                 } else if (c === Compartment.I) {
-                    // "Not already converted" — if transmission/transitions
-                    // moved this cell elsewhere (R, D) we still overwrite
-                    // because we read from start-of-tick compartment. Z wins.
-                    if (r() < dz_alive) {
+                    // (b) Spontaneous live zombification. Per-strain
+                    // dz_alive; Z inherits the I cell's strain.
+                    if (r() < dzAliveOf(i)) {
+                        const srcStrain = slot0Read(i);
                         next[i] = Compartment.Z;
-                        clearStrainSlot(i);
+                        setZStrain(i, srcStrain);
                         iToZ++;
                     }
-                } else if (c === Compartment.Z) {
-                    // Exhaustion: count start-of-tick Z neighbors.
-                    const ns = neighbors(q, row, topology, W, H);
-                    let zCount = 0;
-                    for (let j = 0; j < ns.length; j++) {
-                        const nb = ns[j];
-                        if (compartment[nb.r * W + nb.q] === Compartment.Z) zCount++;
+                } else if (c === Compartment.E) {
+                    // (c) L → Z transformation (oncoviral pathway). Per-
+                    // strain l_transform; Z inherits the E cell's strain.
+                    // Same-tick step 5 writes get clobbered (Z wins).
+                    if (t.L && (flags[i] & Flag.LATENT) && r() < lTransformOf(i)) {
+                        const srcStrain = slot0Read(i);
+                        next[i] = Compartment.Z;
+                        setZStrain(i, srcStrain);
+                        nextFlags[i] = nextFlags[i] & ~Flag.LATENT;
+                        lToZ++;
                     }
-                    if (zCount >= z_exhaust_threshold && r() < z_exhaust) {
+                } else if (c === Compartment.Z) {
+                    // Phase A: every per-strain Z rate reads off the Z's
+                    // own slot-0 strain. Resolve once per Z and reuse.
+                    const zStrain = slot0Read(i);
+                    const zHasStrain = (zStrain !== EMPTY_STRAIN
+                        && zStrain >= 0 && zStrain < regLen);
+
+                    // (d) Natural decay — per-strain.
+                    const zDieNat = zHasStrain ? reg.z_die_natural[zStrain] : z_die_natural;
+                    if (next[i] === Compartment.Z && zDieNat > 0 && r() < zDieNat) {
                         next[i] = Compartment.D;
-                        // Strain slot already empty on a Z source — defensive
-                        // no-op here, but matches the I→D / age-out pattern.
+                        nextFlags[i] = nextFlags[i] & ~Flag.F_CORPSE;
+                        clearStrainSlot(i);
+                        zDieNatural++;
+                        continue;
+                    }
+
+                    const nbase = i * 6;
+
+                    // (d.2) Exhaustion — per-strain z_exhaust; threshold
+                    // stays sim-wide (integer cell count).
+                    let zCount = 0;
+                    for (let d = 0; d < 6; d++) {
+                        const ni = nbrIdx[nbase + d];
+                        if (ni < 0) continue;
+                        if (compartment[ni] === Compartment.Z) zCount++;
+                    }
+                    const zExhaustRate = zHasStrain ? reg.z_exhaust[zStrain] : z_exhaust;
+                    if (zCount >= z_exhaust_threshold && r() < zExhaustRate) {
+                        next[i] = Compartment.D;
+                        nextFlags[i] = nextFlags[i] & ~Flag.F_CORPSE;
                         clearStrainSlot(i);
                         zExhaust++;
+                        continue;
                     }
-                    // Infection: each Z rolls independently against every
-                    // non-Z, non-EMPTY neighbor.
-                    for (let j = 0; j < ns.length; j++) {
-                        const nb = ns[j];
-                        const ni = nb.r * W + nb.q;
+
+                    // (e) Encounter loop. Per-strain bucket thresholds
+                    // computed once per Z from its genome.
+                    const fk = zHasStrain ? reg.z_fight_kill[zStrain]    : z_fight_kill;
+                    const fi = zHasStrain ? reg.z_fight_infect[zStrain]  : z_fight_infect;
+                    const fe = zHasStrain ? reg.z_fight_expose[zStrain]  : z_fight_expose;
+                    const cv = zHasStrain ? reg.z_convert_unopposed[zStrain] : z_convert_unopposed;
+                    const fkc = fk > 0 ? fk : 0;
+                    const fic = fi > 0 ? fi : 0;
+                    const fec = fe > 0 ? fe : 0;
+                    const cvc = cv > 0 ? cv : 0;
+                    const eSum = fkc + fic + fec + cvc;
+                    const eScale = eSum > 1 ? 1 / eSum : 1;
+                    const tKill    = fkc * eScale;
+                    const tInfect  = tKill   + fic * eScale;
+                    const tExpose  = tInfect + fec * eScale;
+                    const tConvert = tExpose + cvc * eScale;
+                    const zDieFightRate = zHasStrain ? reg.z_die_fighting[zStrain] : z_die_fighting;
+                    // encounter→E latent-seed roll uses the Z's strain's
+                    // l_seed (the exposure is to the Z's pathogen).
+                    const zLSeedRaw = zHasStrain ? reg.l_seed[zStrain] : lSeed;
+                    const zLSeed = zLSeedRaw > 1 ? 1 : (zLSeedRaw < 0 ? 0 : zLSeedRaw);
+
+                    let zombieAlive = true;
+                    for (let d = 0; d < 6; d++) {
+                        const ni = nbrIdx[nbase + d];
+                        if (ni < 0) continue;
                         const nc = compartment[ni];
-                        if (nc === Compartment.Z || nc === Compartment.EMPTY) continue;
-                        if (r() < z_infect) {
-                            // Only count as a new infection if the target
-                            // wasn't already turned by another Z this tick.
-                            if (next[ni] !== Compartment.Z) {
+                        if (nc === Compartment.Z || nc === Compartment.EMPTY || nc === Compartment.D) continue;
+
+                        if (next[ni] === nc) {
+                            const u = r();
+                            if (u < tKill) {
+                                // Clean kill — no F flag, no strain memory.
+                                next[ni] = Compartment.D;
+                                nextStatus[ni] = Status.NONE;
+                                nextHealth[ni] = 0;
+                                nextFlags[ni] = nextFlags[ni] & ~Flag.F_CORPSE;
+                                clearStrainSlot(ni);
+                                zFightKill++;
+                            } else if (u < tInfect) {
+                                // Kill + infect: D+F-corpse with strain
+                                // memory = the Z's strain so subsequent
+                                // f_transmit_mult / dz_dead / f_decay
+                                // resolve correctly off the new corpse.
+                                next[ni] = Compartment.D;
+                                nextStatus[ni] = Status.NONE;
+                                nextHealth[ni] = 0;
+                                if (t.F) {
+                                    nextFlags[ni] = nextFlags[ni] | Flag.F_CORPSE;
+                                    setMemoryStrain(ni, zStrain);
+                                } else {
+                                    nextFlags[ni] = nextFlags[ni] & ~Flag.F_CORPSE;
+                                    clearStrainSlot(ni);
+                                }
+                                zFightInfect++;
+                            } else if (u < tExpose) {
+                                // Bitten but escapes alive → E carrying
+                                // the Z's strain. Subsequent E→I, E→Z,
+                                // and l_reactivate all resolve off this
+                                // strain. Bloom history preserved.
+                                next[ni] = Compartment.E;
+                                setZStrain(ni, zStrain);
+                                nextFlags[ni] = (t.L && zLSeed > 0 && r() < zLSeed) ? Flag.LATENT : 0;
+                                zFightExpose++;
+                            } else if (u < tConvert) {
+                                // Unopposed conversion → Z, inheriting
+                                // the attacker's strain.
+                                next[ni] = Compartment.Z;
+                                setZStrain(ni, zStrain);
                                 zInfect++;
                             }
-                            next[ni] = Compartment.Z;
-                            clearStrainSlot(ni);
+                            // else: nothing happens this encounter.
+                        }
+
+                        // Zombie's fate roll — per-strain z_die_fighting.
+                        if (zombieAlive && zDieFightRate > 0 && r() < zDieFightRate) {
+                            next[i] = Compartment.D;
+                            nextFlags[i] = nextFlags[i] & ~Flag.F_CORPSE;
+                            clearStrainSlot(i);
+                            zDieFighting++;
+                            zombieAlive = false;
+                            break;
                         }
                     }
-                }
             }
         }
     }
 
     // ─── Step 10: Animal dynamics + spillover ───────────────────────────
-    // Animal SIR on the same hex grid as the human compartment, with
-    // bidirectional spillover (animal I → human S→E with strain α;
-    // human I → animal S→I).
-    //
-    // Reads from start-of-tick `animal[i]` and `compartment[i]`; writes
-    // to `nextAnimal` and (for spillover) `next` + strain scratch. Cells
-    // with mask=0 are skipped — they stay VOID by construction.
-    //
-    // Transitions:
-    //   VOID — stays VOID (no repopulation in phase 9)
-    //   S    — count infected animal neighbors k; p_inf = 1-(1-β_a)^k.
-    //          On hit → I. Reverse spillover: if co-located human is I
-    //          with an active strain (slot 0), roll reverse_spillover_rate
-    //          → I (precedes the neighbor roll; spillover beats both).
-    //   I    — roll (γ_a + μ_a) to leave; split γ/(γ+μ) → R else D.
-    //          Spillover: regardless of transition, if co-located human is
-    //          S, roll spillover_rate → human becomes E with strain α
-    //          (slot 0, load 1.0). Bloom check: if target human's bloom
-    //          records α, spillover is blocked (cross-immunity).
-    //   R    — stays R (no waning in phase 9)
-    //   D    — roll animal_d_disposal → VOID
-    //
-    // Step 10 runs AFTER Z dynamics so Z-overwrites of the human compartment
-    // are honored — an I human that was just zombified is not S anymore and
-    // won't be spilled over to. Spillover writes target the same `next`
-    // buffer that step 9 wrote to (simultaneous-update read of `compartment`
-    // is still consistent — only the write side differs).
-    if (animal) {
-        const ab = animal_beta > 0 ? (animal_beta < 1 ? animal_beta : 1) : 0;
-        const ag = animal_gamma > 0 ? (animal_gamma < 1 ? animal_gamma : 1) : 0;
-        const am = animal_mu > 0 ? (animal_mu < 1 ? animal_mu : 1) : 0;
-        const adisp = animal_d_disposal > 0 ? (animal_d_disposal < 1 ? animal_d_disposal : 1) : 0;
-        const spillP = spillover_rate > 0 ? (spillover_rate < 1 ? spillover_rate : 1) : 0;
-        const revSpillP = reverse_spillover_rate > 0
-            ? (reverse_spillover_rate < 1 ? reverse_spillover_rate : 1)
-            : 0;
-        const mask = grid.mask;
-        for (let row = 0; row < H; row++) {
-            const rowBase = row * W;
-            for (let q = 0; q < W; q++) {
-                const i = rowBase + q;
-                if (mask && mask[i] === 0) continue;
-                const a = animal[i];
-                if (a === Animal.VOID) continue;
-
-                if (a === Animal.S) {
-                    // Reverse spillover first: a co-located infectious
-                    // human can hand the bug back to the animal. We check
-                    // start-of-tick human state. Active strain required —
-                    // slot 0 holds the cell's primary strain; the animal
-                    // layer doesn't track which strain it carries, so we
-                    // just need *some* strain to be present.
-                    let infected = false;
-                    if (revSpillP > 0 && compartment[i] === Compartment.I) {
-                        let hasStrain = true; // single-strain mode: assume I implies infectious
-                        if (useStrains && strain_ids) {
-                            hasStrain = strain_ids[i * MAX_ACTIVE] !== EMPTY_STRAIN;
-                        }
-                        if (hasStrain && r() < revSpillP) {
-                            nextAnimal[i] = Animal.I;
-                            reverseSpillovers++;
-                            animalSToI++;
-                            infected = true;
-                        }
-                    }
-                    if (!infected && ab > 0) {
-                        const ns = neighbors(q, row, topology, W, H);
-                        let k = 0;
-                        for (let j = 0; j < ns.length; j++) {
-                            const nb = ns[j];
-                            if (animal[nb.r * W + nb.q] === Animal.I) k++;
-                        }
-                        if (k > 0) {
-                            const pInf = 1 - Math.pow(1 - ab, k);
-                            if (r() < pInf) {
-                                nextAnimal[i] = Animal.I;
-                                animalSToI++;
-                            }
-                        }
-                    }
-                } else if (a === Animal.I) {
-                    // Combined leave-I roll (γ_a + μ_a). Split by share.
-                    let leaveRate = ag + am;
-                    if (leaveRate > 1) leaveRate = 1;
-                    if (leaveRate > 0 && r() < leaveRate) {
-                        const recoverShare = (ag + am) > 0 ? ag / (ag + am) : 0;
-                        if (r() < recoverShare) {
-                            nextAnimal[i] = Animal.R;
-                            animalIToR++;
-                        } else {
-                            nextAnimal[i] = Animal.D;
-                            animalIToD++;
-                        }
-                    }
-                    // Spillover: independent of whether the animal stayed
-                    // I or transitioned this tick. If the co-located
-                    // human is S, roll spillover_rate → human E with
-                    // strain α. Bloom check: skip if target already has
-                    // immunity memory for α (cross-immunity gate).
-                    if (spillP > 0 && compartment[i] === Compartment.S
-                        && next[i] === Compartment.S) {
-                        let blocked = false;
-                        if (useStrains && xImm > 0 && strain_hist
-                            && bloomHas(strain_hist, i, 0)) {
-                            blocked = true;
-                        }
-                        if (!blocked && r() < spillP) {
-                            next[i] = Compartment.E;
-                            if (useStrains) {
-                                const slot0 = i * MAX_ACTIVE;
-                                nextStrainIds[slot0] = 0; // strain α (founder)
-                                nextStrainLoads[slot0] = 1.0;
-                                for (let s = 1; s < MAX_ACTIVE; s++) {
-                                    nextStrainIds[slot0 + s] = EMPTY_STRAIN;
-                                    nextStrainLoads[slot0 + s] = 0;
-                                }
-                            }
-                            spillovers++;
-                        }
-                    }
-                } else if (a === Animal.D) {
-                    if (adisp > 0 && r() < adisp) {
-                        nextAnimal[i] = Animal.VOID;
-                        animalDisposed++;
-                    }
-                }
-                // Animal.R: stays R (no waning in phase 9).
-            }
-        }
-    }
+    // Delegated to dynamics-animal.js. Kept here in the orchestrator after
+    // Z dynamics so Z-overwrites of the human compartment are honored before
+    // any spillover writes land in `next`.
+    const animalCounts = runAnimalDynamics({
+        active,
+        activeCount,
+        animal,
+        animal_age,
+        animal_strain,
+        compartment,
+        strain_ids,
+        strain_hist,
+        next,
+        nextAnimal,
+        nextAnimalAge,
+        nextAnimalStrain,
+        nextStrainIds,
+        nextStrainLoads,
+        nbrIdx,
+        params: p,
+        rng: r,
+        useStrains,
+        strainRegistry,
+        maxActive: MAX_ACTIVE,
+        uint16Max: UINT16_MAX,
+        xImm
+    });
+    spillovers += animalCounts.spillovers;
+    reverseSpillovers += animalCounts.reverseSpillovers;
+    animalSToI += animalCounts.animalSToI;
+    animalIToR += animalCounts.animalIToR;
+    animalIToD += animalCounts.animalIToD;
+    animalDisposed += animalCounts.animalDisposed;
+    animalBirths += animalCounts.animalBirths;
+    animalAgeOut += animalCounts.animalAgeOut;
 
     // Atomic swap: scratch becomes the new arrays; the old start-of-tick
     // arrays become the next scratch. No allocation. Strain buffers swap
@@ -1469,27 +1801,37 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     grid.status = nextStatus;
     grid.age = nextAge;
     grid.health = nextHealth;
-    _scratch = compartment;
-    _flagScratch = flags;
-    _statusScratch = status;
-    _ageScratch = age;
-    _healthScratch = health;
     if (strain_ids) {
         grid.strain_ids = nextStrainIds;
-        _strainIdsScratch = strain_ids;
     }
     if (strain_loads) {
         grid.strain_loads = nextStrainLoads;
-        _strainLoadsScratch = strain_loads;
     }
     if (strain_hist) {
         grid.strain_hist = nextStrainHist;
-        _strainHistScratch = strain_hist;
     }
     if (animal) {
         grid.animal = nextAnimal;
-        _animalScratch = animal;
     }
+    if (animal_age) {
+        grid.animal_age = nextAnimalAge;
+    }
+    if (animal_strain) {
+        grid.animal_strain = nextAnimalStrain;
+    }
+    recycleTickScratch({
+        compartment,
+        flags,
+        status,
+        age,
+        health,
+        strainIds: strain_ids,
+        strainLoads: strain_loads,
+        strainHist: strain_hist,
+        animal,
+        animalAge: animal_age,
+        animalStrain: animal_strain
+    });
 
     // Conservation invariants:
     //   - every cell still has exactly one compartment value in [0, 8]
@@ -1499,15 +1841,21 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     //   - age ∈ [0, UINT16_MAX]; EMPTY cells have age 0
     //   - health ∈ [0, 1]
 
+    runExtinctionSweep(grid, strainRegistry, tickIdx);
+
     return {
         sToE, eToI, iToR, iToD,
         mToS, lReact, fDecay,
-        dToZ, iToZ, zInfect, zExhaust,
+        dToZ, iToZ, lToZ,
+        zInfect, zExhaust,
+        zFightKill, zFightInfect, zFightExpose,
+        zDieFighting, zDieNatural,
         hAssigned, hOverflow,
         births, ageOut, dToEmpty,
         coinfections, recombinations, prunes,
         spillovers, reverseSpillovers,
         animalSToI, animalIToR, animalIToD,
-        animalDisposed
+        animalDisposed, animalBirths, animalAgeOut,
+        vaxRollout, autoQuarantined
     };
 }

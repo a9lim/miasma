@@ -1,7 +1,7 @@
 // presets.js — named configurations for the sim.
 //
-// Phase 12 ships 8 calibrated presets that cover the textbook curriculum
-// plus a few exotic cases. Each preset is a partial override over
+// Presets cover the textbook curriculum plus a few exotic cases. Each preset
+// is a partial override over
 // DEFAULT_PARAMS + DEFAULT_TOGGLES + a topology and a clearing policy.
 // Apply order:
 //   1. Reset toggles to DEFAULT_TOGGLES, then merge preset.toggles
@@ -19,8 +19,8 @@
 // defaults without every preset opting in.
 
 import { Topology } from './config.js';
-import { DEFAULT_PARAMS } from './dynamics.js';
-import { DEFAULT_TOGGLES } from './toggles.js';
+import { DEFAULT_PARAMS } from './default-params.js';
+import { DEFAULT_TOGGLES } from './default-toggles.js';
 
 // ─── Preset table ──────────────────────────────────────────────────────────
 // Each entry:
@@ -41,7 +41,8 @@ export const PRESETS = Object.freeze([
         label: 'SEIR vanilla',
         description: 'Pure Kermack–McKendrick on a torus. No flags, no animals, no Z.',
         topology: Topology.TORUS,
-        toggles: { V: false, M: false, Z: false, L: false, C: false, F: false },
+        toggles: { V: false, M: false, Z: false, L: false, C: false, F: false,
+                   auto_hospital: false, auto_quarantine: false },
         params: {
             beta:  0.32,
             sigma: 0.25,
@@ -80,6 +81,9 @@ export const PRESETS = Object.freeze([
             q_transmit_mult:           0.15,
             q_susceptibility_mult:     0.3,
             mutation_rate: 0.004,
+            // Waning immunity + imperfect vaccine — both are real for COVID.
+            r_susceptibility_mult: 0.15,   // recovered cells ~15% as susceptible as naive
+            vax_efficacy:          0.80,   // ~20% breakthrough on contact
             animal_density: 0,
             spillover_rate: 0,
             reverse_spillover_rate: 0
@@ -109,14 +113,15 @@ export const PRESETS = Object.freeze([
     {
         key: 'tb',
         label: 'Tuberculosis',
-        description: 'Long latency with reactivation (L flag). Slow burner.',
+        description: 'Most exposures go latent (L flag); slow reactivation makes a long-tailed burn.',
         topology: Topology.TORUS,
         toggles: { V: false, M: false, Z: false, L: true, C: false, F: false },
         params: {
             beta:  0.18,
-            sigma: 0.02,          // long latency
+            sigma: 0.02,          // long latency for the (rare) non-latent path
             gamma: 0.015,         // long infectious
             mu:    0.001,         // low CFR with treatment proxy
+            l_seed:       0.90,   // ~90% of fresh exposures latch latent (TB's defining feature)
             l_reactivate: 0.0008, // slow trickle of latent → active
             mutation_rate: 0.0005,
             animal_density: 0,
@@ -127,7 +132,7 @@ export const PRESETS = Object.freeze([
     {
         key: 'hantavirus',
         label: 'Andes hantavirus',
-        description: 'Reservoir-primary (rodents); rare human-to-human spread.',
+        description: 'Reservoir-primary (rodents); rare human-to-human spread; chronic-carrier recoveries.',
         topology: Topology.PLANE,
         toggles: { V: false, M: false, Z: false, L: false, C: true, F: false },
         params: {
@@ -142,6 +147,7 @@ export const PRESETS = Object.freeze([
             animal_d_disposal: 0.05,
             spillover_rate:         0.04, // animal → human is the primary driver
             reverse_spillover_rate: 0.001,
+            c_seed:          0.40,        // ~40% of recoveries become chronic carriers
             c_transmit_mult: 0.6          // chronic carriage on rodents proxy
         }
     },
@@ -188,6 +194,91 @@ export const PRESETS = Object.freeze([
         }
     },
     {
+        key: 'zombie-apocalypse',
+        label: 'Zombie apocalypse',
+        description: 'Infectious corpses reanimate; humans fight back; zombies have a finite lifespan. Macro reading.',
+        topology: Topology.PLANE,
+        toggles: { V: false, M: false, Z: true, L: false, C: false, F: true,
+                   vax_rollout: false, auto_quarantine: false },
+        params: {
+            // Modest baseline outbreak so a Z front has something to chew
+            // through. Disease is the pretext, not the main mechanic.
+            beta:  0.30,
+            sigma: 0.18,
+            gamma: 0.07,
+            mu:    0.025,        // ~25% CFR — feeds the F-corpse spawn pipe
+            f_decay: 0.04,       // F-corpses persist long enough to reanimate
+            f_transmit_mult: 0.5,
+            d_disposal: 0.01,    // slow cleanup so the F-corpse pool builds
+            // Encounter dynamics: humans fight, zombies kill+infect more
+            // often than they convert directly (because conversion is the
+            // F-corpse pathway). Z natural lifespan ~150 ticks.
+            dz_dead:             0.05,
+            dz_alive:            0.001,
+            z_convert_unopposed: 0.05,
+            z_fight_kill:        0.20,
+            z_fight_infect:      0.30,
+            z_fight_expose:      0.05,
+            z_die_fighting:      0.06,   // humans fight back hard
+            z_die_natural:       0.007,  // ~140-tick lifespan
+            z_exhaust_threshold: 5,      // crowding rarely kills zombies in this reading
+            z_exhaust:           0.04,
+            l_transform:         0,      // no oncoviral pathway
+            // No animals; no births to keep horde dynamics legible.
+            birth_rate: 0,
+            animal_density: 0,
+            spillover_rate: 0,
+            reverse_spillover_rate: 0,
+            mutation_rate: 0
+        }
+    },
+    {
+        key: 'oncoviral-transformation',
+        label: 'Oncoviral transformation',
+        description: 'Cells, not people. Latent integration → malignant transformation; immune surveillance; tumor-core necrosis. Micro reading.',
+        topology: Topology.TORUS,
+        toggles: { V: false, M: false, Z: true, L: true, C: false, F: false,
+                   vax_rollout: false, auto_quarantine: false },
+        params: {
+            // The "disease" is the oncovirus itself — slow chronic
+            // infection that mostly stays latent. β stays low so naive
+            // cells aren't infected en masse; L seeding is high so the
+            // exposures that do happen integrate latently.
+            beta:  0.10,
+            sigma: 0.001,        // rare non-latent activation
+            gamma: 0.02,         // slow viral clearance
+            mu:    0.001,        // viral phase rarely kills cells outright
+            l_seed:       0.95,  // ~95% of exposures integrate latently
+            l_reactivate: 0.0001, // very rare viral reactivation
+            // The transformation pathway: latent → Z at a small per-tick
+            // rate. With l_seed near 1, the L pool grows; l_transform
+            // turns a small fraction of it malignant each tick.
+            l_transform:         0.0008,
+            // Cell-level encounter dynamics: high conversion (clonal
+            // expansion drives the tumor front), near-zero "fight" (cells
+            // don't fight; the small z_die_fighting represents NK / CTL
+            // immune surveillance). No natural lifespan — transformed
+            // cells are immortal (telomerase reactivation). Tumor-core
+            // necrosis via exhaust-by-crowding.
+            dz_dead:             0,
+            dz_alive:            0,
+            z_convert_unopposed: 0.45,
+            z_fight_kill:        0,
+            z_fight_infect:      0,
+            z_fight_expose:      0,
+            z_die_fighting:      0.005, // immune surveillance, not combat
+            z_die_natural:       0,     // immortal transformed cells
+            z_exhaust_threshold: 5,     // necrosis only in dense cores
+            z_exhaust:           0.10,
+            // No births, no animals — this is one tissue, one population.
+            birth_rate: 0,
+            animal_density: 0,
+            spillover_rate: 0,
+            reverse_spillover_rate: 0,
+            mutation_rate: 0.002 // tumor-clone evolution, small but nonzero
+        }
+    },
+    {
         key: 'absurd',
         label: 'Absurd mode',
         description: 'Every toggle on, including Z. High mutation. Anything goes.',
@@ -202,11 +293,21 @@ export const PRESETS = Object.freeze([
             f_transmit_mult: 0.8,
             dz_dead:  0.08,
             dz_alive: 0.01,
-            z_infect: 0.92,
+            z_convert_unopposed: 0.45,
+            z_fight_kill:        0.15,
+            z_fight_infect:      0.20,
+            z_fight_expose:      0.05,
+            z_die_fighting:      0.03,
+            z_die_natural:       0.003,
             z_exhaust_threshold: 4,
-            z_exhaust: 0.12,
-            l_reactivate: 0.003,
+            z_exhaust:           0.12,
+            l_transform:         0.001,
+            l_seed:          0.30,
+            l_reactivate:    0.003,
+            c_seed:          0.40,
             c_transmit_mult: 0.5,
+            r_susceptibility_mult: 0.25,
+            vax_efficacy:          0.75,
             birth_rate: 0.06,
             mutation_rate:     0.02,
             mutation_strength: 0.08,
@@ -241,6 +342,14 @@ export function applyPreset(preset, params, toggles, sim) {
     if (!preset || !params || !toggles || !sim) return false;
     // Restore defaults first so a preset's omitted keys land on the
     // documented baseline (not whatever the previous preset bequeathed).
+    // Phase A: per-strain fields (β, σ, γ, μ, m_decay, l_*, c_*, f_*,
+    // dz_*, z_*, health_*) still live in params here — they're the source
+    // of truth for α's seed genome. main.js's onApplyPreset calls
+    // resetGridOnly() right after this, which rebuilds the strain
+    // registry via createRegistry(params), routing per-strain fields
+    // through registerStrain into α's genome row. So preset.params keys
+    // for those fields hit α on the next reset — no separate code path
+    // needed here.
     for (const k in DEFAULT_PARAMS) params[k] = DEFAULT_PARAMS[k];
     for (const k in DEFAULT_TOGGLES) toggles[k] = DEFAULT_TOGGLES[k];
     // Merge preset overrides.
@@ -250,6 +359,7 @@ export function applyPreset(preset, params, toggles, sim) {
     if (preset.toggles) {
         for (const k in preset.toggles) toggles[k] = preset.toggles[k];
     }
+    if (!toggles.V) toggles.vax_rollout = false;
     if (typeof preset.topology === 'number') {
         sim.topology = preset.topology;
     }

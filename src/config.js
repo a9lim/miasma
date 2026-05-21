@@ -39,7 +39,10 @@ export const Flag = Object.freeze({
     NONE: 0,
     LATENT: 1,   // on E
     CARRIER: 2,  // on R
-    F_CORPSE: 4  // on D
+    F_CORPSE: 4, // on D
+    AUTO_Q: 8    // provenance bit: this cell's Q status was set by auto-quarantine
+                 // (contact tracing), not by manual paint. Lets the auto-quarantine
+                 // step release only the Q it owns and leave painted Q alone.
 });
 
 // ─── Animal enum (orthogonal vector/reservoir layer) ───
@@ -95,8 +98,7 @@ export const DEFAULTS = Object.freeze({
     tickRate: 30,         // ticks per second target (Phase 2+)
     topology: Topology.TORUS,
     viewMode: ViewMode.COMPARTMENT,
-    maxActiveStrains: 4,  // per cell coinfection cap (Phase 7+)
-    maxVax: 4             // per cell vax slots (Phase 3+)
+    maxActiveStrains: 4   // per cell coinfection cap (Phase 7+)
 });
 
 // Flat-top hex geometry — axial neighbor offsets (clockwise from east).

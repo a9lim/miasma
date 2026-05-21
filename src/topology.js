@@ -119,24 +119,6 @@ function translateToHex(q, r, cq, cr, R) {
 // otherwise return null. For RP², the antipode + lattice composition
 // always lands inside for cells within 1 step of the boundary.
 
-/** Which inscribed-hex edge is (q, r) "just past"? Returns 0–5 or -1 if
- * the cell isn't on any single-edge boundary. Edge indexing follows the
- * cube-axis saturating direction:
- *   0: dq = +(R+1)  (E-NE edge)
- *   1: dq = -(R+1)  (W-SW edge)
- *   2: dr = +(R+1)  (SW-SE edge)
- *   3: dr = -(R+1)  (NE-NW edge)
- *   4: ds = +(R+1)  (NW-W edge)   ds = -dq - dr
- *   5: ds = -(R+1)  (SE-E edge)
- */
-function outsideEdge(dq, dr) {
-    const ds = -dq - dr;
-    // For 1-step-outside cells, exactly one of dq, dr, ds is ±(R+1).
-    // Use absolute-max signature.
-    return null; // caller doesn't need this anymore — left as a stub for
-                 // future code paths that want to identify which face.
-}
-
 // Reflect (q, r) through the center of the inscribed hex. Involutive.
 function antipode(q, r, cq, cr) {
     return { q: 2 * cq - q, r: 2 * cr - r };
@@ -263,6 +245,61 @@ export function neighbors(q, r, topology, W, H) {
         if (w !== null) out.push(w);
     }
     return out;
+}
+
+// ─── Precomputed neighbor-index tables ──────────────────────────────────────
+// Hot dynamics loops call neighbors() per cell per step — at 14400 cells × 6
+// directions × ≥4 steps that's ~350k wrap() calls per tick plus the same
+// number of array allocations. The geometry is static for a given
+// (W, H, topology), so we precompute once into:
+//   nbrIdx: Int32Array(N*6) — flat cell-index of each neighbor, or -1 when
+//           the wrap returns null. Layout: cell i's neighbors start at i*6.
+//   nbrCount: Uint8Array(N) — count of valid neighbors at i (0..6). Lets
+//           inner loops skip the -1 sentinel branch on dense interiors.
+// Cache keyed by (W|H|topology) — flushed implicitly by replacing the table.
+//
+// Note: cells outside the inscribed hex (mask=0) still get neighbor entries
+// computed because some legitimate callers (birth lookups on empty cells)
+// pass an in-world cell index but ask for its actual neighbors. That's fine
+// — mask checking is the caller's responsibility, not the table's.
+
+const _nbrCache = new Map();
+
+/**
+ * Precompute (or fetch from cache) the neighbor table for a grid + topology.
+ * Returns the cached object with {idx, count}. The same object is returned
+ * on subsequent calls with the same key — callers may keep the reference for
+ * the duration of a tick.
+ */
+export function getNeighborTable(W, H, topology) {
+    const key = W | (H << 12) | (topology << 24);
+    let cached = _nbrCache.get(key);
+    if (cached) return cached;
+
+    const N = W * H;
+    const idx = new Int32Array(N * 6);
+    const count = new Uint8Array(N);
+    for (let r = 0; r < H; r++) {
+        for (let q = 0; q < W; q++) {
+            const cellIdx = r * W + q;
+            const base = cellIdx * 6;
+            let c = 0;
+            for (let d = 0; d < HEX_DIRS.length; d++) {
+                const dir = HEX_DIRS[d];
+                const w = wrap(q + dir.dq, r + dir.dr, topology, W, H);
+                if (w === null) {
+                    idx[base + d] = -1;
+                } else {
+                    idx[base + d] = w.r * W + w.q;
+                    c++;
+                }
+            }
+            count[cellIdx] = c;
+        }
+    }
+    cached = { idx, count };
+    _nbrCache.set(key, cached);
+    return cached;
 }
 
 // Re-export mod in case any consumer used the old internal helper.

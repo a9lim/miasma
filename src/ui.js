@@ -43,13 +43,17 @@ export function setupUI($, sim, hooks) {
         });
     }
 
-    // ── View-mode mode-toggle ──
+    // ── View-mode mode-toggle (Settings tab) ──
     if ($.viewModeToggles) {
         window._forms.bindModeGroup($.viewModeToggles, 'viewmode', (val) => {
             sim.viewMode = val || ViewMode.COMPARTMENT;
             if (hooks.onViewModeChange) hooks.onViewModeChange(sim.viewMode);
         });
     }
+
+    const mapControlsEl = $.mapControls
+        || ($.topologyToggles && $.topologyToggles.closest('#map-controls-section'))
+        || null;
 
     // ── Settings tab — presets + toggles + parameter sliders ──
     // The tab-settings root holds three stacked sub-sections, each owned
@@ -70,6 +74,10 @@ export function setupUI($, sim, hooks) {
         presetsEl = document.createElement('div');
         presetsEl.className = 'settings-section settings-presets';
         panelEl.appendChild(presetsEl);
+
+        if (mapControlsEl) {
+            panelEl.appendChild(mapControlsEl);
+        }
 
         togglesEl = document.createElement('div');
         togglesEl.className = 'settings-section settings-toggles';
@@ -92,6 +100,30 @@ export function setupUI($, sim, hooks) {
         if (hooks.params) {
             buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
         }
+    }
+
+    // ── Top-bar map-controls button ──
+    // The topology + view controls live in Settings now. The toolbar eye is
+    // a jump handle: open the sidebar, select Settings, and scroll the map
+    // controls into view without owning selection state itself.
+    if ($.viewModeBtn) {
+        $.viewModeBtn.setAttribute('aria-pressed', 'false');
+        $.viewModeBtn.addEventListener('click', () => {
+            if ($.dashboard && $.menuBtn && !$.dashboard.classList.contains('open')) {
+                $.menuBtn.click();
+            }
+            const settingsTab = $.dashboard
+                ? $.dashboard.querySelector('.tab-btn[data-tab="settings"]')
+                : null;
+            if (settingsTab && !settingsTab.classList.contains('active')) {
+                settingsTab.click();
+            }
+            if (mapControlsEl) {
+                requestAnimationFrame(() => {
+                    mapControlsEl.scrollIntoView({ block: 'nearest' });
+                });
+            }
+        });
     }
 
     // ── Interventions tab (Phase 11 paint) ──
@@ -118,6 +150,18 @@ export function setupUI($, sim, hooks) {
     }
 
     // ── About panel ──
+    // Prefer the unified shortcut registry built in main.js (sim._shortcuts);
+    // fall back to a hardcoded list if the integration ever changes.
+    const fallbackShortcuts = [
+        { key: 'space',        group: 'Simulation', label: 'Play / pause' },
+        { key: '.',            group: 'Simulation', label: 'Step one tick' },
+        { key: '1–6',          group: 'Paint',      label: 'Paint mode (none/seed/vaccinate/quarantine/sanitize/cull)' },
+        { key: '[ / ]',        group: 'Paint',      label: 'Brush size down / up' },
+        { key: 'Ctrl+Z',       group: 'History',    label: 'Undo last stroke' },
+        { key: 'Ctrl+Shift+Z', group: 'History',    label: 'Redo last stroke' },
+        { key: '? ',           group: 'View',       label: 'Toggle this panel' }
+    ];
+    const shortcuts = (sim && sim._shortcuts) || fallbackShortcuts;
     if (typeof window.initAboutPanel === 'function') {
         const panel = window.initAboutPanel({
             title: 'miasma',
@@ -125,16 +169,15 @@ export function setupUI($, sim, hooks) {
                 'Stochastic spatial epidemic simulator on a hex lattice. ' +
                 'Configurable compartmental model, multi-strain evolution, ' +
                 'topology toggle (plane through RP²), intervention painting.',
-            controls: [],
-            shortcuts: [
-                { key: 'space',  label: 'Play / pause' },
-                { key: '.',      label: 'Step one tick' },
-                { key: '1–6',    label: 'Paint mode (none / seed / vaccinate / quarantine / sanitize / cull)' },
-                { key: '[ / ]',  label: 'Brush size down / up' },
-                { key: 'ctrl+z', label: 'Undo last stroke' },
-                { key: '?',      label: 'Toggle this panel' }
+            controls: [
+                { label: 'Paint',  value: 'Click or drag on the canvas' },
+                { label: 'Pan',    value: 'Two-finger drag (mobile) or pinch' },
+                { label: 'Zoom',   value: 'Scroll wheel / pinch / = / - / 0' },
+                { label: 'Undo',   value: 'Toolbar buttons or Ctrl+Z / Ctrl+Shift+Z' }
             ],
-            repo: 'https://github.com/a9lim/a9lim.github.io'
+            shortcuts,
+            repo: 'https://github.com/a9lim/a9lim.github.io',
+            lastUpdated: '2026-05-17'
         });
         if ($.aboutBtn && panel && typeof panel.show === 'function') {
             $.aboutBtn.addEventListener('click', panel.show);
@@ -154,28 +197,30 @@ export function setupUI($, sim, hooks) {
             if (paramsEl && hooks.params) {
                 syncSliders(paramsEl, hooks.params);
             }
-            // Re-sync topology mode-group active button to sim.topology.
-            if ($.topologyToggles) {
-                const reverseTopo = {
-                    0: 'plane', 1: 'cylinder', 2: 'torus',
-                    3: 'mobius', 4: 'klein', 5: 'rp2'
-                };
-                const targetKey = reverseTopo[sim.topology] || 'torus';
-                const btns = $.topologyToggles.querySelectorAll('.mode-btn');
+            function syncModeGroup(container, datasetKey, targetKey) {
+                if (!container) return;
+                const btns = container.querySelectorAll('.mode-btn');
                 let activeBtn = null;
                 btns.forEach((b) => {
-                    const on = (b.dataset.topology === targetKey);
+                    const on = (b.dataset[datasetKey] === targetKey);
                     b.classList.toggle('active', on);
                     b.setAttribute('aria-selected', on ? 'true' : 'false');
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
                     if (on) activeBtn = b;
                 });
                 // Reposition the sliding mode-indicator if shared-forms wrote one.
-                const indicator = $.topologyToggles.querySelector('.mode-indicator');
+                const indicator = container.querySelector('.mode-indicator');
                 if (indicator && activeBtn) {
                     indicator.style.width = activeBtn.offsetWidth + 'px';
                     indicator.style.transform = 'translateX(' + (activeBtn.offsetLeft - 3) + 'px)';
                 }
             }
+            const reverseTopo = {
+                0: 'plane', 1: 'cylinder', 2: 'torus',
+                3: 'mobius', 4: 'klein', 5: 'rp2'
+            };
+            syncModeGroup($.topologyToggles, 'topology', reverseTopo[sim.topology] || 'torus');
+            syncModeGroup($.viewModeToggles, 'viewmode', sim.viewMode || ViewMode.COMPARTMENT);
         }
     };
 }

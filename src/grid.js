@@ -19,27 +19,34 @@ export class Grid {
         this.health      = new Float32Array(N);
         // Phase 9: per-cell animal state (vector/reservoir layer). Orthogonal
         // to the human compartment — same indexing, independent dynamics.
-        // VOID = 0 means no animal in this cell. dynamics.initializeAnimals()
+        // VOID = 0 means no animal in this cell. initialization.initializeAnimals()
         // seeds S animals at density. mask=0 cells must remain VOID.
         this.animal = new Uint8Array(N);
         this.animal.fill(Animal.VOID);
+        // Phase 17: animal demography. animal_age mirrors the human `age`
+        // layer (ticks since birth, drives age-ramped natural mortality);
+        // animal_strain records which strain an infectious animal carries so
+        // per-strain animal_beta/gamma/mu can be read from the registry.
+        // animal_strain is 0xFFFF (EMPTY_STRAIN) when the animal carries no
+        // strain — VOID/S/R/D cells. Set on S→I, kept while infectious.
+        this.animal_age    = new Uint16Array(N);
+        this.animal_strain = new Uint16Array(N);
+        this.animal_strain.fill(0xFFFF);
         // Shape mask: 1 = inside the simulated world, 0 = outside (void).
-        // Default to all-inside; dynamics.applyHexMask() carves a regular
+        // Default to all-inside; initialization.applyHexMask() carves a regular
         // hexagon out of the axial-coord rhombus storage. mask=0 cells are
         // skipped by render / stats / births / clicks so the visible world
         // looks like a hexagon instead of a rhombus.
         this.mask = new Uint8Array(N);
         this.mask.fill(1);
+        this.activeIndices = null;
+        this.activeCount = N;
 
         // Strain state — stubs for Phase 7. Slot count fixed by config.
         const slots = DEFAULTS.maxActiveStrains;
         this.strain_ids   = new Uint16Array(N * slots);
         this.strain_loads = new Float32Array(N * slots);
         this.strain_hist  = new Uint8Array(N * 8); // 64-bit packed bloom (Phase 7)
-        const vaxSlots = DEFAULTS.maxVax;
-        this.vax_strains  = new Uint16Array(N * vaxSlots);
-        this.vax_ages     = new Uint16Array(N * vaxSlots);
-
         // Initialize all cells to S (Uint8Array already zero-filled, S === 0,
         // but be explicit for future-proofing).
         this.compartment.fill(Compartment.S);
@@ -78,15 +85,6 @@ export class Grid {
         if (value.flags       !== undefined) this.flags[i]       = value.flags;
         if (value.age         !== undefined) this.age[i]         = value.age;
         if (value.health      !== undefined) this.health[i]      = value.health;
-    }
-
-    /** Iterate every cell. `fn(q, r, i)`. */
-    forEach(fn) {
-        for (let r = 0; r < this.H; r++) {
-            for (let q = 0; q < this.W; q++) {
-                fn(q, r, r * this.W + q);
-            }
-        }
     }
 }
 
@@ -131,18 +129,4 @@ export function pixelToAxial(x, y, size) {
     const cy = -cx - cz;
     const rounded = cubeRound(cx, cy, cz);
     return { q: rounded.x, r: rounded.z };
-}
-
-/** Six vertex offsets for flat-top hex of given size. */
-export function hexCorners(cx, cy, size) {
-    const out = [];
-    for (let i = 0; i < 6; i++) {
-        // Flat-top: start at -30°, step by 60°.
-        const angle = Math.PI / 180 * (60 * i - 30);
-        out.push({
-            x: cx + size * Math.cos(angle),
-            y: cy + size * Math.sin(angle)
-        });
-    }
-    return out;
 }

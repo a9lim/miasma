@@ -52,7 +52,7 @@ const DEFAULT_MUTATION_STRENGTH = 0.05;
 // collapsing novelty to zero when both parents have very small μ.
 const RECOMBINATION_NOISE_STDDEV = 0.02;
 
-// Parameter clamps. Match the ranges enforced by DEFAULT_PARAMS in dynamics.js
+// Parameter clamps. Match the ranges enforced by DEFAULT_PARAMS in default-params.js
 // for the four mutable per-strain rates.
 const BETA_MIN  = 0;
 const BETA_MAX  = 1;
@@ -68,10 +68,97 @@ const MU_MAX    = 0.1;
 // Two strains at maximum parameter-space separation give similarity ≈ 0;
 // identical params give similarity = 1. The exact constant doesn't need
 // to be tight — it's just a normalization so callers get a [0, 1] knob.
+//
+// Phase A: similarity continues to use just (β, σ, γ, μ) even though the
+// genome is now ~23 fields. Cross-immunity in dynamics.js gates on exact
+// bloom membership, not similarity — this helper is purely a future hook
+// for UI / debugging that wants a [0, 1] pairwise distance.
 const SIMILARITY_REF_MAX = Math.sqrt(BETA_MAX * BETA_MAX +
                                      SIGMA_MAX * SIGMA_MAX +
                                      GAMMA_MAX * GAMMA_MAX +
                                      MU_MAX * MU_MAX);
+
+// ─── Per-strain genome fields ───────────────────────────────────────────────
+//
+// Phase A: every field a strain "carries" gets a clamp range. Used by:
+//   - registerStrain: clamps incoming genome values
+//   - mutateStrain:   per-field multiplicative gaussian noise + clamp
+//   - recombineStrains: per-field additive gaussian noise scaled by range
+//     ((max - min) * RECOMBINATION_NOISE_STDDEV) so a uniform 2% novelty
+//     floor doesn't dominate small-range fields like l_reactivate (max 0.05).
+//   - Phase C genome editor: drives the slider build
+//
+// Order is presentation order (matches DEFAULT_PARAMS grouping in
+// default-params.js: core → maternal/flag → zombie spawn → zombie encounter →
+// zombie death → health). z_exhaust_threshold intentionally stays sim-wide
+// in params (it's an integer cell-count threshold; mutating it doesn't
+// have continuous semantics).
+export const GENOME_FIELDS = Object.freeze([
+    { key: 'beta',                    min: BETA_MIN,  max: BETA_MAX  },
+    { key: 'sigma',                   min: SIGMA_MIN, max: SIGMA_MAX },
+    { key: 'gamma',                   min: GAMMA_MIN, max: GAMMA_MAX },
+    { key: 'mu',                      min: MU_MIN,    max: MU_MAX    },
+    { key: 'm_decay',                 min: 0,         max: 0.2       },
+    { key: 'l_seed',                  min: 0,         max: 1         },
+    { key: 'l_reactivate',            min: 0,         max: 0.05      },
+    { key: 'l_transform',             min: 0,         max: 0.05      },
+    { key: 'c_seed',                  min: 0,         max: 1         },
+    { key: 'c_transmit_mult',         min: 0,         max: 1         },
+    { key: 'f_decay',                 min: 0,         max: 0.5       },
+    { key: 'f_transmit_mult',         min: 0,         max: 1         },
+    { key: 'dz_dead',                 min: 0,         max: 0.5       },
+    { key: 'dz_alive',                min: 0,         max: 0.1       },
+    { key: 'z_fight_kill',            min: 0,         max: 1         },
+    { key: 'z_fight_infect',          min: 0,         max: 1         },
+    { key: 'z_fight_expose',          min: 0,         max: 1         },
+    { key: 'z_convert_unopposed',     min: 0,         max: 1         },
+    { key: 'z_die_fighting',          min: 0,         max: 0.5       },
+    { key: 'z_die_natural',           min: 0,         max: 0.05      },
+    { key: 'z_exhaust',               min: 0,         max: 0.5       },
+    { key: 'health_degrade_per_tick', min: 0,         max: 0.2       },
+    { key: 'health_mortality_mult',   min: 1,         max: 6         },
+    // Reservoir (animal SIR) — per-strain since Phase 17. The animal layer
+    // carries a strain id; animal-to-animal transmission and recovery read
+    // these rates off the registry by that id.
+    { key: 'animal_beta',             min: 0,         max: 1         },
+    { key: 'animal_gamma',            min: 0,         max: 1         },
+    { key: 'animal_mu',               min: 0,         max: 0.1       }
+]);
+
+// Frozen default genome — used when a caller passes a partial genome to
+// registerStrain (missing keys fall back here). Values mirror DEFAULT_PARAMS
+// in dynamics.js so a registry built without an explicit seed behaves like
+// SEIR(D) at the textbook calibration. main.js's createRegistry call site
+// passes the full live params snapshot so this fallback rarely fires in
+// production — it's a safety net for test / forgot-a-key scenarios.
+export const DEFAULT_GENOME = Object.freeze({
+    beta:                    0.32,
+    sigma:                   0.25,
+    gamma:                   0.12,
+    mu:                      0.003,
+    m_decay:                 0.025,
+    l_seed:                  0.15,
+    l_reactivate:            0.0025,
+    l_transform:             0.0005,
+    c_seed:                  0.18,
+    c_transmit_mult:         0.35,
+    f_decay:                 0.06,
+    f_transmit_mult:         0.55,
+    dz_dead:                 0.04,
+    dz_alive:                0.003,
+    z_fight_kill:            0.15,
+    z_fight_infect:          0.20,
+    z_fight_expose:          0.05,
+    z_convert_unopposed:     0.35,
+    z_die_fighting:          0.04,
+    z_die_natural:           0.005,
+    z_exhaust:               0.08,
+    health_degrade_per_tick: 0.025,
+    health_mortality_mult:   2.8,
+    animal_beta:             0.18,
+    animal_gamma:            0.06,
+    animal_mu:               0.006
+});
 
 /**
  * Return the display name for a given strain ID.
@@ -130,13 +217,53 @@ export function createRegistry(seedParams) {
     const reg = {
         ids:       [],
         names:     [],
-        beta:      [],
-        sigma:     [],
-        gamma:     [],
-        mu:        [],
+        // Core SEIR(D) rates
+        beta:                    [],
+        sigma:                   [],
+        gamma:                   [],
+        mu:                      [],
+        // Maternal + flag rates (per-strain after Phase A)
+        m_decay:                 [],
+        l_seed:                  [],
+        l_reactivate:            [],
+        l_transform:             [],
+        c_seed:                  [],
+        c_transmit_mult:         [],
+        f_decay:                 [],
+        f_transmit_mult:         [],
+        // Zombie spawn
+        dz_dead:                 [],
+        dz_alive:                [],
+        // Zombie encounter
+        z_fight_kill:            [],
+        z_fight_infect:          [],
+        z_fight_expose:          [],
+        z_convert_unopposed:     [],
+        z_die_fighting:          [],
+        // Zombie death
+        z_die_natural:           [],
+        z_exhaust:               [],
+        // Health impact
+        health_degrade_per_tick: [],
+        health_mortality_mult:   [],
+        // Reservoir (animal SIR) — per-strain since Phase 17
+        animal_beta:             [],
+        animal_gamma:            [],
+        animal_mu:               [],
+        // Lineage + bookkeeping
         parent:    [],
         parents2:  [],
-        birthTick: []
+        birthTick: [],
+        // Extinction tombstone (Phase B). `extinct[id]` is true when no live
+        // cell carries the strain in any strain_ids slot;
+        // `extinctTick[id]` records the sim tick at which the sweep first
+        // observed extinction. Tombstones never reclaim IDs (the bloom filter
+        // hashes IDs into per-cell prior-exposure bits; reusing an ID would
+        // invalidate that record). A strain can resurrect from a
+        // maternal/carrier/F-corpse seed pulling it back into circulation —
+        // the sweep unmarks in that case.
+        extinct:     [],
+        extinctTick: []
     };
     registerStrain(reg, seedParams, null, 0);
     return reg;
@@ -170,13 +297,25 @@ export function registerStrain(reg, params, parentId, birthTick, parent2Id) {
     if (id >= MAX_STRAINS) return -1;
     reg.ids.push(id);
     reg.names.push(strainName(id));
-    reg.beta.push(clamp(params.beta,  BETA_MIN,  BETA_MAX));
-    reg.sigma.push(clamp(params.sigma, SIGMA_MIN, SIGMA_MAX));
-    reg.gamma.push(clamp(params.gamma, GAMMA_MIN, GAMMA_MAX));
-    reg.mu.push(clamp(params.mu,    MU_MIN,    MU_MAX));
+    // Iterate the canonical genome field list so adding a new per-strain
+    // field is a one-line change to GENOME_FIELDS + DEFAULT_GENOME, not a
+    // hand-edit here. Missing keys fall back to DEFAULT_GENOME.
+    const src = params || {};
+    for (const f of GENOME_FIELDS) {
+        const raw = (typeof src[f.key] === 'number')
+            ? src[f.key]
+            : DEFAULT_GENOME[f.key];
+        reg[f.key].push(clamp(raw, f.min, f.max));
+    }
     reg.parent.push(parentId === null || parentId === undefined ? null : (parentId | 0));
     reg.parents2.push(parent2Id === null || parent2Id === undefined ? null : (parent2Id | 0));
     reg.birthTick.push(birthTick | 0);
+    // Phase B: every new strain starts alive (a brand-new mutant has at least
+    // one cell carrying it — the caller is registering it because it's about
+    // to write the ID into a slot). The next extinction sweep that finds zero
+    // carriers will mark it.
+    reg.extinct.push(false);
+    reg.extinctTick.push(-1);
     return id;
 }
 
@@ -192,17 +331,19 @@ export function registerStrain(reg, params, parentId, birthTick, parent2Id) {
 export function getStrain(reg, id) {
     if (id === EMPTY_STRAIN) return null;
     if (id < 0 || id >= reg.ids.length) return null;
-    return {
+    const out = {
         id,
-        name:      reg.names[id],
-        beta:      reg.beta[id],
-        sigma:     reg.sigma[id],
-        gamma:     reg.gamma[id],
-        mu:        reg.mu[id],
-        parent:    reg.parent[id],
-        parent2:   reg.parents2[id],
-        birthTick: reg.birthTick[id]
+        name:        reg.names[id],
+        parent:      reg.parent[id],
+        parent2:     reg.parents2[id],
+        birthTick:   reg.birthTick[id],
+        extinct:     !!reg.extinct[id],
+        extinctTick: reg.extinctTick[id] | 0
     };
+    for (const f of GENOME_FIELDS) {
+        out[f.key] = reg[f.key][id];
+    }
+    return out;
 }
 
 /**
@@ -213,6 +354,83 @@ export function getStrain(reg, id) {
  */
 export function strainCount(reg) {
     return reg.ids.length;
+}
+
+// ─── Extinction tombstoning (Phase B) ───────────────────────────────────────
+//
+// A strain is "extinct" when no cell in the world carries it in any
+// strain_ids slot (active load — including the load=0 memory cases for M /
+// R+CARRIER / D+F-corpse / Z-pseudo). Tombstoning is decoupled from registration — the registry
+// never frees an ID, because the per-cell bloom filter hashes IDs into
+// prior-exposure bits and reusing an ID would silently corrupt cross-
+// immunity records. Phase B is tombstone-only; no GC, no compaction.
+//
+// α (ID 0) is special-cased to never extinct: it's the seed strain, used as
+// the default founder for de-novo infections (animal spillover, paint-seed,
+// etc.), and code paths can read its rates without first checking the
+// extinct bit.
+//
+// Resurrection: if a previously-extinct strain reappears through a retained
+// cell slot, we clear the tombstone so downstream consumers don't show it as
+// extinct.
+
+/**
+ * Tombstone a strain. No-op if `id` is 0 (α), out of range, or already
+ * marked extinct. Records the tick at which extinction was first observed.
+ *
+ * @param {object} reg
+ * @param {number} id
+ * @param {number} tick
+ */
+export function markExtinct(reg, id, tick) {
+    if (id === 0) return;
+    if (id < 0 || id >= reg.ids.length) return;
+    if (reg.extinct[id]) return;
+    reg.extinct[id] = true;
+    reg.extinctTick[id] = tick | 0;
+}
+
+/**
+ * Check whether a strain is tombstoned. Out-of-range IDs return false (no
+ * tombstone exists for them — they're nothing, not extinct).
+ *
+ * @param {object} reg
+ * @param {number} id
+ * @returns {boolean}
+ */
+export function isExtinct(reg, id) {
+    if (id < 0 || id >= reg.ids.length) return false;
+    return !!reg.extinct[id];
+}
+
+/**
+ * Resurrection path. Clears the tombstone if the strain reappears. No-op if
+ * the strain isn't currently tombstoned or the ID is out of range.
+ *
+ * @param {object} reg
+ * @param {number} id
+ */
+export function unmarkExtinct(reg, id) {
+    if (id < 0 || id >= reg.ids.length) return;
+    if (!reg.extinct[id]) return;
+    reg.extinct[id] = false;
+    reg.extinctTick[id] = -1;
+}
+
+/**
+ * Count of strains NOT currently tombstoned. O(N) scan over the extinct
+ * parallel array. UI panels call this for "X living / Y total" displays.
+ *
+ * @param {object} reg
+ * @returns {number}
+ */
+export function countLiving(reg) {
+    const n = reg.ids.length;
+    let alive = 0;
+    for (let i = 0; i < n; i++) {
+        if (!reg.extinct[i]) alive++;
+    }
+    return alive;
 }
 
 /**
@@ -280,12 +498,17 @@ export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick) {
     if (src === null) return -1;
     const strength = mutationStrength > 0 ? mutationStrength : DEFAULT_MUTATION_STRENGTH;
     const r = rng || Math.random;
-    const newParams = {
-        beta:  src.beta  + src.beta  * strength * gaussian(r),
-        sigma: src.sigma + src.sigma * strength * gaussian(r),
-        gamma: src.gamma + src.gamma * strength * gaussian(r),
-        mu:    src.mu    + src.mu    * strength * gaussian(r)
-    };
+    // Multiplicative gaussian on every per-strain field. Note: a parent
+    // with value 0 in some field stays at 0 in the child — this is
+    // intentional (evolutionarily, the mechanic stays "off" in the lineage
+    // unless the parent already had a non-zero rate). Recombination is the
+    // mechanism for picking up a mechanic from another strain. Clamping
+    // happens inside registerStrain.
+    const newParams = {};
+    for (const f of GENOME_FIELDS) {
+        const v = src[f.key];
+        newParams[f.key] = v + v * strength * gaussian(r);
+    }
     return registerStrain(reg, newParams, sourceId, birthTick);
 }
 
@@ -327,13 +550,18 @@ export function recombineStrains(reg, idA, idB, rng, birthTick) {
     const b = getStrain(reg, idB);
     if (b === null) return -1;
     const r = rng || Math.random;
-    const noise = RECOMBINATION_NOISE_STDDEV;
-    const newParams = {
-        beta:  (a.beta  + b.beta)  / 2 + noise * gaussian(r),
-        sigma: (a.sigma + b.sigma) / 2 + noise * gaussian(r),
-        gamma: (a.gamma + b.gamma) / 2 + noise * gaussian(r),
-        mu:    (a.mu    + b.mu)    / 2 + noise * gaussian(r)
-    };
+    // Additive gaussian on each field, scaled by the field's range so a
+    // uniform constant noise floor doesn't dominate small-range fields
+    // (l_reactivate has max 0.05; using 0.02 constant absolute noise would
+    // be 40% of its dynamic range). RECOMBINATION_NOISE_STDDEV is the
+    // fraction-of-range. For β (range 1) this collapses to the original
+    // constant-0.02 behavior.
+    const newParams = {};
+    for (const f of GENOME_FIELDS) {
+        const fieldRange = f.max - f.min;
+        const noise = RECOMBINATION_NOISE_STDDEV * fieldRange;
+        newParams[f.key] = (a[f.key] + b[f.key]) / 2 + noise * gaussian(r);
+    }
     return registerStrain(reg, newParams, idA, birthTick, idB);
 }
 
@@ -355,14 +583,6 @@ export function recombineStrains(reg, idA, idB, rng, birthTick) {
 // which is the gentler failure mode (the cell appears more-immune than
 // reality, not less).
 
-function bloomBits(strainId) {
-    // Math.imul forces 32-bit multiplication; the unsigned shift normalizes
-    // to a non-negative 32-bit integer before the low-6-bit mask.
-    const h1 = (Math.imul(strainId, 2654435761) >>> 0) & 63;
-    const h2 = ((Math.imul(strainId, 40503) + 0x9e3779b1) >>> 0) & 63;
-    return { h1, h2 };
-}
-
 /**
  * Set the two bloom bits for `strainId` in the cell at `cellIdx`. Bloom
  * filters are write-only-set; clearing a strain's bits is not possible
@@ -374,7 +594,10 @@ function bloomBits(strainId) {
  */
 export function bloomSet(bloom, cellIdx, strainId) {
     const base = cellIdx * 8;
-    const { h1, h2 } = bloomBits(strainId);
+    // Math.imul forces 32-bit multiplication; the unsigned shift normalizes
+    // to a non-negative 32-bit integer before the low-6-bit mask.
+    const h1 = (Math.imul(strainId, 2654435761) >>> 0) & 63;
+    const h2 = ((Math.imul(strainId, 40503) + 0x9e3779b1) >>> 0) & 63;
     bloom[base + (h1 >>> 3)] |= 1 << (h1 & 7);
     bloom[base + (h2 >>> 3)] |= 1 << (h2 & 7);
 }
@@ -397,7 +620,8 @@ export function bloomSet(bloom, cellIdx, strainId) {
  */
 export function bloomHas(bloom, cellIdx, strainId) {
     const base = cellIdx * 8;
-    const { h1, h2 } = bloomBits(strainId);
+    const h1 = (Math.imul(strainId, 2654435761) >>> 0) & 63;
+    const h2 = ((Math.imul(strainId, 40503) + 0x9e3779b1) >>> 0) & 63;
     const b1 = (bloom[base + (h1 >>> 3)] >>> (h1 & 7)) & 1;
     const b2 = (bloom[base + (h2 >>> 3)] >>> (h2 & 7)) & 1;
     return b1 === 1 && b2 === 1;
