@@ -462,16 +462,9 @@ export function similarity(reg, idA, idB) {
     return sim < 0 ? 0 : sim;
 }
 
-/**
- * Box-Muller transform: two uniform [0, 1) samples → one standard normal.
- * Defensive against u1 = 0 (log(0) = -∞) by clamping to a small ε.
- */
-function gaussian(rng) {
-    let u1 = rng();
-    if (u1 < 1e-12) u1 = 1e-12;
-    const u2 = rng();
-    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-}
+// gaussian(rng) → standard-normal sample via the shared Box-Muller helper
+// (window.gaussian from /shared-utils.js); same rng-consumption order, and
+// it applies the same u1≥1e-12 clamp, so seeded sequences are unchanged.
 
 /**
  * Spawn a mutated child strain off `sourceId`, register it, and return the

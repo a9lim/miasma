@@ -10,12 +10,7 @@ export function makeRngFromLocation(locationObj) {
     for (let i = 0; i < raw.length; i++) {
         s = (Math.imul(s, 31) + raw.charCodeAt(i)) | 0;
     }
-    let a = s | 0;
-    return function mulberry32() {
-        a = (a + 0x6D2B79F5) | 0;
-        let t = a;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
+    // Shared mulberry32 generator (window.mulberry32 from /shared-utils.js).
+    // Same seed → same sequence as the prior inline implementation.
+    return mulberry32(s);
 }
