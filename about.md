@@ -1,3 +1,10 @@
+---
+name: Miasma
+title: Miasma — Spatial Epidemic Simulator
+description: Seed and contain stochastic multi-strain epidemics on six hex-grid topologies with vaccination, quarantine, reservoirs, mutation, and painted interventions.
+updated: 2026-07-16
+---
+
 # Miasma
 
 Miasma is a spatial epidemic simulator on a hex grid. I built it because there's a hantavirus outbreak happening in my corner of California right now, and I wanted to actually feel the dynamics of an epidemic instead of just reading the curves in a paper. The textbook SEIR model is a system of ODEs that smears every person into one well-mixed pool; that's mathematically clean, but it loses everything that makes a real outbreak feel like an outbreak: the wavefront, the holes in the wavefront, the way a quarantine ring either catches the wave or doesn't, the way a vaccine campaign that's a week too late looks indistinguishable from one that's on time until it suddenly doesn't.
