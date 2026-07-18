@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design system and shared code policy. Sibling projects: `geon`, `cyano`, `gerry`, `shoals`, `scripture`.
+Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design system and shared code policy. Sibling projects: `geon`, `cyano`, `gerry`, `shoals`, `scripture`, `pile`, and `plasma`.
 
 ## Rules
 
@@ -10,7 +10,7 @@ Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design sys
 - Compartment / flag toggles use the geon-style colored switch + shoals-style colored label text. Each row binds a per-key `tog-{key}` class (`tog-v`, `tog-m`, `tog-z`, `tog-e`, `tog-r`, `tog-d`) that sets `--tog-color`; the base `.tog` rules in `shared-base.css` pick it up for the on-state, and the row label inherits via `color: var(--tog-color)`. No swatch boxes.
 - All parameter sliders live in a collapsible **"Advanced Parameters"** section (shoals pattern — `.advanced-toggle-btn` + `.advanced-section.hidden`, not `_settings.create()`). The Settings tab carries presets + surface/map-view controls + compartment/flag toggles + Display row + the Advanced toggle + Reset button. See `src/params.js` `buildAdvancedSection`. `CORE_LAYOUT` is intentionally empty — every slider goes in `ADVANCED_LAYOUT` with section headings. Phase 15 swap from the `_settings.create` floating dropdown to an inline collapsible: the dropdown didn't compose with the sidebar's `overflow: hidden` scroll container and felt foreign next to the inline toggle rows.
 - The top bar carries `#speed-btn` (must have `.speed-btn` class **and** an inner `<span class="speed-label">` — `_toolbar.updateSpeedBtn` writes the multiplier into that span; without it the button renders blank) and `#viewmode-btn` (eye icon). The viewmode button is a jump handle to the Settings tab's map controls; it does not own mode selection.
-- `#timeseries-panel` lives inline as the first child of `#tab-compartments` (the sidebar Compartments tab), above the compartment census — it is no longer a floating HUD (Phase 17). `stats.js` `buildPanelSkeleton` rebuilds that tab's contents on every render but explicitly preserves the `#timeseries-panel` node (its canvas context is captured once by `initTimeseries`). The chart is stacked-only — `renderLines` was removed in Phase 15.
+- `#timeseries-panel` lives inline as the first child of `#tab-compartments` (the sidebar Compartments tab), above the compartment census — it is no longer a floating HUD (Phase 17). `stats.js` `buildPanelSkeleton` runs once on the first stats render and explicitly preserves the `#timeseries-panel` node (its canvas context is captured once by `initTimeseries`). The chart is stacked-only — `renderLines` was removed in Phase 15.
 - `Compartment.EMPTY` cells render fully transparent. `src/render.js` skips both fill and stroke for empty cells in the human-layer pass; the `animalDisplay === 'only'` branch likewise skips its old backdrop fill. Adding overlay code that iterates the full grid should explicitly handle EMPTY (don't assume a non-zero alpha is being painted underneath).
 - Showcase defaults: `DEFAULT_PARAMS` has no value at 0 or 1, and `DEFAULT_TOGGLES` enables V/M + flags + `vax_rollout` while leaving Z off by default. Zombie/oncoviral presets opt Z back in. Presets reset to these defaults before merging, so canonical preset shapes (`seir-vanilla` etc) still produce textbook curves.
 
@@ -20,7 +20,11 @@ Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design sys
 cd path/to/a9lim.github.io && python -m http.server
 ```
 
-Serve from root — shared files load via absolute paths. No build step, test suite, or linter.
+Serve from root — shared files load via absolute paths. There is no project-local build step, dependency install, or linter. The permanent topology regression test is:
+
+```bash
+node src/topology.test.mjs
+```
 
 Verify HTML-to-JS ID contract after restructuring (BSD/macOS-safe form):
 ```bash
@@ -31,7 +35,7 @@ comm -3 \
 
 ## Overview
 
-Stochastic spatial epidemic simulator on a hex grid. Eight compartments (S, E, I, R, D, V, M, Z + `empty`), orthogonal status layer (none / H / Q), bit-flags for latent / chronic-carrier / infectious-corpse modifiers, multi-strain registry with mutation and recombination, population dynamics (age, health, births, deaths), an animal reservoir SIR layer with its own demography (births / aging / age-driven mortality) and per-strain transmission, gerry-style intervention paint, geon-style topology toggle (6 manifolds on a discrete hex lattice). Zero dependencies, vanilla ES6 modules.
+Stochastic spatial epidemic simulator on a hex grid. Eight simulated compartments (S, E, I, R, D, V, M, Z) plus an `EMPTY` storage/occupancy sentinel, an orthogonal status layer (none / H / Q), bit-flags for latent / chronic-carrier / infectious-corpse modifiers, multi-strain registry with mutation and recombination, population dynamics (age, health, births, deaths), an animal reservoir SIR layer with its own demography (births / aging / age-driven mortality) and per-strain transmission, gerry-style intervention paint, and a geon-style topology toggle (6 manifolds on a discrete hex lattice). Zero dependencies, vanilla ES6 modules.
 
 ## Architecture
 

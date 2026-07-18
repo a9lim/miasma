@@ -177,7 +177,7 @@ export function setupUI($, sim, hooks) {
             ],
             shortcuts,
             repo: 'https://github.com/a9lim/a9lim.github.io',
-            lastUpdated: '2026-07-16'
+            lastUpdated: '2026-07-17'
         });
         if ($.aboutBtn && panel && typeof panel.show === 'function') {
             $.aboutBtn.addEventListener('click', panel.show);

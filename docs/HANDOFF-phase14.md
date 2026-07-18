@@ -1,5 +1,7 @@
 # Miasma — handoff after phase 14 (build complete)
 
+> Historical phase-closeout snapshot from 2026-05-13. Later phases 14.5-17 changed the current mechanics and UI; use `../AGENTS.md` and `../README.md` for the maintained contract.
+
 Phase 14 shipped on 2026-05-13. All 14 phases complete. This file closes the
 build log — `HANDOFF-phase10.md` and `HANDOFF-phase11.md` (also in this
 folder) document the prior handoffs.

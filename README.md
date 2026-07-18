@@ -36,6 +36,12 @@ cd path/to/a9lim.github.io && python -m http.server
 
 There's no build step and no dependencies. Shared design system files load from the root site via absolute paths, so please serve from the parent directory.
 
+Run the exhaustive small-grid topology regression after changing boundary identification or neighbor lookup:
+
+```bash
+node src/topology.test.mjs
+```
+
 ## Architecture
 
 Vanilla JavaScript with no dependencies. ES6 modules loaded via `<script type="module">`. Canvas 2D rendering with `requestAnimationFrame`. Cell state stored as structure-of-arrays in typed arrays for cache locality.

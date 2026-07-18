@@ -1,5 +1,7 @@
 # Miasma — handoff for phases 10-14
 
+> Historical snapshot from 2026-05-13. The remaining phases described here shipped later; use `../AGENTS.md`, `../README.md`, and the later phase handoffs for current behavior. Paths and workflow notes below are preserved as build history, not live instructions.
+
 You're picking up the **miasma** sim mid-stream. Nine phases are shipped and validated; five remain. This document is a self-contained briefing — read the linked plan first, then this. Don't trust your training data for any of the sim's APIs; everything is in-tree.
 
 ## Project location

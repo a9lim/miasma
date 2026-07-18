@@ -1,5 +1,7 @@
 # Miasma — handoff after phase 10 (for phases 11-14)
 
+> Historical snapshot from 2026-05-13. The deferred topology and UI work described here shipped later; use `../AGENTS.md`, `../README.md`, and the later phase handoffs for current behavior.
+
 Phase 10 shipped on 2026-05-13. Read **`HANDOFF-phase10.md` first** — that doc covers architecture, dispatcher pattern, validation rhythm, a9's working style, and is still the canonical briefing for phases 11-14. This file is a thin addendum noting what changed in phase 10 and what got deferred.
 
 ## What phase 10 shipped

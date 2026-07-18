@@ -1,10 +1,10 @@
 // topology.test.mjs — unit tests for the hex-quotient wrap.
 // Run: `node src/topology.test.mjs` from miasma/.
 //
-// Phase 10 covers PLANE and TORUS as proper hex-quotients. Adjacency
-// symmetry and round-trip neighbor invariants are checked exhaustively
-// on a small grid (W=H=12 → R=5) because brute force is fine at that
-// size and the math is identical to the 120×120 default.
+// All six surfaces use the inscribed hex as their quotient domain. Exact
+// round-trip checks apply to the orientable translation cases; the twisted
+// surfaces also get exhaustive in-domain neighbor checks on W=H=12 (R=5),
+// where brute force is cheap and the math matches the 120×120 default.
 
 import { Topology, HEX_DIRS } from './config.js';
 import { wrap, neighbors, hexBounds, inHex } from './topology.js';
