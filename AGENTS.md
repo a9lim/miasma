@@ -7,7 +7,7 @@ Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design sys
 - Always prefer shared modules over project-specific reimplementations. Check `shared-*.js` files before adding utility code.
 - Hex coordinate math, brush hit-testing, and snapshot undo are shared concepts with `gerry`. Reuse those helpers rather than reimplementing.
 - The topology toggle UI mirrors `geon`. Use the same `_forms.bindModeGroup` pattern and the same set of six topology keys (`plane`, `cylinder`, `torus`, `mobius`, `klein`, `rp2`).
-- Compartment / flag toggles use the geon-style colored switch + shoals-style colored label text. Each row binds a per-key `tog-{key}` class (`tog-v`, `tog-m`, `tog-z`, `tog-e`, `tog-r`, `tog-d`) that sets `--tog-color`; the base `.tog` rules in `shared-base.css` pick it up for the on-state, and the row label inherits via `color: var(--tog-color)`. No swatch boxes.
+- Compartment / flag toggles use the geon-style colored switch + shoals-style colored label text. Each row binds a per-key `tog-{key}` class (`tog-v`, `tog-m`, `tog-z`, `tog-e`, `tog-r`, `tog-d`) that sets `--tog-color`; the base `.tog` rules in `shared/base.css` pick it up for the on-state, and the row label inherits via `color: var(--tog-color)`. No swatch boxes.
 - All parameter sliders live in a collapsible **"Advanced Parameters"** section (shoals pattern — `.advanced-toggle-btn` + `.advanced-section.hidden`, not `_settings.create()`). The Settings tab carries presets + surface/map-view controls + compartment/flag toggles + Display row + the Advanced toggle + Reset button. See `src/params.js` `buildAdvancedSection`. `CORE_LAYOUT` is intentionally empty — every slider goes in `ADVANCED_LAYOUT` with section headings. Phase 15 swap from the `_settings.create` floating dropdown to an inline collapsible: the dropdown didn't compose with the sidebar's `overflow: hidden` scroll container and felt foreign next to the inline toggle rows.
 - The top bar carries `#speed-btn` (must have `.speed-btn` class **and** an inner `<span class="speed-label">` — `_toolbar.updateSpeedBtn` writes the multiplier into that span; without it the button renders blank) and `#viewmode-btn` (eye icon). The viewmode button is a jump handle to the Settings tab's map controls; it does not own mode selection.
 - `#timeseries-panel` lives inline as the first child of `#tab-compartments` (the sidebar Compartments tab), above the compartment census — it is no longer a floating HUD (Phase 17). `stats.js` `buildPanelSkeleton` runs once on the first stats render and explicitly preserves the `#timeseries-panel` node (its canvas context is captured once by `initTimeseries`). The chart is stacked-only — `renderLines` was removed in Phase 15.
@@ -17,10 +17,10 @@ Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design sys
 ## Running Locally
 
 ```bash
-cd path/to/a9lim.github.io && python -m http.server
+cd path/to/a9lim.github.io && npm run build && python -m http.server --directory dist
 ```
 
-Serve from root — shared files load via absolute paths. There is no project-local build step, dependency install, or linter. The permanent topology regression test is:
+Build from the parent repository root and serve `dist/` — shared files load via absolute paths. There is no project-local build step, dependency install, or linter. The permanent topology regression test is:
 
 ```bash
 node src/topology.test.mjs
@@ -41,7 +41,7 @@ Stochastic spatial epidemic simulator on a hex grid. Eight simulated compartment
 
 **`main.js`**: entry point, `$` DOM cache, owns the rAF loop with timestep accumulator, constructs the paint controller (which owns canvas pointer events), wires preset/topology/viewmode callbacks via `setupUI`. Also owns the zoom/pan layer (see "Zoom + Pan" below).
 
-**Color pipeline**: `_PALETTE` (shared-tokens.js) → compartment hue aliases (`colors.js`) → `--epi-*` CSS vars + `-tint` / `-wash` alpha variants. Light/dark D (deceased) hex flips between `light.text` and `dark.canvas` to keep contrast against the canvas. Z (zombie) is a derived OKLCH chartreuse intentionally distinct from R-green. Toggle rows reuse the same `--epi-*` vars via per-key `tog-{key}` classes that bind `--tog-color`.
+**Color pipeline**: `_PALETTE` (shared/tokens.js) → compartment hue aliases (`colors.js`) → `--epi-*` CSS vars + `-tint` / `-wash` alpha variants. Light/dark D (deceased) hex flips between `light.text` and `dark.canvas` to keep contrast against the canvas. Z (zombie) is a derived OKLCH chartreuse intentionally distinct from R-green. Toggle rows reuse the same `--epi-*` vars via per-key `tog-{key}` classes that bind `--tog-color`.
 
 **Data flow**: tick advances dynamics (per `src/dynamics.js` order: age, births, strain dynamics, transmission, state transitions, hospital allocation, health degradation, vaccination rollout, mortality, Z dynamics, animal dynamics delegated to `src/dynamics-animal.js` — itself ordered animal aging → animal births → animal SIR + spillover → animal mortality) → render reads grid arrays → time-series samples compartment counts → strain registry recomputes prevalence.
 
@@ -180,13 +180,13 @@ The brush hover indicator is a DOM div appended to `<body>` by the controller, r
 |---|---|---|
 | Hex axial coords + helpers | `gerry/src/hex-math.js` (mirrored in `grid.js`) | Cell coordinate math |
 | Cube-rounding pixel → axial | `grid.js` `pixelToAxial` | Paint cursor hit-testing |
-| `_forms.bindModeGroup` | `shared-forms.js` | Topology + viewmode mode-groups |
-| `_forms.bindDeps` | `shared-forms.js` | Compartment toggle dependencies (Phase 14 wiring) |
-| `_settings.create` | `shared-settings.js` | Settings dropdown for rare controls |
-| `_toolbar` (play/pause/speed) | `shared-toolbar.js` | Standard sim toolbar |
-| `initAboutPanel(config)` | `shared-about.js` | About modal |
-| `_dropdown.enhance` | `shared-dropdown.js` | Preset select |
-| `resizeCanvasDPR` | `shared-utils.js` | Hi-DPI canvas |
+| `_forms.bindModeGroup` | `shared/forms.js` | Topology + viewmode mode-groups |
+| `_forms.bindDeps` | `shared/forms.js` | Compartment toggle dependencies (Phase 14 wiring) |
+| `_settings.create` | `shared/settings.js` | Settings dropdown for rare controls |
+| `_toolbar` (play/pause/speed) | `shared/toolbar.js` | Standard sim toolbar |
+| `initAboutPanel(config)` | `shared/about.js` | About modal |
+| `_dropdown.enhance` | `shared/dropdown.js` | Preset select |
+| `resizeCanvasDPR` | `shared/utils.js` | Hi-DPI canvas |
 | Topology glide-reflection concept | `geon/src/topology.js` | Reference only — discrete hex-quotient is project-specific |
 
 ## Design Intent
@@ -218,7 +218,7 @@ The brush hover indicator is a DOM div appended to `<body>` by the controller, r
 - **`data-theme` is on `<html>`** — `document.documentElement.dataset.theme`
 - **Shared CSS at domain root** — `/shared/base.css` absolute path requires serving from parent directory
 - **Sidebar uses `.sidebar-tabs` in `.stats-header`** — no separate `<h2 class="stats-title">` and `.tab-bar`. New layout pattern site-wide
-- **Canvas DPR** — always go through `resizeCanvasDPR` from `shared-utils.js`. Manual `canvas.width = innerWidth` produces blurry rendering on hi-DPI
+- **Canvas DPR** — always go through `resizeCanvasDPR` from `shared/utils.js`. Manual `canvas.width = innerWidth` produces blurry rendering on hi-DPI
 - **Time-series ring buffer** — fixed-size, drops oldest sample. Resizing requires reallocation; don't do it on every theme toggle. The transition-counts ring in `main.js` (`history`) uses a different shape — typed-array columns, see Per-Tick Hot Path
 - **Don't read `offsetParent` in tick-driven render paths** — it's a layout-dependent property that triggers sync layout flush after any DOM write. Use `classList.contains('active')` / `'hidden'` for visibility checks instead
 - **Status overlays render in COMPARTMENT and STATUS views.** The H "+" badge and Q ring originally rendered only in COMPARTMENT view, leaving STATUS view without its titular glyphs. Both render passes now run when `mode === STATUS` too — don't re-gate them.

@@ -31,10 +31,10 @@ Keyboard shortcuts: space (play / pause), `.` (step one tick), `1`-`6` (paint mo
 ## Running locally
 
 ```bash
-cd path/to/a9lim.github.io && python -m http.server
+cd path/to/a9lim.github.io && npm run build && python -m http.server --directory dist
 ```
 
-There's no build step and no dependencies. Shared design system files load from the root site via absolute paths, so please serve from the parent directory.
+The project itself has no compile step or dependencies; the parent staging build assembles shared assets. Shared design system files load from the root site via absolute paths, so please build from the parent repository root and serve `dist/`.
 
 Run the exhaustive small-grid topology regression after changing boundary identification or neighbor lookup:
 
