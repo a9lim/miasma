@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    styles.css — Project-specific overrides for miasma.
-   Shared patterns (glass, tool-btn, layout tokens) in /shared-base.css.
+   Shared patterns (glass, tool-btn, layout tokens) in /shared/base.css.
    All colors via CSS vars injected by colors.js — no hardcoded values.
    Compartment colors: --epi-s / -e / -i / -r / -d / -v / -m / -z
                        plus -wash (0.18α) and -tint (0.10α) variants.

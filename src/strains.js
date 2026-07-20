@@ -463,7 +463,7 @@ export function similarity(reg, idA, idB) {
 }
 
 // gaussian(rng) → standard-normal sample via the shared Box-Muller helper
-// (window.gaussian from /shared-utils.js); same rng-consumption order, and
+// (window.gaussian from /shared/utils.js); same rng-consumption order, and
 // it applies the same u1≥1e-12 clamp, so seeded sequences are unchanged.
 
 /**

@@ -216,7 +216,7 @@ The brush hover indicator is a DOM div appended to `<body>` by the controller, r
 ## Gotchas
 
 - **`data-theme` is on `<html>`** — `document.documentElement.dataset.theme`
-- **Shared CSS at domain root** — `/shared-base.css` absolute path requires serving from parent directory
+- **Shared CSS at domain root** — `/shared/base.css` absolute path requires serving from parent directory
 - **Sidebar uses `.sidebar-tabs` in `.stats-header`** — no separate `<h2 class="stats-title">` and `.tab-bar`. New layout pattern site-wide
 - **Canvas DPR** — always go through `resizeCanvasDPR` from `shared-utils.js`. Manual `canvas.width = innerWidth` produces blurry rendering on hi-DPI
 - **Time-series ring buffer** — fixed-size, drops oldest sample. Resizing requires reallocation; don't do it on every theme toggle. The transition-counts ring in `main.js` (`history`) uses a different shape — typed-array columns, see Per-Tick Hot Path
