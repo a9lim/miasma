@@ -95,6 +95,7 @@ main {
 
 .legend-sub {
   font-family: var(--font-sans);
+  font-variation-settings: var(--fvs-prose);
   font-size: clamp(0.46rem, 0.7vw, 0.52rem);
   font-weight: 600;
   text-transform: uppercase;
@@ -190,7 +191,8 @@ main {
 }
 
 .stat-subhead {
-  font: 600 var(--font-sm) / 1.4 var(--font-mono, monospace);
+  font: 600 var(--font-sm) / 1.4 var(--font-sans);
+  font-variation-settings: var(--fvs-prose);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary, #808696);
@@ -230,7 +232,8 @@ main {
 }
 
 .strain-name {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variation-settings: var(--fvs-prose);
   font-size: var(--font-sm);
   color: var(--text);
   white-space: nowrap;
@@ -240,6 +243,7 @@ main {
 
 .strain-prev {
   font-family: var(--font-mono);
+  font-variation-settings: var(--fvs-mono);
   font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
@@ -389,6 +393,7 @@ main {
   border: none;
   padding: 0.45rem 0.4rem;
   font-family: var(--font-sans);
+  font-variation-settings: var(--fvs-prose);
   font-size: var(--font-sm);
   font-weight: 500;
   color: var(--text-muted);
@@ -525,7 +530,8 @@ main {
    tweaks are sim-specific.
    ═══════════════════════════════════════ */
 .toggles-section-header {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  font-variation-settings: var(--fvs-prose);
   font-size: var(--font-sm);
   font-weight: 600;
   text-transform: uppercase;
