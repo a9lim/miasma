@@ -4,10 +4,11 @@
    compartment colors (S/E/I/R/D/V/M/Z), and injects CSS
    custom properties (--epi-*).
 
-   Compartment assignment (a9 to iterate):
-     S = muted slate (susceptible — neutral)
+   Compartment assignment:
+     S = warm slate (susceptible — neutral)
      E = orange/ochre (exposed)
-     I = red (infectious — close to brand accent)
+     I = scarlet (infectious — data red, deliberately more vivid and more
+         orange than the UI accent so the two never read as one color)
      R = green (recovered)
      D = near-black (deceased)
      V = cyan/sky (vaccinated)
@@ -20,7 +21,6 @@
 // code can read _PALETTE.epi_* directly without a string lookup table.
 _PALETTE.slate   = _PALETTE.extended.slate;
 _PALETTE.orange  = _PALETTE.extended.orange;
-_PALETTE.red     = _PALETTE.extended.red;
 _PALETTE.green   = _PALETTE.extended.green;
 _PALETTE.cyan    = _PALETTE.extended.cyan;
 _PALETTE.magenta = _PALETTE.extended.magenta;
@@ -31,11 +31,16 @@ _PALETTE.lime    = _PALETTE.extended.lime;
 // "wrong-green" rather than "growth-green". Distinct from R.
 _PALETTE.zombie = _oklch2hex(0.58, 0.13, 115);
 
-// D is "near-black" — pulled from text token, not pure #000 so it
-// keeps the cold-violet undertone of the rest of the palette.
-_PALETTE.deceased = _PALETTE.light.text;
+// I is the data red. The theme accent (oxblood on light, #DC5960 on dark) is
+// UI: active tabs, links, focus. extended.red (oklch 0.62 0.17 25) sits within
+// ΔE 2 of the dark accent, so infectious cells and the active tab would read
+// as one color; this scarlet (oklch 0.60 0.22 30) is ΔE > 7 from both accents
+// and ΔE ~10 from E's orange, and is the same on both grounds.
+_PALETTE.infected = _oklch2hex(0.60, 0.22, 30);
 
-_PALETTE.textOnAccent = _PALETTE.light.elevated;
+// D is "near-black" — pulled from the text token, not pure #000, so it
+// shares the neutral ground's warm undertone.
+_PALETTE.deceased = _PALETTE.light.text;
 
 _freezeTokens();
 
@@ -51,7 +56,7 @@ _freezeTokens();
   const compartments = [
     ['epi-s',  'slate'],
     ['epi-e',  'orange'],
-    ['epi-i',  'red'],
+    ['epi-i',  'infected'],
     ['epi-r',  'green'],
     ['epi-v',  'cyan'],
     ['epi-m',  'magenta'],

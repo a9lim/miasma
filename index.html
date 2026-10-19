@@ -14,8 +14,8 @@
   <meta property="og:url" content="https://a9l.im/miasma">
   <meta property="og:site_name" content="a9l.im">
   <meta name="twitter:card" content="summary_large_image">
-  <meta property="og:image" content="https://a9l.im/og-image.webp?v=20260725f">
-  <meta name="twitter:image" content="https://a9l.im/og-image.webp?v=20260725f">
+  <meta property="og:image" content="https://a9l.im/og-image.webp?v=20261019">
+  <meta name="twitter:image" content="https://a9l.im/og-image.webp?v=20261019">
   <meta name="twitter:image:alt" content="a9l.im — research, simulations, and open-source software">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -28,7 +28,7 @@
   <meta name="twitter:description" content="Seed and contain stochastic multi-strain epidemics on six hex-grid topologies with vaccination, quarantine, reservoirs, mutation, and painted interventions.">
   <meta name="author" content="a9lim">
   <link rel="icon" href="/favicon.ico">
-  <meta name="theme-color" content="#E11107">
+  <meta name="theme-color" content="#FCFCFB">
   <link rel="canonical" href="https://a9l.im/miasma">
   <link rel="alternate" hreflang="en" href="https://a9l.im/miasma">
   <link rel="alternate" hreflang="x-default" href="https://a9l.im/miasma">
@@ -349,34 +349,34 @@
       <h2>What is Miasma?</h2>
       <p>Miasma is an interactive spatial epidemic simulator. Instead of integrating ordinary differential equations on a well-mixed population, it runs a stochastic cellular automaton on a hex-tiled two-dimensional manifold whose topology you choose. Each occupied cell holds one of eight compartments — Susceptible, Exposed, Infectious, Recovered, Deceased, Vaccinated, Maternal-immunity, or Z — with Latent, Chronic-carrier, and Infectious-corpse flags plus Hospitalized/Quarantined status overlays. The result is a system where you can see how the same disease parameters produce dramatically different outbreaks depending on the geometry of the contact network.</p>
 
-      <h3>Compartmental Models</h3>
+      <h3>Compartmental models</h3>
       <p>The compartmental tradition begins with Kermack and McKendrick's 1927 paper, which partitioned a population into Susceptible, Infectious, and Removed and derived the threshold condition that the modern basic reproduction number R<sub>0</sub> formalizes. The SIR core has since been extended in many directions — adding latency (E), demography (births, deaths), vaccination (V), maternal immunity (M), and waning. Miasma's SEIRDV core with M/L/C/F flags and H/Q status overlays is a synthesis of these extensions, made tractable by running each compartment as a discrete state on a finite lattice. Beyond canonical SEIR, recovered cells can be reinfected at a per-cell susceptibility multiplier and vaccinated cells admit breakthrough infections at a configurable efficacy. Both compose with the per-strain bloom-filter cross-immunity record so that reinfection and breakthrough favor novel antigens — the right shape for waning population-level immunity to a previously circulating strain.</p>
 
-      <h3>Latent and Chronic Carriers</h3>
+      <h3>Latent and chronic carriers</h3>
       <p>Two of the flag overlays correspond to disease classes the canonical SEIR model handles awkwardly. The latent flag (L) marks an exposed cell whose progression to infectious goes through a slow reactivation rate rather than the normal incubation period — a fraction of fresh exposures latch latent on contact, configurable per preset. Tuberculosis is the canonical case: the World Health Organization estimates roughly a quarter of the global population carries latent TB, with only a small per-capita per-year reactivation rate, producing a long-tailed epidemic that the standard E compartment cannot capture. The chronic-carrier flag (C) marks a recovered cell that still transmits at a reduced multiplier of the baseline transmission rate — the right shape for hantavirus-like reservoir dynamics where some recoveries do not clear the infection. Both flags are gated on per-preset seeding probabilities (l_seed and c_seed) so the underlying SEIR model is recoverable by setting them to zero.</p>
 
-      <h3>Why Spatial Structure Matters</h3>
+      <h3>Why spatial structure matters</h3>
       <p>Well-mixed (mass-action) models assume every individual can contact every other with equal probability. Real contact networks have geometry. In Miasma, infection only crosses between cells that are neighbors on the lattice, so outbreaks propagate as traveling waves rather than synchronous global infections. Wave fronts have a characteristic speed; the effective reproduction number behind a front is lower than R<sub>0</sub> because part of the neighborhood is already immune; final size is generally smaller than the mass-action prediction; and stochastic extinction at low densities becomes possible even when R<sub>0</sub> exceeds 1.</p>
 
       <h3>Topology</h3>
       <p>The simulator lets you set the underlying surface. The plane has boundary — outbreaks die at edges. The cylinder wraps one axis; the torus wraps both and is boundary-free and orientable, giving the cleanest long-time dynamics. The Möbius strip and Klein bottle are non-orientable: a wave returning to its origin can arrive mirror-reflected, producing interference patterns and altered final sizes that no orientable surface can reproduce. The real projective plane (RP²) identifies antipodal points and is the most non-trivial of the six. Comparing the same disease across topologies isolates the contribution of geometry alone, with all other parameters held fixed.</p>
 
-      <h3>Multi-Strain Dynamics</h3>
+      <h3>Multi-strain dynamics</h3>
       <p>Beyond a single pathogen, Miasma supports multi-strain populations with antigenic mutation, partial cross-immunity, and competition for susceptibles. Strains can emerge spontaneously through per-transmission mutation, and the strain-view mode colors each cell by which lineage currently or most recently infected it, producing a phylogeographic readout of the outbreak.</p>
 
-      <h3>The Z Compartment: Two Readings</h3>
+      <h3>The Z compartment: two readings</h3>
       <p>The Z compartment is interpretation-agnostic. The same state machine reads as two different stories depending on which spawn pathway is active and where the encounter-outcome dials sit. <em>Macroscopic</em>: a zombie pandemic. Cells are people. Infectious corpses reanimate (the F flag is the bridge — only F-flagged deaths can convert to Z, at rate dz_dead per tick). When a zombie meets a human, a single bucketed roll resolves the outcome — clean kill (target → D), kill-with-infection (target → D + F-corpse), expose alive (target → E), or unopposed conversion (target → Z). A separate per-encounter roll handles whether the zombie itself dies in the fight (z_die_fighting), so mutual destruction is on the table. Zombies have a finite lifespan via z_die_natural — decomposition catches up. <em>Microscopic</em>: oncoviral cellular transformation. Cells are cells. The L flag carries the oncovirus latently in the host genome after S→E exposure, and at a small per-tick rate (l_transform) a latently-infected cell transforms into a malignant clone (→ Z). Transformed cells expand by contact-driven conversion (z_convert_unopposed dominates because cells don't fight back). Immune surveillance is represented by a small nonzero z_die_fighting — NK cells and cytotoxic T cells clearing transformed cells. Transformed cells are immortal (telomerase reactivation), so z_die_natural is zero; crowding-driven exhaustion stays on to capture necrotic-core formation in tumor masses where the interior loses access to oxygen. The two readings emerge from the same code with no toggles renamed and no special-case branches — the parameters are the whole story. Intermediate configurations produce intermediate readings, which is often the most pedagogically interesting region.</p>
 
-      <h3>Calibrated Presets</h3>
+      <h3>Calibrated presets</h3>
       <p>Ten named configurations cover the textbook curriculum and a few exotic cases: SEIR-vanilla (pure Kermack–McKendrick on a torus), COVID-like (moderate β, longer infectious period, hospital pressure), Ebola (lower β, high mortality, infectious corpses), Tuberculosis (long latency with reactivation), Andes hantavirus (rodent-reservoir-primary with rare human-to-human spread), Smallpox (high β with severe mortality), Plague with rats (bidirectional spillover and infectious corpses), Zombie apocalypse (F-corpse reanimation, humans fighting back with finite-lifespan zombies — the macroscopic Z reading), Oncoviral transformation (latent integration → malignant clones with immune surveillance and tumor-core necrosis — the microscopic Z reading), and Absurd mode (every toggle on, including zombies, on a Klein bottle). Each preset sets the transmission parameters, compartment toggles, and topology; from there you can paint interventions or tweak any slider live.</p>
 
-      <h3>View Modes</h3>
+      <h3>View modes</h3>
       <p>Six heatmap projections of the same underlying state: compartment (canonical SEIRDV coloring), strain (cell colored by dominant active lineage), age (green when young, near-black when saturated), health (per-cell health ramp from red to green), status (faded background highlighting hospitalized and quarantined cells), and susceptibility (red where a cell has no prior exposure, green where the bloom-filter immunity record is saturated). Switching modes mid-run is non-destructive — the dynamics keep running on the same state.</p>
 
       <h3>Interventions</h3>
       <p>The intervention brushes let you paint five modes onto the manifold: seed (place strain α infections), vaccinate (S/E/R/M → V), quarantine (status overlay reducing transmission both ways), sanitize (clear infections and corpses), and cull (force-kill cells, including the zombie compartment). Brush radius scales 1/7/19 hexes, and every stroke goes onto an undo stack until the simulation advances; once time moves, undo is cleared so paint history never rewinds evolved disease state. The geometry of intervention matters: contiguous immune blocks at the herd-immunity threshold suppress outbreaks more reliably than the same fraction scattered randomly, because contiguous immunity blocks percolation paths. The simulator exposes this geometric dependence directly.</p>
 
-      <h3>Learning Outcomes</h3>
+      <h3>Learning outcomes</h3>
       <p>After using Miasma, students should be able to: define compartments and transitions in an SEIRDV-class model and connect them to per-tick transition probabilities; derive the basic reproduction number R<sub>0</sub> and the herd-immunity threshold 1 − 1/R<sub>0</sub>; distinguish deterministic mass-action dynamics from stochastic spatial dynamics and predict where the two diverge; explain how lattice topology — boundary, orientability, antipodal identification — alters wave propagation and final size; describe multi-strain competition under partial cross-immunity; and evaluate the geometric efficacy of different vaccination patterns at the same coverage.</p>
 
       <h3>Prerequisites</h3>

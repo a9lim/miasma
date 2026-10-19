@@ -438,7 +438,7 @@ export default function init(dom) {
           action: () => { if ($.stepBtn) $.stepBtn.click(); } },
         { key: 'r', group: 'Simulation', label: 'Reset simulation',
           action: () => { if ($.resetBtn) $.resetBtn.click(); } },
-        { key: '?', group: 'View', label: 'Toggle About panel',
+        { key: '?', group: 'View', label: 'Toggle about panel',
           action: () => { if ($.aboutBtn) $.aboutBtn.click(); } },
         { key: 'm', group: 'View', label: 'Show map controls',
           action: () => { if ($.viewModeBtn) $.viewModeBtn.click(); } },

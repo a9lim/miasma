@@ -336,8 +336,8 @@ export function render(ctx, grid, mode, viewport, opts) {
         // Single fused pass: fill each cell, then stroke its outline. The path
         // is built once per cell and used for both ops. Empty (unoccupied)
         // cells skip both fill AND stroke so they render transparent — the
-        // canvas background shows through instead of the previous beige
-        // `--bg-base` fill, and there's no hex outline to read as "cell here."
+        // canvas ground (--bg-canvas) shows through, and there's no hex
+        // outline to read as "cell here."
         ctx.lineWidth = 1;
         ctx.lineJoin = 'miter';
         ctx.strokeStyle = strokeColor;
@@ -487,10 +487,10 @@ function renderAnimalDots(ctx, anim, mask, colors, hexSize, posX, posY, active, 
     // chain. Indices match Animal.VOID/S/I/R/D enum values.
     const dotColors = [
         null,                                  // VOID — never drawn
-        colors[Compartment.S] || '#888',       // S
-        colors[Compartment.I] || '#e11107',    // I
-        colors[Compartment.R] || '#0a7',       // R
-        colors[Compartment.D] || '#222'        // D
+        colors[Compartment.S],                 // S
+        colors[Compartment.I],                 // I
+        colors[Compartment.R],                 // R
+        colors[Compartment.D]                  // D
     ];
 
     // Group draws by color so we minimize fillStyle changes (canvas state
@@ -517,8 +517,8 @@ function renderAnimalDots(ctx, anim, mask, colors, hexSize, posX, posY, active, 
 // ─── Flag overlays (L stripes on E, C rim on R, F rim on D) ─────────────────
 
 function renderFlagOverlays(ctx, grid, colors, drawSize, posX, posY, hexSize, active, activeCount) {
-    const stripeColor = colors[Compartment.S] || '#888';
-    const rimColor    = colors[Compartment.I] || '#e11107';
+    const stripeColor = colors[Compartment.S];
+    const rimColor    = colors[Compartment.I];
 
     // 60° stripe geometry — direction (cos60°, sin60°), normal (-sin60°, cos60°).
     const stripeDx = 0.5;
@@ -652,16 +652,14 @@ function renderStatusOverlays(ctx, grid, textColor, drawSize, posX, posY, hexSiz
 // so the user sees exactly which hexes a stroke would affect. Replaces the
 // old DOM .brush-indicator circle — the cell-accurate outline is the whole
 // point on a hex lattice (a circle never matches the seven/nineteen-hex
-// footprints precisely).
-//
-// The paint mode → accent var mapping mirrors paint.js's hover color logic;
-// keep them in sync.
+// footprints precisely). The tint is the target compartment's data color, not
+// the theme accent.
 const PAINT_ACCENT_VARS = {
     seed:       '--epi-i',
     vaccinate:  '--epi-v',
     quarantine: '--epi-e',
     sanitize:   '--epi-r',
-    cull:       '--epi-d'
+    cull:       '--text'   // = --epi-d in light; --epi-d is the ground color in dark and would vanish
 };
 
 function readAccentColor(paintMode) {

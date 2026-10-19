@@ -1,17 +1,11 @@
 /* ═══════════════════════════════════════════════════════════════
    styles.css — Project-specific overrides for miasma.
    Shared patterns (glass, tool-btn, layout tokens) in /shared/base.css.
-   All colors via CSS vars injected by colors.js — no hardcoded values.
+   All colors via CSS vars injected by shared/tokens.js and colors.js.
    Compartment colors: --epi-s / -e / -i / -r / -d / -v / -m / -z
                        plus -wash (0.18α) and -tint (0.10α) variants.
+   Type is Newsreader (--font-text) throughout; labels are sentence case.
    ═══════════════════════════════════════════════════════════════ */
-
-/* ───── Keyframes ───── */
-@keyframes pulse-dot {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50%      { opacity: 1; transform: scale(1.6); }
-}
-
 
 /* ───── Base — full-viewport app shell ───── */
 html {
@@ -84,56 +78,6 @@ main {
 
 
 /* ═══════════════════════════════════════
-   COMPARTMENT LEGEND — colored dots + label rows
-   Generic .legend-dot pulls a per-class --dot-color.
-   ═══════════════════════════════════════ */
-.legend-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-}
-
-.legend-sub {
-  font-family: var(--font-sans);
-  font-variation-settings: var(--fvs-prose);
-  font-size: clamp(0.46rem, 0.7vw, 0.52rem);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
-  margin-top: 0.25rem;
-  opacity: 0.6;
-}
-
-.legend-sub:first-child { margin-top: 0; }
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: clamp(0.58rem, 0.88vw, 0.66rem);
-  color: var(--text-secondary);
-}
-
-.legend-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--dot-color);
-}
-
-.legend-dot.epi-s-dot { --dot-color: var(--epi-s); }
-.legend-dot.epi-e-dot { --dot-color: var(--epi-e); }
-.legend-dot.epi-i-dot { --dot-color: var(--epi-i); }
-.legend-dot.epi-r-dot { --dot-color: var(--epi-r); }
-.legend-dot.epi-d-dot { --dot-color: var(--epi-d); }
-.legend-dot.epi-v-dot { --dot-color: var(--epi-v); }
-.legend-dot.epi-m-dot { --dot-color: var(--epi-m); }
-.legend-dot.epi-z-dot { --dot-color: var(--epi-z); }
-
-
-/* ═══════════════════════════════════════
    COMPARTMENT STAT READOUTS
    Reuses .stat-value / .stat-label from shared-base.css.
    Per-compartment color via --stat-color.
@@ -146,7 +90,7 @@ main {
 .stat-row[data-compartment="V"]     { --stat-color: var(--epi-v); }
 .stat-row[data-compartment="M"]     { --stat-color: var(--epi-m); }
 .stat-row[data-compartment="Z"]     { --stat-color: var(--epi-z); }
-.stat-row[data-compartment="empty"] { --stat-color: var(--text-secondary, #808696); }
+.stat-row[data-compartment="empty"] { --stat-color: var(--text-secondary); }
 
 /* Dark theme: --epi-d collapses to canvas background so D cells render as
    "holes" — but the same color on text disappears against the panel. Swap
@@ -169,33 +113,21 @@ main {
 /* Dim zero-count rows so non-zero entries stand out */
 .stat-row[data-zero="true"] { opacity: 0.4; }
 
-/* Population total + observed Re + status (hospital/quarantine) + Phase 5 mean age/health readout rows are role-tagged */
-.stat-row[data-role="population"] .stat-value,
-.stat-row[data-role="reff"] .stat-value,
-.stat-row[data-role="hospital"] .stat-value,
-.stat-row[data-role="quarantine"] .stat-value,
-.stat-row[data-role="mean-age"] .stat-value,
-.stat-row[data-role="mean-health"] .stat-value,
-.stat-row[data-role="animal-total"] .stat-value,
-.stat-row[data-role="animal-mean-age"] .stat-value {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Phase-17: animal-reservoir census group. The animal S/I/R/D rows reuse the
-   --epi-* hues via [data-compartment] above (matching the animal-dot
-   overlay). A small uppercase heading separates the group from the human
-   compartments above it — spacing + heading, no container border (per the
-   command-center design language: surfaces differ by spacing, not lines). */
+/* Animal-reservoir census group. The animal S/I/R/D rows reuse the --epi-*
+   hues via [data-compartment] above (matching the animal-dot overlay). An
+   italic label separates the group from the human compartments above it —
+   spacing + label, no container border. */
 .stat-animal-group {
   margin-top: 0.65rem;
 }
 
 .stat-subhead {
-  font: 600 var(--font-sm) / 1.4 var(--font-sans);
-  font-variation-settings: var(--fvs-prose);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary, #808696);
+  font-family: var(--font-text);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--font-base);
+  line-height: 1.4;
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
 }
 
@@ -232,8 +164,7 @@ main {
 }
 
 .strain-name {
-  font-family: var(--font-sans);
-  font-variation-settings: var(--fvs-prose);
+  font-family: var(--font-text);
   font-size: var(--font-sm);
   color: var(--text);
   white-space: nowrap;
@@ -242,10 +173,9 @@ main {
 }
 
 .strain-prev {
-  font-family: var(--font-mono);
-  font-variation-settings: var(--fvs-mono);
+  font-family: var(--font-text);
   font-size: var(--font-sm);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
   color: var(--text-muted);
 }
 
@@ -282,37 +212,26 @@ main {
 
 
 /* ═══════════════════════════════════════
-   PULSE DOT — active outbreak indicator
-   ═══════════════════════════════════════ */
-.pulse-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--epi-i);
-  animation: pulse-dot 2.5s var(--ease-in-out) infinite;
-  flex-shrink: 0;
-  vertical-align: middle;
-  margin-right: 0.35rem;
-}
-
-
-/* ═══════════════════════════════════════
    TIME SERIES PANEL — Compartments-tab chart
    ═══════════════════════════════════════ */
-/* Phase-17: the stacked compartment chart docks at the top of the sidebar's
-   Compartments tab (it was a floating canvas-corner HUD through Phase 15-16).
-   Plain block, full panel width, fixed 16:9 chart area; the human compartment
-   census stacks below it. The --bg-base fill matches the chart's "empty"
-   band so unfilled headroom above the stack reads as depopulated land. */
+/* The stacked compartment chart docks at the top of the sidebar's Compartments
+   tab. Plain block, full panel width, fixed 16:9 chart area; the human
+   compartment census stacks below it. The --bg-canvas fill matches the chart's
+   "empty" band (also --bg-canvas) so unfilled headroom above the stack reads
+   as depopulated land, the same ground the map shows through empty cells. */
 #timeseries-panel {
   width: 100%;
   aspect-ratio: 16 / 9;
   margin-bottom: 0.75rem;
   border-radius: var(--radius);
   overflow: hidden;
-  background: var(--bg-base);
+  background: var(--bg-canvas);
 }
+
+/* Settings tab stacks four sections (presets, surface/map view, toggles,
+   parameters); a gap between them keeps each section label clear of the
+   controls above it. */
+.settings-section + .settings-section { margin-top: 0.85rem; }
 
 /* Surface and map-view controls live in Settings. */
 .settings-map-controls {
@@ -341,9 +260,10 @@ main {
 
 .advanced-toggle-btn {
   width: 100%;
+  font-family: var(--font-text);
   font-size: var(--font-base);
   padding: 0.5rem 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .advanced-toggle-btn.active {
@@ -359,6 +279,31 @@ main {
 }
 
 .advanced-section.hidden { display: none; }
+
+/* Slider rows (global parameters and the per-strain genome editor): a fixed
+   label / slider / value grid so every track starts and ends at the same x
+   whatever the label or readout width. */
+#dashboard .settings-dd-row[data-param] {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr) 3.3rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#dashboard .settings-dd-row[data-param] .settings-dd-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The shared .tool-btn pins a 34px square; a text button needs its own width. */
+.settings-dd-row[data-role="reset"] .tool-btn {
+  width: 100%;
+  padding: 0 0.75rem;
+  font-family: var(--font-text);
+  font-size: var(--font-base);
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 #timeseries-canvas {
   display: block;
@@ -392,8 +337,7 @@ main {
   background: transparent;
   border: none;
   padding: 0.45rem 0.4rem;
-  font-family: var(--font-sans);
-  font-variation-settings: var(--fvs-prose);
+  font-family: var(--font-text);
   font-size: var(--font-sm);
   font-weight: 500;
   color: var(--text-muted);
@@ -413,6 +357,7 @@ main {
 .paint-mode-btn#mode-quarantine.active { background: var(--epi-e); color: var(--text-on-accent); }
 .paint-mode-btn#mode-sanitize.active   { background: var(--epi-r); color: var(--text-on-accent); }
 .paint-mode-btn#mode-cull.active       { background: var(--epi-d); color: var(--text-on-accent); }
+:root[data-theme="dark"] .paint-mode-btn#mode-cull.active { background: var(--text); }
 
 /* Brush-size mode group: same inline-mode-toggles container as the animal-
    display row, but with explicit active styling because the three buttons
@@ -453,8 +398,11 @@ main {
 
 .preset-apply-btn {
   flex: 0 0 auto;
+  width: auto;
+  font-family: var(--font-text);
+  font-size: var(--font-base);
   padding: 0.45rem 0.9rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .preset-apply-btn:disabled {
@@ -465,12 +413,6 @@ main {
 .preset-desc {
   margin-top: 0.25rem;
 }
-
-
-/* ═══════════════════════════════════════
-   STATS — scale-bounce animation on value change
-   ═══════════════════════════════════════ */
-.stat-value.bump { transform: scale(1.25); }
 
 
 /* ═══════════════════════════════════════
@@ -517,7 +459,6 @@ main {
    REDUCED MOTION
    ═══════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
-  .pulse-dot { animation: none; opacity: 0.7; }
   .strain-bar-fill { transition: none; }
 }
 
@@ -530,35 +471,16 @@ main {
    tweaks are sim-specific.
    ═══════════════════════════════════════ */
 .toggles-section-header {
-  font-family: var(--font-sans);
-  font-variation-settings: var(--fvs-prose);
-  font-size: var(--font-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  font-family: var(--font-text);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--font-base);
   color: var(--text-muted);
   margin-top: 0.75rem;
   margin-bottom: 0.35rem;
 }
 
 .toggles-section-header:first-child { margin-top: 0; }
-
-/* Row label can hold a swatch + text inline. Align baseline so the swatch
-   sits centered with the text. (Legacy — kept for back-compat with any
-   pre-restyle markup.) */
-.toggles-row-label {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-/* The right-hand wrapper holds only the checkbox toggle — let it shrink to
-   the control width rather than stretching. (Legacy — superseded by
-   .toggle-row + .tog-wrap below.) */
-.toggles-checkbox-wrap {
-  flex: 0 0 auto;
-  justify-content: flex-end;
-}
 
 /* ───── Phase-14 restyle: geon-style colored toggles + shoals-style
    colored label text. The row binds a per-key `tog-{key}` class that
@@ -579,7 +501,6 @@ main {
   /* Slightly darker base; the colored letter prefix (V — Vaccinated, ...)
      reads as the affordance. Match the geon-on-blue feel. */
   font-weight: 500;
-  letter-spacing: 0.01em;
   cursor: pointer;
   transition: opacity 0.2s var(--ease-out);
 }
@@ -600,6 +521,11 @@ main {
 .tog-v, .toggle-row.tog-v { --tog-color: var(--epi-v); }
 .tog-m, .toggle-row.tog-m { --tog-color: var(--epi-m); }
 .tog-z, .toggle-row.tog-z { --tog-color: var(--epi-z); }
+
+/* D is the canvas color in dark mode (deceased cells read as holes), so as a
+   label or switch tint it would vanish into the panel. D rows use --text. */
+:root[data-theme="dark"] .tog-d,
+:root[data-theme="dark"] .toggle-row.tog-d { --tog-color: var(--text); }
 
 /* Disabled rows (via `bindDeps` enable-mode → adds `.ctrl-disabled`) get
    muted across both label and switch. Existing shared rules already fade
@@ -630,6 +556,7 @@ main {
 .inline-mode-toggles .mode-btn {
   font-size: var(--font-sm);
   padding: 0.2rem 0.55rem;
+  white-space: nowrap;
 }
 
 .inline-mode-toggles .mode-btn.active {

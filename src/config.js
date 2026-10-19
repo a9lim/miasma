@@ -14,7 +14,8 @@ export const Compartment = Object.freeze({
     EMPTY: 8 // uninhabited tile
 });
 
-// CSS var names (set by miasma/colors.js — Phase 1 just uses `--epi-s` for all cells).
+// CSS var names for each compartment's fill: --epi-* come from colors.js; the
+// unoccupied sentinel is the page ground, --bg-canvas, from shared/tokens.js.
 export const COMPARTMENT_CSS_VAR = Object.freeze({
     [Compartment.S]:     '--epi-s',
     [Compartment.E]:     '--epi-e',
@@ -24,7 +25,7 @@ export const COMPARTMENT_CSS_VAR = Object.freeze({
     [Compartment.V]:     '--epi-v',
     [Compartment.M]:     '--epi-m',
     [Compartment.Z]:     '--epi-z',
-    [Compartment.EMPTY]: '--bg-base'
+    [Compartment.EMPTY]: '--bg-canvas'
 });
 
 // ─── Status enum (orthogonal layer) ───

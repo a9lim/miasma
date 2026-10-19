@@ -77,7 +77,7 @@ const ADVANCED_LAYOUT = [
     { key: 'animal_mortality_baseline', label: 'Animal nat. death 0',   min: 0,   max: 0.01,  step: 0.0001, digits: 4 },
     { key: 'animal_mortality_age_max',  label: 'Animal nat. death max', min: 0,   max: 0.05,  step: 0.0005, digits: 4 },
     { key: 'animal_max_age',            label: 'Animal max age (ticks)', min: 100, max: 20000, step: 100,   digits: 0 },
-    { key: 'animal_d_disposal',         label: 'Animal D → VOID',       min: 0,   max: 1,     step: 0.01,   digits: 2 },
+    { key: 'animal_d_disposal',         label: 'Animal D → void',       min: 0,   max: 1,     step: 0.01,   digits: 2 },
 
     { heading: 'Reservoir — spillover' },
     { key: 'spillover_rate',            label: 'Spillover (a → h)',     min: 0,   max: 0.5,   step: 0.001,  digits: 3 },
@@ -93,7 +93,7 @@ const ADVANCED_LAYOUT = [
     { key: 'quarantine_trace_rate',     label: 'Q trace rate',    min: 0,    max: 1,   step: 0.01,  digits: 2 },
 
     { heading: 'Aging / death' },
-    { key: 'd_disposal',              label: 'D → EMPTY disposal',  min: 0,    max: 0.2,    step: 0.005,  digits: 3 },
+    { key: 'd_disposal',              label: 'D → empty disposal',  min: 0,    max: 0.2,    step: 0.005,  digits: 3 },
     { key: 'mortality_baseline',      label: 'Nat. death age 0',    min: 0,    max: 0.01,   step: 0.0001, digits: 4 },
     { key: 'mortality_age_max',       label: 'Nat. death max',      min: 0,    max: 0.05,   step: 0.0005, digits: 4 },
     { key: 'mortality_max_age',       label: 'Max age (ticks)',     min: 100,  max: 20000,  step: 100,    digits: 0 },
@@ -252,7 +252,7 @@ function buildResetButton(params, panelEl, onChange) {
 }
 
 // ─── Advanced parameters (shoals-style collapsible inline section) ─────────
-// Shoals pattern: a single "Advanced Parameters" button toggles a `.hidden`
+// Shoals pattern: a single "Advanced parameters" button toggles a `.hidden`
 // class on a sibling container that holds all advanced sliders inline in the
 // settings tab. No floating dropdown, no _settings.create — just a plain
 // collapse/expand. Refs are populated as we build so syncSliders can find
@@ -265,7 +265,7 @@ function buildAdvancedSection(params, onChange) {
     btn.type = 'button';
     btn.id = 'advanced-toggle';
     btn.className = 'tool-btn advanced-toggle-btn';
-    btn.textContent = 'Advanced Parameters';
+    btn.textContent = 'Advanced parameters';
     btn.setAttribute('aria-expanded', 'false');
     btn.setAttribute('aria-controls', 'advanced-section');
 

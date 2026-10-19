@@ -33,7 +33,7 @@ const COMPARTMENT_VAR = Object.freeze({
     V:     '--epi-v',
     M:     '--epi-m',
     Z:     '--epi-z',
-    empty: '--bg-base'
+    empty: '--bg-canvas'
 });
 
 // Cache CSS-var reads — getComputedStyle forces a sync style pass. Invalidate

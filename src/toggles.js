@@ -3,13 +3,15 @@
 // alongside the param sliders. Each toggle mutates the shared `toggles` object
 // in place, so the tick loop picks up changes on the next iteration.
 //
-// Layout: two subsections, each with a small uppercase-mono header.
-//   Compartments  — V (Vaccinated), M (Maternal immune), Z (Zombie)
-//   Flags         — L (Latent on E), C (Carrier on R), F (Infectious corpse on D)
+// Layout: four subsections, each under an italic sentence-case label.
+//   Compartments       — V (Vaccinated), M (Maternal immune), Z (Zombie)
+//   Flags              — L (Latent on E), C (Carrier on R), F (Infectious corpse on D)
+//   Automatic response — auto-hospitalize, auto-quarantine, auto-vaccinate rollout
+//   Display            — animal layer mode
 //
-// V/M/Z rows carry a color swatch driven by --epi-{v,m,z} so they read
-// consistently with the legend and stats panel. Flag rows have no swatch since
-// flags are modifiers on existing compartments.
+// Each row's switch and label take their compartment's --epi-* color through a
+// per-key tog-{key} class (--tog-color), so the rows read consistently with the
+// stats panel. Flag rows borrow their parent compartment's color.
 //
 // No innerHTML — every node via createElement / textContent (hook-enforced).
 
