@@ -1,232 +1,313 @@
-# AGENTS.md
+# Miasma
 
-Part of the **a9l.im** portfolio. See root `AGENTS.md` for the shared design system and shared code policy. Sibling projects: `geon`, `cyano`, `gerry`, `shoals`, `scripture`, `pile`, and `plasma`.
+Stochastic spatial epidemic simulator on a hex grid, public at a9l.im/miasma: SEIRD
+plus vaccinated, maternal-immunity, and zombie compartments, multi-strain evolution,
+an animal reservoir, painted interventions, and six surface topologies. Vanilla ES
+modules and Canvas 2D, no dependencies and no build step of its own.
+It is a submodule of the a9l.im repository (`a9lim.github.io`, at `projects/miasma`); the
+root `AGENTS.md` covers the shared layer, design system, build, and deployment.
 
-## Rules
+## Running and checking
 
-- Always prefer shared modules over project-specific reimplementations. Check `shared-*.js` files before adding utility code.
-- Hex coordinate math, brush hit-testing, and snapshot undo are shared concepts with `gerry`. Reuse those helpers rather than reimplementing.
-- The topology toggle UI mirrors `geon`. Use the same `_forms.bindModeGroup` pattern and the same set of six topology keys (`plane`, `cylinder`, `torus`, `mobius`, `klein`, `rp2`).
-- Compartment / flag toggles use the geon-style colored switch + shoals-style colored label text. Each row binds a per-key `tog-{key}` class (`tog-v`, `tog-m`, `tog-z`, `tog-e`, `tog-r`, `tog-d`) that sets `--tog-color`; the base `.tog` rules in `shared/base.css` pick it up for the on-state, and the row label inherits via `color: var(--tog-color)`. No swatch boxes.
-- All parameter sliders live in a collapsible **"Advanced parameters"** section (shoals pattern — `.advanced-toggle-btn` + `.advanced-section.hidden`, not `_settings.create()`). The Settings tab carries presets + surface/map-view controls + compartment/flag toggles + Display row + the Advanced toggle + Reset button. See `src/params.js` `buildAdvancedSection`. `CORE_LAYOUT` is intentionally empty — every slider goes in `ADVANCED_LAYOUT` with section headings. Phase 15 swap from the `_settings.create` floating dropdown to an inline collapsible: the dropdown didn't compose with the sidebar's `overflow: hidden` scroll container and felt foreign next to the inline toggle rows.
-- The top bar carries `#speed-btn` (must have `.speed-btn` class **and** an inner `<span class="speed-label">` — `_toolbar.updateSpeedBtn` writes the multiplier into that span; without it the button renders blank) and `#viewmode-btn` (eye icon). The viewmode button is a jump handle to the Settings tab's map controls; it does not own mode selection.
-- `#timeseries-panel` lives inline as the first child of `#tab-compartments` (the sidebar Compartments tab), above the compartment census — it is no longer a floating HUD (Phase 17). `stats.js` `buildPanelSkeleton` runs once on the first stats render and explicitly preserves the `#timeseries-panel` node (its canvas context is captured once by `initTimeseries`). The chart is stacked-only — `renderLines` was removed in Phase 15.
-- `Compartment.EMPTY` cells render fully transparent. `src/render.js` skips both fill and stroke for empty cells in the human-layer pass; the `animalDisplay === 'only'` branch likewise skips its old backdrop fill. Adding overlay code that iterates the full grid should explicitly handle EMPTY (don't assume a non-zero alpha is being painted underneath).
-- Showcase defaults: `DEFAULT_PARAMS` has no value at 0 or 1, and `DEFAULT_TOGGLES` enables V/M + flags + `vax_rollout` while leaving Z off by default. Zombie/oncoviral presets opt Z back in. Presets reset to these defaults before merging, so canonical preset shapes (`seir-vanilla` etc) still produce textbook curves.
-
-## Running Locally
+Preview from the parent root (`npm run build`, serve `dist/`, open `/miasma/`). Append
+`?seed=<string>` for a reproducible run: `src/prng.js` hashes it into the shared
+`mulberry32`, which then drives the tick, animal seeding, mutation, and recombination.
 
 ```bash
-cd path/to/a9lim.github.io && npm run build && python -m http.server --directory dist
+node src/topology.test.mjs        # 4963 checks on the hex-quotient wrap
 ```
 
-Build from the parent repository root and serve `dist/` — shared files load via absolute paths. There is no project-local build step, dependency install, or linter. The permanent topology regression test is:
+Run it after touching `wrap`, `neighbors`, `hexBounds`, or `inHex`. It covers bounds,
+PLANE nulls, TORUS/CYLINDER adjacency symmetry and round-trip, RP² boundary coverage,
+and an in-domain smoke test for Möbius and Klein.
 
-```bash
-node src/topology.test.mjs
-```
+HTML↔JS id contract (BSD/macOS-safe):
 
-Verify HTML-to-JS ID contract after restructuring (BSD/macOS-safe form):
 ```bash
 comm -3 \
   <(rg -No "getElementById\('([^']+)'" src main.js --replace '$1' | sed 's/.*://' | sort -u) \
   <(rg -No 'id="([^"]+)"' index.html --replace '$1' | sort -u)
 ```
 
-## Overview
+The clean output is five lines: `brush-size-group` and `paint-mode-grid` (built by
+`paint.js`) on the JS side, `canvas-controls`, `sim-container`, and `top-bar` (CSS-only
+hooks) on the HTML side. Anything else is a broken lookup.
 
-Stochastic spatial epidemic simulator on a hex grid. Eight simulated compartments (S, E, I, R, D, V, M, Z) plus an `EMPTY` storage/occupancy sentinel, an orthogonal status layer (none / H / Q), bit-flags for latent / chronic-carrier / infectious-corpse modifiers, multi-strain registry with mutation and recombination, population dynamics (age, health, births, deaths), an animal reservoir SIR layer with its own demography (births / aging / age-driven mortality) and per-strain transmission, gerry-style intervention paint, and a geon-style topology toggle (6 manifolds on a discrete hex lattice). Zero dependencies, vanilla ES6 modules.
+The dynamics modules import cleanly in Node for headless runs (`Grid` →
+`initializeGrid` → `createRegistry(params)` → `tick`), but `strains.js` and `prng.js` call
+the `/shared/utils.js` globals `gaussian` and `mulberry32`, so define those on
+`globalThis` first. In the browser, `window.__miasma` exposes
+`{ sim, params, toggles, history, tickOnce, strains, paint, PaintMode }`.
 
-## Architecture
+## Layout
 
-**`main.js`**: entry point, `$` DOM cache, owns the rAF loop with timestep accumulator, constructs the paint controller (which owns canvas pointer events), wires preset/topology/viewmode callbacks via `setupUI`. Also owns the zoom/pan layer (see "Zoom + Pan" below).
+```
+index.html               page shell, SEO/JSON-LD, edu content, toolbar and sidebar markup
+main.js                  init, rAF loop, DOM cache, reset/preset wiring, zoom/pan input, shortcuts
+colors.js                --epi-* compartment colors over the shared palette
+styles.css               project styles
+src/config.js            enums (Compartment, Status, Flag, Animal, Topology, ViewMode), DEFAULTS, HEX_DIRS
+src/grid.js              Grid (structure-of-arrays cell state), axial ↔ pixel math
+src/initialization.js    applyHexMask, fresh human and animal seeding
+src/topology.js          hex-quotient wrap for six surfaces, cached neighbor tables
+src/dynamics.js          tick(): steps 1–9, buffer swap, transition counters
+src/dynamics-animal.js   step 10: reservoir demography, animal SIR, spillover
+src/dynamics-scratch.js  next-state buffers recycled between ticks
+src/default-params.js    DEFAULT_PARAMS (sim-wide knobs plus the seed genome)
+src/default-toggles.js   DEFAULT_TOGGLES
+src/strains.js           registry, GENOME_FIELDS, mutation, recombination, bloom filter, tombstones
+src/strain-extinction.js periodic tombstone sweep
+src/presets.js           ten presets, applyPreset, preset dropdown
+src/params.js            Advanced-parameters sliders (sim-wide) and STRAIN_GENOME_LAYOUT
+src/toggles.js           compartment, flag, and automatic-response toggles; animal-display group
+src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), Paint tab
+src/camera.js            zoom/pan over the fit-to-canvas viewport
+src/render.js            map rendering for six view modes, overlays, brush footprint
+src/stats.js             census and observed Re (Counts tab)
+src/timeseries.js        stacked-area chart at the top of the Counts tab
+src/lineage.js           strain prevalence, Strains tab rows, lineage forest, genome editor
+src/history.js           transition-count ring buffer for observed Re
+src/prng.js              ?seed= RNG
+src/ui.js                Settings-tab assembly, mode groups, about panel
+src/topology.test.mjs    topology tests
+```
 
-**Color pipeline**: `_PALETTE` (shared/tokens.js) → compartment hue aliases (`colors.js`) → `--epi-*` CSS vars + `-tint` / `-wash` alpha variants. Light/dark D (deceased) hex flips between `light.text` and `dark.canvas` so a dead cell is ink on the light ground and a hole on the dark one; anything that tints with D as a *foreground* (stat label, toggle row, cull brush, paint-mode button) must substitute `--text` in dark mode (see the `:root[data-theme="dark"]` rules in `styles.css` and `PAINT_ACCENT_VARS` in `render.js`). Z (zombie) is a derived OKLCH chartreuse intentionally distinct from R-green. I (infectious) is a derived OKLCH scarlet (`_PALETTE.infected`, oklch 0.60 0.22 30), not `extended.red`: the theme accent is UI (active tab, links, focus) and I is data, and `extended.red` is within ΔE 2 of the dark-theme accent, so the two would read as one color. The unoccupied sentinel (`Compartment.EMPTY`, the time-series "empty" band, the `#timeseries-panel` fill) is `--bg-canvas`; the map skips EMPTY cells so the page ground shows through. Toggle rows reuse the same `--epi-*` vars via per-key `tog-{key}` classes that bind `--tog-color`. The canvases draw no text; every UI string is Newsreader (`--font-text`) in sentence case, and the only motion is color/opacity.
+## How it works
 
-**Data flow**: tick advances dynamics (per `src/dynamics.js` order: age, births, strain dynamics, transmission, state transitions, hospital allocation, health degradation, vaccination rollout, mortality, Z dynamics, animal dynamics delegated to `src/dynamics-animal.js` — itself ordered animal aging → animal births → animal SIR + spillover → animal mortality) → render reads grid arrays → time-series samples compartment counts → strain registry recomputes prevalence.
+### Grid and state
 
-**Render signature**: `render(ctx, grid, mode, viewport, opts)` where `opts` carries cross-cutting toggles main.js owns:
-- `animalDisplay: 'dots' | 'only' | 'off'` — three-way gate on the animal-layer overlay. `'only'` skips the human-compartment fill+overlay passes and draws only animal dots over an empty shell.
-- `ageMax: number` — saturation ceiling for the AGE view ramp; pass `params.mortality_max_age` so it tracks the live slider.
+Storage is a 120×120 axial rhombus of flat-top hexes, indexed `r * W + q`.
+`applyHexMask` (`initialization.js`) carves out the inscribed regular hexagon (radius 59,
+10,621 cells) and writes `grid.activeIndices`; cells outside it are permanent
+`Compartment.EMPTY` / `Animal.VOID` padding. Hot loops iterate `activeIndices`, and
+compartment counts over it always sum to `grid.activeCount`. `topology.hexBounds`
+recomputes the same center and radius independently, so the two formulas must agree.
 
-## Per-Tick Hot Path
+`Grid` holds parallel typed arrays: `compartment` (S E I R D V M Z, plus the EMPTY
+sentinel), `status` (none / H / Q), `flags` (LATENT on E, CARRIER on R, F_CORPSE on D,
+and AUTO_Q marking auto-set quarantine), `age`, `health`, four strain slots per cell
+(`strain_ids`, `0xFFFF` = empty; `strain_loads`), a 64-bit bloom `strain_hist` of past
+exposures, and the reservoir layer `animal` / `animal_age` / `animal_strain`. Active
+loads (E, I, Z) sum to 1. Slot 0 doubles as strain memory with load 0 on M (inherited
+from an R parent), R+CARRIER, and D+F_CORPSE cells, so their per-strain rates resolve
+off the right strain.
 
-At 4× speed the loop fires ~40 ticks/sec. Anything that allocates or touches DOM each tick competes with the UI for main-thread time. The rules:
+### The tick
 
-- **No `document.startViewTransition` in tick-driven render paths.** It snapshots the document and runs compositor work — multiple-ms cost. The strain panel used to wrap its row rebuild in startViewTransition and that was the dominant source of UI jank. If smooth row-reordering is wanted back, do FLIP-style CSS transforms on the row nodes, not view transitions.
-- **Visibility-gated rendering.** `renderStatsPanel`, `renderStrainPanel`, `updateStrainPanel`, and `timeseries.render` all bail when their host tab panel isn't active. Use `classList.contains('active')` on the host `.tab-panel` — NOT `offsetParent`. `offsetParent` is a layout-dependent property and forces a sync layout flush when read after any DOM write. classList is a string compare with zero layout impact. `timeseries.render` resolves its host via `panelEl.closest('.tab-panel')` once at init (the chart now lives inside `#tab-compartments`, so it's gated on the Compartments tab being active).
-- **wakeRenders().** When a tab/sidebar visibility flip happens (tab-btn click, menu-btn click), `main.js`'s `wakeRenders()` marks the panels dirty and calls `requestFrame()`. Without it, paused-state visibility flips would show stale data until the next tick. New panels with visibility skips need wiring through wakeRenders.
-- **Row pool, not tear-and-rebuild.** The strain panel keeps a `Map<strainId, {row, swatch, name, prev, fill}>` on `panelEl._lineageRefs.rowPool`. Re-renders reuse the same DOM nodes, mutate text + bar width only when `(count, fraction)` differ from the cached `lastVals`, and call `listEl.appendChild(rec.row)` to reorder. The lineage forest is throttled separately from row updates. Don't add a path that rebuilds rows from scratch — that's what triggered the View Transitions cost.
-- **Cache DOM refs at skeleton-build time.** Both `stats.js` and `lineage.js` cache value-element refs on `panelEl._statsRefs` / `panelEl._lineageRefs` during the first call. The per-tick render reads from these maps; it doesn't `querySelector`. Adding new stat rows means adding their ref to the cache too.
-- **Text-equality guard before write.** All `textContent` writes in stats.js / lineage.js gate behind `if (el.textContent !== text)` so unchanged cells don't dirty the layout. textContent writes invalidate layout even when the new string matches.
-- **History/time-series are typed-array ring buffers.** `main.js`'s `history` object backs four parallel `Uint32Array(200)` columns with a head pointer. API: `history.push(sToE, eToI, iToR, iToD)` (positional, no object alloc), `history.clear()`, `history.length`, `history.cap`. `stats.computeReff` reads the typed arrays directly and handles ring wrap-around. `timeseries.js` likewise stores fixed typed columns, not an array of sample objects. Don't go back to `history.push({...})` / `ring.push({...})` + `shift()`.
-- **Position cache hash via numeric fields.** `render.js`'s `ensurePositionCache` compares `(grid, hexSize, originX, originY, W, H)` separately — no string concat for cache lookup. On a hit, zero allocations. Cache rebuilds iterate `grid.activeIndices` only. Don't add a stringified key.
-- **Active-cell iteration.** `initialization.applyHexMask` writes `grid.activeIndices` / `grid.activeCount` for the inscribed hex. Dynamics, stats, prevalence, and render hot loops should iterate that list rather than the full W×H rhombus. Outside-mask cells are storage padding, not simulated population.
+`tick()` uses simultaneous update: it reads the start-of-tick arrays, writes scratch
+copies, and swaps them onto the grid at the end, recycling the old arrays as the next
+scratch set (`dynamics-scratch.js`). A new per-cell field needs a scratch buffer, the
+copy-in, and the swap.
 
-## State Model
+Order (step numbers match the comments in `dynamics.js`): 1 age → 2 births →
+3 within-host competition, pruning, recombination → 6 hospital allocation (a pre-pass)
+→ 4+5 one pass of transmission and transitions → 7 health degradation → 7.5 vaccination
+rollout → 7.6 auto-quarantine → 8 age mortality → 9 Z → 10 animals → swap → extinction
+sweep. Later steps overwrite `next`: Z overwrites everything before it, step 8 skips
+cells already D or EMPTY so an age-out is not double-counted, 7.5 and 7.6 read `next`
+so a same-tick recovery is eligible, and animals run after Z so spillover respects Z
+conversions.
 
-Single `grid` object in `src/grid.js`. Cell state is structure-of-arrays in typed arrays, indexed by `r * W + q`:
+Most rates are per strain. The 26 `GENOME_FIELDS` (β σ γ μ, the maternal and flag
+rates, the Z rates, health impact, and animal β/γ/μ) live in registry arrays, and the
+tick reads them off a cell's slot-0 strain through the `*Of(i)` resolvers, falling back
+to `params` only when there is no strain. `createRegistry(params)` copies the current
+params into strain α on every reset and preset apply. `z_exhaust_threshold` stays
+sim-wide because it is an integer count.
 
-- `compartment: Uint8Array` — S=0, E=1, I=2, R=3, D=4, V=5, M=6, Z=7, empty=8
-- `status: Uint8Array` — none=0, H=1, Q=2
-- `flags: Uint8Array` — bitfield: latent=1, carrier=2, infectious-corpse=4
-- `age: Uint16Array` — ticks since birth
-- `health: Float32Array` — 0..1
-- `strain_ids: Uint16Array[N*4]`, `strain_loads: Float32Array[N*4]`, `strain_hist: Uint8Array` (bloom-filter prior exposure)
-- `animal: Uint8Array` — reservoir SIR layer, orthogonal to the human compartment: VOID=0, S=1, I=2, R=3, D=4
-- `animal_age: Uint16Array` — ticks since the animal was born (drives age-ramped reservoir mortality)
-- `animal_strain: Uint16Array` — strain id carried by an infectious animal (`0xFFFF` = none); per-strain `animal_beta`/`gamma`/`mu` are read off the registry by this id
-- `activeIndices: Int32Array` — row-major in-world indices from the inscribed hex mask; hot loops use this instead of scanning all W×H storage cells
+### Transmission and transitions
 
-`MAX_ACTIVE = 4` (coinfection cap). Unlimited strains in registry; per-cell active load tracking is bounded.
+`pickIncomingStrain(i)` computes infection for one target. Sources are I (weight 1),
+R+CARRIER (`c_transmit_mult`), and D+F_CORPSE (`f_transmit_mult`), times
+`q_transmit_mult` for quarantined sources. Each edge's β is the load-weighted sum of the
+source's strain β, with each slot scaled by `1 − cross_immunity_mult` when the target's
+bloom already holds that strain. The survival product gives pInf, which is then scaled
+for target quarantine, R (`r_susceptibility_mult`), V (`1 − vax_efficacy`), and age. On
+success a two-stage weighted pick (edge, then slot) chooses the strain, and a mutation
+roll may register a mutant. The R and V multipliers sit after the per-slot bloom
+scaling so prior immunity suppresses seen strains while novel ones still get through.
 
-## Key Conventions
+Targets are S → E, R → E (reinfection, when `r_susceptibility_mult > 0`), V → E (when
+`t.V` and `vax_efficacy < 1`), and I cells that stay I, which roll coinfection: the new
+strain enters at `coinfection_load_delta`, evicting the lowest load when all four slots
+are full, and a bloom hit blocks it. Every →E counts in `sToE`, so observed Re includes
+breakthroughs.
 
-### Zoom + Pan
+LATENT and CARRIER are set only on transitions: LATENT on any →E with the incoming
+strain's `l_seed` (needs `t.L`), CARRIER on I → R with `c_seed` (needs `t.C`). Latent E
+progresses at `l_reactivate` instead of σ. Without those rolls, `l_reactivate` and
+`c_transmit_mult` do nothing.
 
-Lives in `src/camera.js`, with `main.js` wiring the controls. `sim.zoom` (clamped 0.5–3×) scales the camera's fit-to-canvas baseline; `sim.panX/panY` translate `originX/originY`. `camera.getEffectiveViewport()` mutates and returns a single shared object each call by composing base + zoom + pan; this is the value handed to both `render()` and the paint controller's `getViewport`. paint.js's `pixelToAxial` works unchanged because the effective viewport is what it sees. **Consumers MUST NOT retain the returned reference across an awaited boundary** — the next call mutates it in place. render() and paint.hitTest both consume synchronously, so this is fine today.
+I leaves at γ_eff + μ_eff, modified by H (`h_recover_mult`, `h_mortality_mult`), Q or
+hospital overflow (`h_overflow_mortality_mult`, only while `t.auto_hospital`), age, and
+health. Recovery sets bloom bits for every carried strain. A disease death gets F_CORPSE
+when `t.F`; natural deaths, culls, and Z deaths never do. Plain D disposes to EMPTY at
+`d_disposal`; F-corpses wait for F to decay first.
 
-Wheel zoom is cursor-anchored (the math: `panX_new = sx - bv.originX - worldPx * zoom_new`). Pinch zoom follows gerry's `touchstart/touchmove/touchend` pattern: paint is suppressed for the duration via `paintController.setSuppressed(true/false)`, which also closes any active stroke on entry. Buttons `#zoom-in-btn` / `#zoom-out-btn` / `#zoom-reset-btn` are pivot-at-canvas-center; the `#zoom-indicator` text is updated via `updateZoomIndicator()`. Keyboard: `=` / `-` / `0`. Pan clamping is intentionally not implemented — reset is the recovery handle.
+Births fill an EMPTY cell that has at least `birth_threshold` inhabited neighbors (not
+D, Z, or EMPTY) with probability `1 − (1 − birth_rate)^k`. A uniformly picked parent
+that is R, with `t.M` on, makes an M newborn carrying that parent's strain memory;
+otherwise the newborn is S.
 
-### Birth → M-from-R rule
+The hospital pre-pass (`t.auto_hospital`) assigns H row-major to non-Q I cells up to
+`floor(h_capacity_frac · W · H)` beds. Turning it off strips every H and removes the
+overflow penalty. Auto-quarantine (`t.auto_quarantine`) traces I cells and living
+neighbors of I cells into Q at `quarantine_trace_rate`, tags them AUTO_Q, and releases
+them once they are neither case nor contact; painted Q carries no AUTO_Q and is never
+released. Because transitions overwrite `nextFlags`, a provenance-restore pass re-marks
+AUTO_Q on cells still in Q; without it, an auto-quarantined contact that got infected
+would stay quarantined forever. Vaccination rollout (`t.V && t.vax_rollout`) moves
+S/E/R/M to V at `vax_rollout_rate`, clearing slots, flags, and status but keeping the
+bloom; I and Z are not eligible.
 
-Empty cells repopulate from inhabited neighbors; the newborn's compartment depends on the parent. Parent picked uniformly from the inhabited neighbors of the empty cell; if it's R (and `t.M` is on) the newborn enters as M (maternal antibodies), otherwise as S. The probabilistic-pick is equivalent to "spawn M with probability rCount/count" without allocating a parent-slot array. Don't unconditionally write M — the original Phase-5 behavior had every S parent producing M children, which broke the antibody-transfer semantics.
+### Z
 
-### Z mechanic — spawn pathways + encounter model (Phase 16)
+Step 9 is gated wholesale on `t.Z` (off by default). Spawn pathways: D+F_CORPSE → Z
+(`dz_dead`), I → Z (`dz_alive`), and latent E → Z (`l_transform`, also needs `t.L`). A
+new Z carries its source strain at slot 0 with load 1, and every Z rate reads off that
+strain. L → Z lives in step 9 rather than step 5 so the "Z wins" overwrite applies to it.
 
-Z is interpretation-agnostic. Same state machine reads as both macroscopic (zombie pandemic with humans fighting back) and microscopic (oncoviral cellular transformation with immune surveillance) depending on parameter values + which spawn pathway is active. Step 9 in `dynamics.tick` is the whole mechanic; gated wholesale on `t.Z`.
+Each Z first rolls natural decay (`z_die_natural`), then exhaustion when at least
+`z_exhaust_threshold` neighbors are Z (`z_exhaust`). Then, for each neighbor that is not
+Z, EMPTY, or D, a single uniform roll falls into cumulative buckets: clean kill → kill
+plus F-corpse (needs `t.F`; the corpse keeps the Z's strain memory) → expose (E carrying
+the Z's strain, LATENT per that strain's `l_seed`) → convert; the remainder is no
+effect. The four rates clamp at 0 and rescale when they sum past 1. They are mutually
+exclusive buckets, not independent rolls, so one encounter has at most one outcome. An
+independent `z_die_fighting` roll follows each encounter, and a Z that dies stops.
+First-affect-wins: a target is rolled only while `next[ni] === compartment[ni]`, so k
+zombies affect it with probability 1 − P(nothing)^k; scan order decides which Z gets
+the credit.
 
-**Spawn pathways** (all gated on `t.Z`, plus their own flag gates):
-- **F-corpse → Z** at `dz_dead`. Requires `flags[i] & Flag.F_CORPSE` on a D cell. F is set on I→D only when `t.F` is on, and natural-cause deaths (step 8 age-out) explicitly strip F. So D→Z only fires through the disease-death pipe; turning `t.F` off mechanically disables the pathway. Macro reading: infectious corpses reanimate.
-- **I → Z** at `dz_alive`. Live infectious cells spontaneously zombify. No flag gate. Both readings.
-- **E-with-L → Z** at `l_transform`. Requires `t.L && (flags[i] & Flag.LATENT)`. Micro reading: oncovirus integrated in host genome triggers malignant transformation. Competes with σ (E→I) and `l_reactivate`; Z wins the same-tick race because Step 9 overwrites Step 5's writes.
+The same state machine supports two readings, shipped as presets:
+`zombie-apocalypse` (F-corpse spawn, high fight rates, finite lifespan) and
+`oncoviral-transformation` (latent spawn, no fighting, immortal cells, clonal
+conversion, crowding necrosis). It is parameterized rather than mode-switched because
+the math is identical.
 
-**Encounter model** (per Z, per non-Z non-EMPTY non-D neighbor):
-- Single uniform `r()` roll bucketed across four cumulative thresholds: `[0, z_fight_kill)` → D, `[…, +z_fight_infect)` → D + F_CORPSE (F flag attaches only when `t.F` is on; falls back to clean kill otherwise), `[…, +z_fight_expose)` → E (with `l_seed`-gated optional LATENT, like step 5 S→E), `[…, +z_convert_unopposed)` → Z. Leftover = nothing happens. Rates are clamped to ≥ 0 and renormalized to sum ≤ 1 (so a user that dials all four to max doesn't break the bucket math).
-- Separate independent roll for `z_die_fighting` (Z → D). A zombie can kill and die in the same encounter (mutual destruction); the break only fires after the target-outcome roll is resolved.
-- **First-affect-wins** on the target side: an encounter only rolls the target-outcome if `next[ni] === compartment[ni]` (no earlier Z has affected this target this tick). Gives `P(target affected | k zombies) = 1 − P(nothing)^k`, which scales correctly with horde size. Without this, k zombies would have the same expected effect on a target as 1 zombie — last-write-wins under independent rolls.
-- A zombie that dies (z_die_fighting fires) breaks out of its encounter loop — corpses don't keep biting.
+### Animal reservoir
 
-**Z death pathways**:
-- `z_die_natural` (per tick, before encounters) — finite lifespan. Macro: decomposition. Micro: zero by default since transformed cells are immortal.
-- `z_exhaust` (gated on `zCount >= z_exhaust_threshold`) — crowding-driven Z → D. Maps onto tumor-core necrosis (hypoxia) in the micro reading, "zombies starving when concentrated" in the macro reading.
-- `z_die_fighting` (per encounter) — humans / immune surveillance fighting back.
+`dynamics-animal.js` runs 10a aging, 10b births (a VOID cell with at least
+`animal_birth_threshold` live animal neighbors becomes S), 10c SIR plus spillover, and
+10d age-ramped mortality. Each sub-step reads the start-of-tick `animal`, so a 10b
+newborn is inert in 10c and 10d, and a 10c death is not recounted in 10d. There is no
+toggle: `animal_density: 0` seeds no animals and births never start. The default is
+0.12; among presets only hantavirus, plague, and absurd keep a reservoir.
 
-**Strain handling on conversion**: Z is a pseudo-strain at a fixed slot; `clearStrainSlot(idx)` wipes the cell's active strain ids + loads on any Z-related conversion. `strain_hist` (bloom-filter past exposures) is preserved — it's a record, not active state.
+Animal β/γ/μ are per strain, looked up through `animal_strain`. Every animal S → I
+write sets `animal_strain`, and recovery, death, disposal, and birth reset it to
+`EMPTY_STRAIN`; otherwise the lookup silently falls back to `params`. Spillover is
+co-located (same cell index): an infectious animal can expose a susceptible human with
+its own strain (`spillover_rate`, blocked by a bloom hit), and an infectious human can
+infect a susceptible animal with its slot-0 strain (`reverse_spillover_rate`).
+Animal-to-animal spread runs over neighbors and reservoir-samples the source strain.
 
-**Two presets ship the calibrated configurations**: `zombie-apocalypse` (F-spawn, high fight rates, finite lifespan, low conversion) and `oncoviral-transformation` (L-spawn, near-zero fight, immortal cells, high conversion, exhaust-by-crowding on). The default `DEFAULT_PARAMS` keeps Z rates live, but `DEFAULT_TOGGLES.Z` is false so Z is opt-in unless a preset enables it.
+### Strains
 
-### Vaccination rollout
+The registry (`strains.js`) is append-only plain arrays. IDs are Uint16 (`MAX_STRAINS`
+65535, `0xFFFF` reserved as empty); names run α…ω, then α1…ω1, and so on. α (id 0) is
+the paint seed and the spillover fallback, and is never tombstoned. Mutation applies
+multiplicative Gaussian noise per genome field and clamps to the field's range, so a
+field at 0 stays 0 down the lineage; recombination (step 3, coinfected I cells)
+averages two parents with range-scaled noise and records both (registry arrays `parent`
+and `parents2`; `getStrain` exposes the second as `parent2`). Cross-immunity is exact
+bloom membership (two hashes into 64 bits per cell, so occasional false positives), not
+genome distance; `similarity()` is unused.
 
-Step 7.5 in `dynamics.tick` sweeps S/E/R/M cells at `vax_rollout_rate` per tick when `t.V && t.vax_rollout` are both on. Reads `next[i]` so cells that recovered earlier in this same tick are immediately eligible. The toggle is wired via `_forms.bindDeps` (in `toggles.js`) so it auto-disables and force-unchecks when `t.V` is off.
+`runExtinctionSweep` runs every 30 ticks: strains absent from every human strain slot
+(memory slots included) are tombstoned, and a tombstoned strain that reappears is
+restored. IDs are never reused because blooms hash them. The sweep does not scan
+`animal_strain`.
 
-### Animal reservoir — demography + per-strain SIR (Phase 17)
+### UI and rendering
 
-Step 10 in `dynamics.tick` is the whole reservoir mechanic, gated wholesale on the grid carrying an `animal` array (always true in production). It is a demographically-active SIR layer brought up to parity with the human compartment in Phase 17.
+Sidebar tabs: Counts (`#tab-compartments`: chart, census, observed Re, animal census),
+Strains, Paint (`#tab-interventions`), and Settings. `ui.js` assembles Settings as
+presets, the Surface/Map view block (`#map-controls-section`), toggles, the
+Advanced-parameters collapsible, and reset. The top-bar eye (`#viewmode-btn`) opens
+Settings and scrolls to the map controls; it holds no state. Advanced parameters lists
+only sim-wide knobs. Per-strain fields are edited in the Strains tab detail block
+(`STRAIN_GENOME_LAYOUT`), which writes registry arrays directly, so edits to α are lost
+when a reset or preset reseeds the registry from `params`.
 
-**Demography.** The reservoir has its own birth / aging / age-driven mortality, mirroring the human layer's `birth_rate` / mortality ramp:
-- `animal_birth_rate` / `animal_birth_threshold` — a VOID cell with ≥ threshold inhabited (non-VOID, non-D) animal neighbors rolls `1-(1-rate)^count` → S animal. No maternal pathway — the newborn is always S.
-- `animal_mortality_baseline` / `animal_mortality_age_max` / `animal_max_age` — age-ramped natural death of S/I/R animals → D, linear-interpolated baseline→max over `animal_max_age`. `animal_d_disposal` then clears D → VOID.
-- `initializeAnimals` spreads seed-animal ages uniformly over `[0, animal_max_age)` so the reservoir starts with a stable age structure instead of one synchronized cohort.
+`render(ctx, grid, mode, viewport, opts)` draws one fused fill-and-stroke pass over
+`activeIndices`; its color cache rebuilds when `<html data-theme>` changes. EMPTY cells
+draw nothing, so the page ground shows through and overlays cannot assume a backdrop.
+Flag overlays appear only in compartment view; H and Q badges appear in compartment and
+status views. `toggles.animalDisplay` is a string (`'dots' | 'only' | 'off'`) on the
+otherwise boolean toggles object. The brush footprint is drawn on the canvas from
+`paintController.getHoverFootprint()`, tinted with the target compartment's color
+(`PAINT_ACCENT_VARS`).
 
-**Per-strain SIR.** `animal_beta` / `animal_gamma` / `animal_mu` are per-strain genome fields (in `GENOME_FIELDS` / `STRAIN_GENOME_LAYOUT`'s "Reservoir (animal)" section), NOT live global params in normal operation. An infectious animal carries a strain id in `animal_strain`; Step 10 reads its rates off the registry by that id. They remain keys in `DEFAULT_PARAMS` so `createRegistry` seeds strain α's genome from them and as a defensive no-registry fallback. Their Advanced-parameters sliders moved into the per-strain genome editor.
+In `colors.js`, D is `light.text` on the light theme and `dark.canvas` on the dark one
+(a hole in the map), so anything using D as a foreground (stat row, toggle, cull brush
+and button) swaps to `--text` in dark mode. I is a derived scarlet
+(`_PALETTE.infected`) rather than `extended.red`, which sits within ΔE 2 of the dark
+accent; data red and UI accent must not read as one color.
 
-**Spillover is strain-aware.** Forward spillover (animal I → human S→E) hands the animal's *own* `animal_strain` to the human (Phase 9 hardcoded strain α — that was a bug). Reverse spillover (human I → animal S→I) hands the human's slot-0 strain to the animal. Animal-to-animal transmission reservoir-samples the source strain uniformly among infectious neighbors (allocation-free).
+The loop in `main.js` runs `BASE_TICK_RATE` 10 × speed (0.25–4×), at most 16 ticks per
+frame, and idle-stops when paused with nothing dirty; event handlers restart it with
+`requestFrame()`. Each tick pushes transition counts to `history`, computes stats once
+(`cachedStats` feeds both the census and the chart), and clears paint undo/redo so a
+stroke can never rewind evolved state.
 
-The reservoir layer is NOT behind a toggle — `animal_density: 0` (set by all non-reservoir presets) leaves it empty, and with no seed animals births can never start, so it stays empty. Presets with a reservoir (hantavirus, plague, absurd) set a non-zero density.
+`camera.getEffectiveViewport()` returns one shared object, mutated on every call, that
+both `render` and the paint controller's `getViewport` read; consumers read it
+immediately and never retain it, and paint must get the effective viewport or clicks
+miss at any zoom other than 1. Pinch suppresses painting through `setSuppressed`, pan
+is unclamped (reset recovers), and opening the sidebar tweens `panX` above 900 px.
 
-### L / C flag set rolls
+The paint controller owns every canvas pointer event; its default is seed mode with
+brush 0, so a single tap seeds α. Each stroke is one snapshot entry (undo/redo depth
+20). `paint.js` handles 1–6, `[`/`]`, and Ctrl/Cmd+Z/Y/Shift+Z itself; `main.js`
+registers the other shortcuts with `initShortcuts` and lists the paint keys as
+documentation-only entries (`when: () => false`) so the about panel shows them without
+a second handler firing.
 
-The L (latent E) and C (chronic carrier R) flags are set probabilistically on the relevant transitions, NOT on initial seeding:
-- **L on S→E**: `t.L && r() < l_seed` at infection time (S transmission case in step 5). Sets `Flag.LATENT` on the new E cell so its E→I path goes through the slow `l_reactivate` rate instead of σ.
-- **C on I→R**: `t.C && r() < c_seed` at recovery time (I→R branch in step 5). Sets `Flag.CARRIER` on the new R cell so it acts as a low-rate transmission source via `c_transmit_mult` in `pickIncomingStrain`.
-- Defaults keep both seed probabilities live in the sandbox (`l_seed=0.15`, `c_seed=0.18`) while the compartment toggles decide whether the mechanics run. Presets like `tb` (`l_seed=0.9`) and `hantavirus` (`c_seed=0.4`) push them harder. Without the seed roll, `l_reactivate` and `c_transmit_mult` are inert — which was the bug that prompted phase 14.5.
+## Conventions
 
-### Reinfection and vaccine breakthrough
+- At 4× the loop runs about 40 ticks per second, so tick-driven panel renders bail
+  unless their host `.tab-panel` has `active`, checked with `classList` because
+  `offsetParent` forces a layout flush. Visibility flips (tab click, menu, close) go
+  through `wakeRenders()` in `main.js`, which marks panels dirty and re-measures the
+  chart canvas (its backing store goes stale while `display: none`). A new gated panel
+  needs the same wiring or it shows stale numbers while paused.
+- Panels build their DOM once and cache value refs (`panelEl._statsRefs`,
+  `panelEl._lineageRefs`); per-tick writes are guarded by text equality. Strain rows are
+  pooled by id and reordered with `appendChild`. `document.startViewTransition` stays
+  out of tick paths: its document snapshot was the main source of UI jank.
+- `stats.js` `buildPanelSkeleton` rebuilds the Counts tab but preserves
+  `#timeseries-panel`, whose canvas context `initTimeseries` captures once.
+- The transition history (200 ticks) and the chart (500 samples) are typed-array ring
+  buffers, avoiding per-tick allocation and `shift()`.
+- `#speed-btn` needs the `.speed-btn` class and an inner `<span class="speed-label">`;
+  `_toolbar.updateSpeedBtn` writes the multiplier into that span.
+- Defaults are a showcase: `DEFAULT_PARAMS` avoids 0 and 1 so every mechanic is
+  visible, and Z is off. `applyPreset` resets params and toggles to the defaults before
+  merging, so a preset must set every key it needs at a textbook value; it also forces
+  `vax_rollout` off when V is off. The only `_forms.bindDeps` dependency is V →
+  auto-vaccinate rollout (`toggles.js`).
+- Compartment availability is decided by toggles inside the tick, not hard-coded, and
+  Z is an ordinary compartment behind a default-off toggle.
+- The hex lattice is what gives clean isotropic wavefronts; shrink the grid rather than
+  move to squares for speed.
 
-R and V cells are transmission targets when their respective compartment-level susceptibility is > 0:
-- **R reinfection** (`r_susceptibility_mult`, default 0.15): the R case in the transmission switch calls `pickIncomingStrain`. Inside that helper, `pInf *= rSuscMult` for R targets after the Q/age multipliers. The bloom-filter cross-immunity scaling already softens previously-seen strains via `(1 - xImm)` per slot, so reinfections favor novel strains — the right shape (novel antigens slip past prior immunity at reduced rate). On breakthrough: R → E, picked strain at load 1, bloom history preserved (it's a record of past exposures, not a slate to wipe).
-- **V breakthrough** (`vax_efficacy`, default 0.85): symmetrical with R, but `pInf *= (1 - vaxEff)`. Gated on both `t.V` and `vaxEff < 1` (early-out for perfect efficacy). Bloom history is preserved because the rollout step at 7.5 doesn't touch `nextStrainHist` and the paint controller's `clearStrainSlots` only clears slots, not the bloom.
-- **Both count to `sToE`** so observed Re (which divides by recent recovery counts) reflects all new infection events, not just S-derived ones.
-- **M cells aren't reinfectable** — they decay to S via `m_decay` and become normal targets after that. Adding M breakthrough would need a separate `m_efficacy`-style param; not implemented.
+## Open work
 
-### Topology Wrapping
-
-All neighbor lookups go through `wrap(q, r, topology, W, H) → (q', r') | null` in `src/topology.js`. Identifications happen at the six hex edges of the **inscribed hex** carved out by `applyHexMask` — not at the rhombus edges. PLANE returns null outside; TORUS translates by the hex-tessellation lattice (T1, T2); CYLINDER identifies Pair 1 alone; MÖBIUS adds a vertical-flip twist; KLEIN combines the möbius twist with Pair 2 translation; RP² is antipodal identification through the hex center. Round-trip invariant: `wrap(neighbor(c, d), inverse(d)) === c` for any cell and direction. `src/topology.test.mjs` exercises this exhaustively on a 12×12 grid (~5000 checks) — run it after any change to the wrap function.
-
-### Strain Registry
-
-Strains are append-only. IDs are `Uint16` indices into a growing parameter table (β, σ, γ, μ, ADE flag, plus lineage parents). Names are auto-generated: Greek letter sequence, then Greek+numeral after exhaustion. Z is its own pseudo-strain at a fixed slot — doesn't participate in cross-immunity, doesn't recombine.
-
-### Compartment Toggles + Dependencies
-
-Use `_forms.bindDeps` to declare which compartments enable which. Example: V (vaccinated) requires the vaccinate intervention to be unlocked; M (maternal) requires births to be enabled; Z (zombie) is always available and never gated. Bind these in `src/ui.js`, not scattered across modules.
-
-### Theme
-
-Two-state toggle (light / dark). `render.js` and `timeseries.js` re-read the `--epi-*` / `--bg-canvas` vars when a `MutationObserver` sees `<html data-theme>` change, so a paused map repaints in the new theme. D (deceased) hex color flips with theme (see Color pipeline).
-
-### Paint controller
-
-`src/paint.js` exports `createPaintController({ canvas, getGrid, getToggles, getViewport, onMutate })`. The controller owns ALL canvas pointer events — there is no separate click-to-seed handler. Default mode is `SEED` with brush size 0, which preserves the single-tap-to-seed UX from earlier phases. Other modes: `VACCINATE`, `QUARANTINE`, `SANITIZE`, `CULL`, `NONE`. Brush size 0/1/2 → 1/7/19 hex. Strokes push to a per-stroke undo stack (depth 20); pointerdown opens a snapshot map, pointerup pushes it. `main.js` clears undo/redo on every tick advance so paint history cannot rewind evolved disease state. Keyboard shortcuts (`1`-`6` for modes, `[`/`]` for brush size, `ctrl+z` for undo) are wired by the controller itself.
-
-The brush footprint is drawn by `render.js` `renderPaintOverlay` (a translucent fill plus outline over the cells under the brush), fed by `paintController.getHoverFootprint()`; there is no DOM indicator. Its tint is the target compartment's `--epi-*` color (`PAINT_ACCENT_VARS`), with cull on `--text`.
-
-`setSuppressed(bool)` lets main.js's pinch-zoom bracket a gesture: while suppressed, pointerdown/pointermove early-exit and any active stroke is cleanly closed (snapshot still lands on the undo stack so cmd+Z is recoverable). Re-enabling resumes normal behavior on the next pointerdown.
-
-## Key Reusable Bits
-
-| What | Where | Use for |
-|---|---|---|
-| Hex axial coords + helpers | `gerry/src/hex-math.js` (mirrored in `grid.js`) | Cell coordinate math |
-| Cube-rounding pixel → axial | `grid.js` `pixelToAxial` | Paint cursor hit-testing |
-| `_forms.bindModeGroup` | `shared/forms.js` | Topology + viewmode mode-groups |
-| `_forms.bindDeps` | `shared/forms.js` | Compartment toggle dependencies (Phase 14 wiring) |
-| `_settings.create` | `shared/settings.js` | Settings dropdown for rare controls |
-| `_toolbar` (play/pause/speed) | `shared/toolbar.js` | Standard sim toolbar |
-| `initAboutPanel(config)` | `shared/about.js` | About modal |
-| `_dropdown.enhance` | `shared/dropdown.js` | Preset select |
-| `resizeCanvasDPR` | `shared/utils.js` | Hi-DPI canvas |
-| Topology glide-reflection concept | `geon/src/topology.js` | Reference only — discrete hex-quotient is project-specific |
-
-## Design Intent
-
-- **Hex isotropy is load-bearing.** Six-neighbor diffusion eliminates the rook-vs-bishop asymmetry of square grids and produces visually clean wavefronts. Do not migrate to a square grid for performance — pick a smaller grid size instead.
-- **Compartmental model is configurable, not fixed.** Every compartment, flag, and status state has a toggle in the UI. Presets configure these toggles; users can also toggle individually. Do not hard-code compartment availability in `dynamics.js` — gate transitions on the toggle state.
-- **Three intents: textbook + dual-Z + absurd.** SEIR-vanilla preset must produce the canonical Kermack-McKendrick curve on a torus with no other mechanics active. Zombie-apocalypse and oncoviral-transformation presets must show the macro and micro readings of the same Z state machine — same code, different parameter regions. Absurd preset turns everything on at once. All three must work without code changes.
-- **Z is structurally normal.** Z is just another compartment with its own transition rules. Don't put Z behind a feature flag in the build; put it behind a UI toggle that defaults to off.
-
-## Don't Break
-
-- **Per-tick update order in `dynamics.js`** — age, births, strain dynamics, transmission, state transitions, hospital allocation, health degradation, vaccination rollout (7.5), mortality, Z dynamics, animal dynamics. Reordering breaks conservation properties (newborns shouldn't be aged, dead cells shouldn't transmit, vax should land after I→R/I→D so a same-tick recoveree gets eligible, etc.). Step 10 lives in `dynamics-animal.js` and has its own internal order — 10a aging, 10b births, 10c SIR + spillover, 10d age-mortality — mirroring the human age→births→…→mortality ordering for the same reason: a 10b newborn must be inert through 10c/10d, and a 10c disease-death must not be re-counted as a 10d age-out.
-- **Conserved quantities** — compartment counts over in-world cells must sum to `grid.activeCount` / `grid.activeIndices.length`. The W×H rhombus includes outside-mask storage padding that should stay `Compartment.EMPTY` but is not part of the simulated population.
-- **`wrap()` round-trip invariant** — if it fails on any topology, the infection front becomes path-dependent and torus tests fail silently.
-- **Typed-array layout** — `compartment[i]` and `status[i]` and `flags[i]` for the same `i` refer to the same cell. Don't reorder.
-- **Strain ID is `Uint16`** — caps strain count at 65k. Don't widen without auditing every typed-array allocation.
-- **F_CORPSE / D→Z coupling** — D→Z reads `flags[i] & Flag.F_CORPSE`; I→D sets F_CORPSE only when `t.F`. Removing either side disconnects the chain and the F-corpse-reanimation pathway stops. (The I→Z spontaneous path via `dz_alive` and the L→Z transform path via `l_transform` are unaffected — each has its own gate.)
-- **Z encounter model: cumulative buckets + first-affect-wins** — the four target-outcome rates (`z_fight_kill`/`z_fight_infect`/`z_fight_expose`/`z_convert_unopposed`) must be treated as mutually-exclusive buckets of a single uniform roll, not as independent Bernoullis. Switching to independent rolls allows multiple outcomes per encounter (e.g., target both killed AND converted) and breaks the cumulative-threshold semantics. The renormalization clamps the four rates to sum ≤ 1; the leftover region is "nothing happens." First-affect-wins (`next[ni] === compartment[ni]` check before rolling) is what makes horde size matter — without it, k zombies have the same expected effect as 1 zombie on shared targets.
-- **L→Z is in Step 9, not Step 5** — all Z-related transitions live in Step 9 so the "Z wins" overwrite semantics apply consistently. Adding L→Z to Step 5 (alongside L→I) would mean Z conversion could be overwritten by a same-tick Step 9 outcome, breaking the invariant.
-- **L / C flag set sites** — `Flag.LATENT` is set ONLY in the S→E transmission branch under `t.L && r() < lSeed`; `Flag.CARRIER` is set ONLY in the I→R recovery branch under `t.C && r() < cSeed`. Removing either roll re-creates the original phase-14 bug where `l_reactivate` and `c_transmit_mult` are inert because no flags ever land. Render and check sites in `dynamics.js` / `render.js` are downstream of these rolls — don't add new check sites without ensuring the set roll fires.
-- **R and V are transmission targets** — when `r_susceptibility_mult > 0` and `vax_efficacy < 1` respectively. The compartment-level multiplier is applied inside `pickIncomingStrain` after the Q/age multipliers (so it composes correctly with status and age effects). Both branches feed `sToE` to keep observed Re honest. Don't move the multiplier outside the helper — the per-slot bloom-filter cross-immunity needs to scale strain contributions before the compartment-level pInf scaling, otherwise novel-strain reinfection rates collapse to zero.
-- **Animal SIR rates are per-strain** — `animal_beta` / `animal_gamma` / `animal_mu` live in `GENOME_FIELDS` (registry parallel arrays), not as live global params in normal operation. Step 10 reads them off `strainRegistry` by the infectious animal's `animal_strain` id, with `DEFAULT_PARAMS` only seeding strain α and serving as defensive no-registry fallback. Every animal S→I write MUST also set `animal_strain` (reverse spillover → human slot-0 strain; animal-to-animal → sampled neighbor strain) or the next tick's γ/μ lookup falls back to defaults. Any animal transition out of I, plus disposal and births, must reset `animal_strain` to `EMPTY_STRAIN`.
-- **Effective viewport is what paint sees** — `camera.getEffectiveViewport()` MUST be what `getViewport` returns to the paint controller. If `getViewport` ever returns the base viewport directly, click-to-cell math breaks at any zoom ≠ 1. The returned object is shared and mutated each call — consumers must read fields immediately and not retain the reference.
-- **History ring buffer shape** — `main.js`'s `history` is `{ cap, sToE, eToI, iToR, iToD: Uint32Array, head, length, push(s,e,r,d), clear() }`. `stats.computeReff` reads typed arrays directly with wrap-around. Don't replace with an array-of-objects — the per-tick alloc + `shift()` was a measurable cost.
-- **Tab-panel visibility gating** — render functions in `stats.js` / `lineage.js` / `timeseries.js` bail when their host's classList doesn't have `active` (or has `hidden`). `wakeRenders()` in main.js MUST get called on every visibility flip (tab click, sidebar open) so stale numbers aren't left visible on re-show during pause. New tab panels with renders need wiring through wakeRenders too.
-
-## Gotchas
-
-- **`data-theme` is on `<html>`** — `document.documentElement.dataset.theme`
-- **Shared CSS at domain root** — `/shared/base.css` absolute path requires serving from parent directory
-- **Sidebar uses `.sidebar-tabs` in `.stats-header`** — no separate `<h2 class="stats-title">` and `.tab-bar`. New layout pattern site-wide
-- **Canvas DPR** — always go through `resizeCanvasDPR` from `shared/utils.js`. Manual `canvas.width = innerWidth` produces blurry rendering on hi-DPI
-- **Time-series ring buffer** — fixed-size, drops oldest sample. Resizing requires reallocation; don't do it on every theme toggle. The transition-counts ring in `main.js` (`history`) uses a different shape — typed-array columns, see Per-Tick Hot Path
-- **Don't read `offsetParent` in tick-driven render paths** — it's a layout-dependent property that triggers sync layout flush after any DOM write. Use `classList.contains('active')` / `'hidden'` for visibility checks instead
-- **Status overlays render in COMPARTMENT and STATUS views.** The H "+" badge and Q ring originally rendered only in COMPARTMENT view, leaving STATUS view without its titular glyphs. Both render passes now run when `mode === STATUS` too — don't re-gate them.
-- **`toggles.animalDisplay` is a string, not a boolean** — the three-way `'dots' | 'only' | 'off'` lives on the same `toggles` object as the boolean compartment/flag keys. `DEFAULT_TOGGLES.animalDisplay = 'dots'` keeps prior render behavior. The mode-group control in the Display section binds it.
-- **`toggles.vax_rollout` defaults on** (Phase 15 showcase). The canonical V flow is still paint-driven; rollout layers over it. `bindDeps` cascades-uncheck the rollout toggle when `t.V` is unchecked. Presets that want the prior off-by-default behavior set it explicitly.
-- **`syncSliders` is single-tier post-Phase-15** — every slider lives inline under `#advanced-section`, so `panelEl.querySelector('[data-param=...]')` finds them all. `panelEl.__advancedRefs` is kept as a defensive fallback but unused in the current code path.
-- **Speed button needs both `.speed-btn` class and inner `.speed-label` span** — `_toolbar.updateSpeedBtn` writes into the span. Missing span = blank button.
-- **`#timeseries-panel` is inline in the Compartments tab** — it's the first child of `#tab-compartments`, a plain full-width block with `aspect-ratio: 16/9` and a `--bg-canvas` fill (Phase 17; it was a floating HUD through Phase 16). `stats.js` `buildPanelSkeleton` must keep preserving that node when it rebuilds the tab — the renderer skips any child whose `id === 'timeseries-panel'`.
-- **Stacked-only timeseries** — `renderLines` and `setMode` were removed from `src/timeseries.js` in Phase 15. The `mode: 'stacked'` opts arg still gets passed from main.js (no-op) for forward-compatibility but the chart has no other mode.
-- **EMPTY cells render transparent** — `src/render.js` skips fill+stroke for `Compartment.EMPTY`. Don't assume any backdrop is painted under animal dots in `animalDisplay === 'only'` mode either; the inscribed-region backdrop fill was removed in Phase 15.
-- **Extinct strain sweep** — `renderStrainPanel` walks `rowPool` against a `Set<aliveId>` built from `prevalence` and detaches/deletes entries whose ids are missing. Depends on `computeStrainPrevalence` excluding zero-count strains (it does — `if (c === 0) continue` at the top). Loosening that filter re-introduces stale row-pool entries.
+- `seir-vanilla` does not override `r_susceptibility_mult` (0.15) or `mutation_rate`
+  (0.008), so it runs reinfection and mutation; a 300-tick headless run registers about
+  1,200 strains. `about.md` and the edu content describe it as the textbook curve.
+- Möbius and Klein neighbor relations are not symmetric across the twisted edge pair
+  (118 one-way edges at 120×120). Under RP², the 12 cells at the middle of the six hex
+  edges each list one neighbor twice, and 6 of them list themselves. The tests only
+  smoke-test these surfaces.
+  `translateToHex` tries 9 lattice candidates, enough only for ±1 offsets.
+- A strain circulating only in animals is tombstoned until it spills back, because the
+  extinction sweep skips `animal_strain`.
+- The theme toggle marks only the map dirty, so a paused chart keeps the old theme's
+  colors until the next tick or tab switch.
+- `tick()` returns counters (`zFight*`, `animalBirths`, `autoQuarantined`, …) that
+  nothing displays, and animal dots color only by S/I/R/D.
+- Deferred ideas: per-strain vaccine efficacy or waning, M-cell breakthrough (would need
+  its own efficacy parameter), a separate breakthrough count for Re, a barricade brush
+  for the zombie reading, a cross-immunity matrix view.

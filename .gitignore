@@ -24,6 +24,5 @@ Thumbs.db
 # Worktrees
 .worktrees/
 
-# Dev artifacts (handoff notes, debug screenshots)
-docs/
+# Dev artifacts (debug screenshots)
 phaseD-*.png
