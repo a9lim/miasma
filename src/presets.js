@@ -52,6 +52,9 @@ export const PRESETS = Object.freeze([
             animal_density: 0,
             spillover_rate: 0,
             reverse_spillover_rate: 0,
+            // Recovery is permanent and α never mutates: one strain, SEIR.
+            r_susceptibility_mult: 0,
+            mutation_rate: 0,
             // No births so the population stays fixed during the run.
             birth_rate: 0,
             // No spontaneous mortality so we see the textbook S+E+I+R curve.

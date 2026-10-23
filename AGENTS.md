@@ -294,9 +294,6 @@ a second handler firing.
 
 ## Open work
 
-- `seir-vanilla` does not override `r_susceptibility_mult` (0.15) or `mutation_rate`
-  (0.008), so it runs reinfection and mutation; a 300-tick headless run registers about
-  1,200 strains. `about.md` and the edu content describe it as the textbook curve.
 - Möbius and Klein neighbor relations are not symmetric across the twisted edge pair
   (118 one-way edges at 120×120). Under RP², the 12 cells at the middle of the six hex
   edges each list one neighbor twice, and 6 of them list themselves. The tests only
