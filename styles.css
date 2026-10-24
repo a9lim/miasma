@@ -482,7 +482,7 @@ main {
 
 .toggles-section-header:first-child { margin-top: 0; }
 
-/* ───── Phase-14 restyle: geon-style colored toggles + shoals-style
+/* ───── Phase-14 restyle: worldline-style colored toggles + shoals-style
    colored label text. The row binds a per-key `tog-{key}` class that
    sets a single `--tog-color` CSS custom property; the .tog switch in
    shared-base.css picks it up for the on-state gradient, and the label
@@ -499,7 +499,7 @@ main {
   min-width: 0;
   color: var(--tog-color, var(--text));
   /* Slightly darker base; the colored letter prefix (V — Vaccinated, ...)
-     reads as the affordance. Match the geon-on-blue feel. */
+     reads as the affordance. Match the worldline-on-blue feel. */
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.2s var(--ease-out);

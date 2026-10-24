@@ -68,7 +68,7 @@ function cacheDOM() {
 // ─── Run-loop constants ───
 // Tick rate options (ticks per simulated second). Speed button cycles
 // through these; `speed` is the multiplier shown in the toolbar label.
-// Range mirrors cyano: a fractional low end lets the user slow ticks to
+// Range mirrors lumen: a fractional low end lets the user slow ticks to
 // watch a single transition wave step-by-step, and a 4× cap keeps the
 // stochastic dynamics readable (8× was a blur in practice).
 const SPEED_STEPS = [0.25, 0.5, 1, 2, 4];

@@ -63,7 +63,7 @@ function buildSectionHeader(text) {
 }
 
 function buildToggleRow(spec, toggles, onChange) {
-    // Layout follows the geon pattern: an iOS-style switch (.tog) whose
+    // Layout follows the worldline pattern: an iOS-style switch (.tog) whose
     // `--tog-color` is set by the per-key togClass (tog-v, tog-m, ...).
     // The label text on the left also picks up the per-key color via the
     // same class (shoals' colored-label pattern). No swatch box.
@@ -125,7 +125,7 @@ function buildToggleRow(spec, toggles, onChange) {
 }
 
 // ─── Animal-display mode group (Phase 9 toggle) ────────────────────────────
-// Three-way: dots / only / off. Mirrors the geon mode-group pattern — a row
+// Three-way: dots / only / off. Mirrors the worldline mode-group pattern — a row
 // of buttons inside .mode-toggles with a sliding indicator that picks up the
 // active button's tint via the bound class.
 
