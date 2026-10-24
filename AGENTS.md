@@ -89,6 +89,9 @@ src/history.js           transition-count ring buffer for observed Re
 src/prng.js              ?seed= RNG
 src/ui.js                surface picker (glyphs), map view, Settings assembly, about panel
 src/topology.test.mjs    topology tests
+tools/survey.mjs         headless preset survey: fates, strain composition, genome drift
+tools/threshold.mjs      final-size sweep through the lattice epidemic threshold
+docs/VISION.md           ideation draft: strengths, gaps, directions, measured evidence
 ```
 
 ## How it works
@@ -388,6 +391,16 @@ false`) so the about panel shows them without a second handler firing.
 
 ## Open work
 
+`docs/VISION.md` holds the long-range directions (an atlas of plates as experiments,
+the lattice-to-mean-field dial, antigenic space, recurrence, the observer) and the
+evidence behind them. It is a draft under discussion, not a plan. The items below are
+the near-term gaps.
+
+- Within-host competition is genome-blind: step 3's replicator update uses a strain's
+  own load as its fitness (`src/dynamics.js:460`), so the incumbent always wins.
+- Default-on `auto_quarantine` (instant, unlimited, omniscient tracing) makes the
+  COVID-like and smallpox presets fizzle in 5 of 5 seeds (`tools/survey.mjs`).
+- The rose counts E, R and D transitions only, so Z runs (oncoviral) leave it empty.
 - A strain circulating only in animals is tombstoned until it spills back, because the
   extinction sweep skips `animal_strain`.
 - `tick()` returns counters (`zFight*`, `animalBirths`, `autoQuarantined`, …) that
