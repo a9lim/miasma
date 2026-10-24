@@ -91,6 +91,7 @@ src/ui.js                surface picker (glyphs), map view, Settings assembly, a
 src/topology.test.mjs    topology tests
 tools/survey.mjs         headless preset survey: fates, strain composition, genome drift
 tools/threshold.mjs      final-size sweep through the lattice epidemic threshold
+docs/ROADMAP.md          the plan: 2.1 (antigenic immunity, six experiment presets), 3.0 (the game)
 docs/VISION.md           ideation draft: strengths, gaps, directions, measured evidence
 ```
 
@@ -391,10 +392,11 @@ false`) so the about panel shows them without a second handler firing.
 
 ## Open work
 
-`docs/VISION.md` holds the long-range directions (an atlas of plates as experiments,
-the lattice-to-mean-field dial, antigenic space, recurrence, the observer) and the
-evidence behind them. It is a draft under discussion, not a plan. The items below are
-the near-term gaps.
+`docs/ROADMAP.md` is the plan. 2.1 brings immunity by antigenic distance and six
+presets rebuilt as experiments; 3.0 is the game, a tactical reverse Plague Inc. When an
+item lands, move it to the roadmap's Landed table and update this file.
+`docs/VISION.md` holds the wider directions and the measurements behind them. The items
+below are known gaps; 2.1 fixes the first four.
 
 - Within-host competition is genome-blind: step 3's replicator update uses a strain's
   own load as its fitness (`src/dynamics.js:460`), so the incumbent always wins.

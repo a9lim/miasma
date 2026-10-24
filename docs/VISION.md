@@ -3,7 +3,9 @@
 A working draft from an ideation round on 2026-10-24, the day the atlas rebuild landed.
 It is for a9 and whichever agent picks the work up next: what Miasma is strong at,
 what it lacks, and directions that could take it many sessions to reach. Nothing here
-is ratified. Claims carry a tag: **[standard]** for an established result,
+is ratified. What a9 slated from it lives in `ROADMAP.md`: B (antigenic space) and the
+preset rework are 2.1; D and E (the observer and the response) are the core of 3.0,
+the game. Claims carry a tag: **[standard]** for an established result,
 **[synthesis]** for a connection drawn here, **[speculation]** for a guess still to
 test. Codex checked every citation against a retrieved source (several claims were
 corrected), Crossref confirmed every DOI, and Codex adversarially checked the
