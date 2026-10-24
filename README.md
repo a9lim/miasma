@@ -25,14 +25,19 @@ the interventions you paint.
   infections to and from the human layer.
 - **Zombies**: one state machine with two readings. It can run a zombie outbreak where
   humans fight back, or oncoviral cell transformation held back by immune surveillance.
-- **Six surfaces**: plane, cylinder, torus, Möbius strip, Klein bottle, and real
-  projective plane.
+- **Four surfaces**: the hexagonal world with its edges open (plane) or glued in
+  pairs: torus, Klein bottle, and real projective plane. Faded copies of the world
+  sit beyond each glued edge, and strokes on them land on the world.
 - **Ten presets**: SEIR vanilla, COVID-like, Ebola, tuberculosis, Andes hantavirus,
   smallpox, plague with rats, zombie apocalypse, oncoviral transformation, and absurd
   mode.
-- **Views**: compartment, strain, age, health, status, and susceptibility maps. A
-  stacked compartment chart and observed Re sit in the Counts tab. The Strains tab
-  ranks strains by prevalence and has a lineage forest and a per-strain genome editor.
+- **The atlas**: the map is a plate in the line of John Snow's 1854 cholera map:
+  the disease in red, recovery as stipple, vaccination as hatching, deaths as
+  crosses, and isochrones of the day the wave arrived. Views for compartment,
+  strain (one hatch angle per strain), age, health, status, and susceptibility;
+  the oncoviral preset becomes an H&E-stained section. Nightingale's rose and
+  observed Re sit in the Counts tab; the Strains tab ranks strains by prevalence
+  and has a time-scaled phylogeny and a per-strain genome editor.
 - **Intervention painting**: seed, vaccinate, quarantine, sanitize, and cull, with three
   brush sizes. Undo and redo work until the simulation advances.
 

@@ -2,54 +2,67 @@
 
 Stochastic spatial epidemic simulator on a hex grid, public at a9l.im/miasma: SEIRD
 plus vaccinated, maternal-immunity, and zombie compartments, multi-strain evolution,
-an animal reservoir, painted interventions, and six surface topologies. Vanilla ES
-modules and Canvas 2D, no dependencies and no build step of its own.
-It is a submodule of the a9l.im repository (`a9lim.github.io`, at `projects/miasma`); the
-root `AGENTS.md` covers the shared layer, design system, build, and deployment.
+an animal reservoir, painted interventions, and four surfaces made by gluing the edges
+of a hexagonal world. The map is drawn as a plate from an epidemiological atlas.
+Vanilla ES modules; the lattice renders in WebGPU with a Canvas 2D fallback; no
+dependencies and no build step of its own. It is a submodule of the a9l.im repository
+(`a9lim.github.io`, at `projects/miasma`); the root `AGENTS.md` covers the shared
+layer, the design system (including "Inside the scene"), build, and deployment, and
+`docs/sim-overhaul/PLAN.md` in the parent holds the plan this rebuild follows.
 
 ## Running and checking
 
-Preview from the parent root (`npm run build`, serve `dist/`, open `/miasma/`). Append
-`?seed=<string>` for a reproducible run: `src/prng.js` hashes it into the shared
-`mulberry32`, which then drives the tick, animal seeding, mutation, and recombination.
+Preview from the parent root with `node docs/sim-overhaul/serve.mjs <port>` (serves
+`shared/` and `projects/` live from the working tree) and open `/miasma/`; the parent
+`npm run build` path works too. Query flags: `?seed=<string>` for a reproducible run
+(`src/prng.js` hashes it into the shared `mulberry32`, which drives the tick, animal
+seeding, mutation, and recombination); `?mi=plane|torus|klein|rp2` opens on a surface
+(a retired name such as `cylinder` or `mobius` falls back to the default);
+`?view=<view mode>` opens on a view; `?canvas2d` forces the Canvas fallback.
+`docs/sim-overhaul/check.mjs` screenshots the page headless and reports console errors,
+overflow and frame rate.
 
 ```bash
-node src/topology.test.mjs        # 4963 checks on the hex-quotient wrap
+node src/topology.test.mjs        # 2510 checks: gluing, χ, orientability, cone points
 ```
 
-Run it after touching `wrap`, `neighbors`, `hexBounds`, or `inHex`. It covers bounds,
-PLANE nulls, TORUS/CYLINDER adjacency symmetry and round-trip, RP² boundary coverage,
-and an in-domain smoke test for Möbius and Klein.
+Run it after touching `topology.js`. It checks bounds, PLANE nulls, TORUS
+translation round-trips, then treats each surface's slot table as a cell complex and
+checks neighbor symmetry, χ, orientability, the cone points, six distinct neighbors on
+the torus (and on the Klein bottle everywhere but its 240° cone point), the edge
+isometries against the slot gluing, and the two-tilings lemma behind the Klein
+construction (see Surfaces below).
 
 HTML↔JS id contract (BSD/macOS-safe):
 
 ```bash
 comm -3 \
-  <(rg -No "getElementById\('([^']+)'" src main.js --replace '$1' | sed 's/.*://' | sort -u) \
+  <(rg -No "(?:getElementById|\\$)\('([^']+)'\)" src main.js --replace '$1' | sed 's/.*://' | sort -u) \
   <(rg -No 'id="([^"]+)"' index.html --replace '$1' | sort -u)
 ```
 
-The clean output is five lines: `brush-size-group` and `paint-mode-grid` (built by
-`paint.js`) on the JS side, `canvas-controls`, `sim-container`, and `top-bar` (CSS-only
-hooks) on the HTML side. Anything else is a broken lookup.
+The clean output is four lines: `brush-size-group` and `paint-mode-grid` (built by
+`paint.js`) on the JS side, `canvas-controls` and `sim-container` (CSS hooks) on the
+HTML side. Anything else is a broken lookup.
 
 The dynamics modules import cleanly in Node for headless runs (`Grid` →
 `initializeGrid` → `createRegistry(params)` → `tick`), but `strains.js` and `prng.js` call
 the `/shared/utils.js` globals `gaussian` and `mulberry32`, so define those on
 `globalThis` first. In the browser, `window.__miasma` exposes
-`{ sim, params, toggles, history, tickOnce, strains, paint, PaintMode }`.
+`{ sim, params, toggles, history, tickOnce, iso, plate, strains, paint, PaintMode,
+setPlaying, openScene, viewport }`.
 
 ## Layout
 
 ```
-index.html               page shell, SEO/JSON-LD, edu content, toolbar and sidebar markup
-main.js                  init, rAF loop, DOM cache, reset/preset wiring, zoom/pan input, shortcuts
-colors.js                --epi-* compartment colors over the shared palette
-styles.css               project styles
+index.html               page shell, SEO/JSON-LD, edu content, colophon, plate figure, margin
+main.js                  init, opening scene, rAF loop, DOM cache, reset/preset wiring, zoom/pan, shortcuts
+colors.js                --epi-* compartment colors (the accent and inks) over the shared palette
+styles.css               layout, hairline controls, census swatches drawn as the plate's marks
 src/config.js            enums (Compartment, Status, Flag, Animal, Topology, ViewMode), DEFAULTS, HEX_DIRS
 src/grid.js              Grid (structure-of-arrays cell state), axial ↔ pixel math
 src/initialization.js    applyHexMask, fresh human and animal seeding
-src/topology.js          hex-quotient wrap for six surfaces, cached neighbor tables
+src/topology.js          the four surfaces as edge gluings: slot table, edge isometries, cone points
 src/dynamics.js          tick(): steps 1–9, buffer swap, transition counters
 src/dynamics-animal.js   step 10: reservoir demography, animal SIR, spillover
 src/dynamics-scratch.js  next-state buffers recycled between ticks
@@ -57,18 +70,24 @@ src/default-params.js    DEFAULT_PARAMS (sim-wide knobs plus the seed genome)
 src/default-toggles.js   DEFAULT_TOGGLES
 src/strains.js           registry, GENOME_FIELDS, mutation, recombination, bloom filter, tombstones
 src/strain-extinction.js periodic tombstone sweep
+src/strain-style.js      each strain's ink and hatch angle (plate, phylogeny, strain list)
 src/presets.js           ten presets, applyPreset, preset dropdown
 src/params.js            Advanced-parameters sliders (sim-wide) and STRAIN_GENOME_LAYOUT
 src/toggles.js           compartment, flag, and automatic-response toggles; animal-display group
 src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), Paint tab
-src/camera.js            zoom/pan over the fit-to-canvas viewport
-src/render.js            map rendering for six view modes, overlays, brush footprint
+src/camera.js            zoom/pan over the fitted plate
+src/isochrones.js        first-exposure day per cell, smoothed and contoured on the lattice
+src/plate.js             the plate per frame: copies, edges, cone points, labels, title, cartouche, scale bar
+src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a state texture
+src/render.js            Canvas 2D fallback for the lattice (the same marks), plate geometry
+src/histology.js         the oncoviral preset as an H&E-stained section (Canvas; GPU mirrors it)
+src/caption.js           the live figure caption and the Reference cartouche rows
+src/rose.js              Nightingale's rose (Counts tab)
 src/stats.js             census and observed Re (Counts tab)
-src/timeseries.js        stacked-area chart at the top of the Counts tab
-src/lineage.js           strain prevalence, Strains tab rows, lineage forest, genome editor
+src/lineage.js           strain prevalence, Strains tab rows, time-scaled phylogeny, genome editor
 src/history.js           transition-count ring buffer for observed Re
 src/prng.js              ?seed= RNG
-src/ui.js                Settings-tab assembly, mode groups, about panel
+src/ui.js                surface picker (glyphs), map view, Settings assembly, about panel
 src/topology.test.mjs    topology tests
 ```
 
@@ -76,7 +95,7 @@ src/topology.test.mjs    topology tests
 
 ### Grid and state
 
-Storage is a 120×120 axial rhombus of flat-top hexes, indexed `r * W + q`.
+Storage is a 120×120 axial rhombus of hexes (pointy-top on screen: `x = √3·(q + r/2)`, `y = 1.5·r`), indexed `r * W + q`.
 `applyHexMask` (`initialization.js`) carves out the inscribed regular hexagon (radius 59,
 10,621 cells) and writes `grid.activeIndices`; cells outside it are permanent
 `Compartment.EMPTY` / `Animal.VOID` padding. Hot loops iterate `activeIndices`, and
@@ -219,50 +238,122 @@ genome distance; `similarity()` is unused.
 restored. IDs are never reused because blooms hash them. The sweep does not scan
 `animal_strain`.
 
-### UI and rendering
+### Surfaces
 
-Sidebar tabs: Counts (`#tab-compartments`: chart, census, observed Re, animal census),
-Strains, Paint (`#tab-interventions`), and Settings. `ui.js` assembles Settings as
-presets, the Surface/Map view block (`#map-controls-section`), toggles, the
-Advanced-parameters collapsible, and reset. The top-bar eye (`#viewmode-btn`) opens
-Settings and scrolls to the map controls; it holds no state. Advanced parameters lists
-only sim-wide knobs. Per-strain fields are edited in the Strains tab detail block
-(`STRAIN_GENOME_LAYOUT`), which writes registry arrays directly, so edits to α are lost
-when a reset or preset reseeds the registry from `params`.
+`topology.js` glues the world hexagon's edges. Edges are numbered 0–5 by outward
+normal (SE, S, SW, NW, N, NE on screen); the 12R + 6 boundary *slots* (cell-edges facing
+out of the hexagon) are matched in pairs, so the neighbor relation is symmetric by
+construction. A translation matches an edge's arc of 2R + 1 slots to its opposite in
+reverse order; a twist matches in the same order, shifted one slot so the zigzags still
+interlock. `buildComplex` returns the slot table (`nb`, `back`, `flip`), and
+`getNeighborTable` maps it to grid indices for the dynamics. `edgeGluings` reads off,
+for each glued edge, the lattice isometry `g(x) = M·x + v` that carries the world onto
+the copy beyond it (used by the plate's faded copies and by picking); `wrap` maps a cell
+in such a copy back to the world; `cornerCones` reports the cone points.
 
-`render(ctx, grid, mode, viewport, opts)` draws one fused fill-and-stroke pass over
-`activeIndices`; its color cache rebuilds when `<html data-theme>` changes. EMPTY cells
-draw nothing, so the page ground shows through and overlays cannot assume a backdrop.
-Flag overlays appear only in compartment view; H and Q badges appear in compartment and
-status views. `toggles.animalDisplay` is a string (`'dots' | 'only' | 'off'`) on the
-otherwise boolean toggles object. The brush footprint is drawn on the canvas from
-`paintController.getHoverFootprint()`, tinted with the target compartment's color
-(`PAINT_ACCENT_VARS`).
+- Plane: no gluing (χ 1). Torus: three translations (χ 0, orientable, flat).
+- Klein bottle: N/S translated, SE/NW and SW/NE twisted (χ 0, non-orientable). The
+  plan's flat Klein bottle (glide reflections at the E and W corners) cannot exist on
+  this lattice: the ring of cells around the hexagon can be covered by non-overlapping
+  translates of it in exactly two ways, the lattice ⟨T1, T2⟩ and its mirror image, so
+  every tiling by translates is one of the two, and every reflection of the cell lattice
+  swaps them; a defect-free gluing therefore has only translations as deck
+  transformations and is a torus. An exhaustive search over every edge pairing and
+  every lattice isometry (4864 complete gluings at R = 59) agrees. Miasma's Klein bottle
+  is the plan's fallback: flat except a 240° cone point (at the E and W corners; its two
+  cells are neighbors twice) and a 480° one.
+- RP²: three twists (χ 1, non-orientable). Its corner closing leaves cone points of
+  120°, 240° (two) and 480°; at the 120° point a corner cell's two outer edges are glued
+  to each other, so it lists itself as a neighbor twice.
 
-In `colors.js`, D is `light.text` on the light theme and `dark.canvas` on the dark one
-(a hole in the map), so anything using D as a foreground (stat row, toggle, cull brush
-and button) swaps to `--text` in dark mode. I is a derived scarlet
-(`_PALETTE.infected`) rather than `extended.red`, which sits within ΔE 2 of the dark
-accent; data red and UI accent must not read as one color.
+The corner closings (`SPECS[...].close`) were found by exhaustive search over the
+leftover slots; the tests re-check them. `Topology` is `{ PLANE, TORUS, KLEIN, RP2 }`
+(0–3); `topoFromString` maps any other name to the default.
 
-The loop in `main.js` runs `BASE_TICK_RATE` 10 × speed (0.25–4×), at most 16 ticks per
-frame, and idle-stops when paused with nothing dirty; event handlers restart it with
-`requestFrame()`. Each tick pushes transition counts to `history`, computes stats once
-(`cachedStats` feeds both the census and the chart), and clears paint undo/redo so a
-stroke can never rewind evolved state.
+### Rendering: the plate
 
-`camera.getEffectiveViewport()` returns one shared object, mutated on every call, that
-both `render` and the paint controller's `getViewport` read; consumers read it
-immediately and never retain it, and paint must get the effective viewport or clicks
-miss at any zoom other than 1. Pinch suppresses painting through `setSuppressed`, pan
-is unclamped (reset recovers), and opening the sidebar tweens `panX` above 900 px.
+The scene is a plate in the line of John Snow's cholera map (PLAN.md, "Miasma: the
+atlas"). The disease is the one red: infectious cells solid, exposed pale. Recovered
+cells are stipple, vaccinated hatching (prussian), deaths small crosses (red for an
+F-corpse), susceptible cells graphite dots, maternal-immune newborns small rings, Z
+cross-hatching (sap); a latent E carries a dark dot, a carrier R a red one; H is a
+plus and Q a cordon (hex outline, indigo). The strain view hatches each carrier at its
+dominant strain's angle in its ink (`strain-style.js`, eight styles cycling by id); age,
+health and susceptibility are single-ink ramps in eight steps; the status view mutes all
+but H and Q. Animals are small triangles off the cell center. The oncoviral preset
+(`sim.presetKey`) draws the lattice as an H&E section (`histology.js`).
+
+Isochrones: `isochrones.js` stamps each cell's first E/I/Z tick, smooths the field by
+neighbor averaging over the surface's own neighbor table (so it is continuous across
+glued edges), and contours it every 8 days by marching triangles on the cell-center
+lattice; segments feed the label placement and the Canvas renderer, and a padded copy
+of the field (one cell past every edge, read through the gluing) feeds the GPU, which
+draws the isolines per pixel with their analytic gradient.
+
+Each frame `plate.js` composes: the lattice (WebGPU: `gpu-plate.js`, one full-screen
+pass; each pixel finds its cell, through the inverse edge isometry on a faded copy, and
+draws the marks procedurally in the world's frame, so hatching runs on unbroken and is
+mirrored on a mirrored copy), then on the 2D canvas above it the edges (thin rule with
+one, two or three chevrons per glued pair, agreeing for a translation and opposed for a
+twist; a heavy rule with hachures for a shore), cone-point circles with their angles, the
+title (top right; one plate numeral per view), the Reference cartouche (bottom left;
+rows from `caption.js`), the scale bar (cells; µm on the slide) and the isochrone labels
+(every 24 days, collision-checked against each other and the furniture). Without WebGPU
+(or with `?canvas2d`), `render.js` draws the same marks into an offscreen tile once per
+change and `plate.js` blits it, and its copies through `destination-in` fading. The
+GPU state texel is `x` compartment, `y` flags | status << 4, `z` animal | (strain slot +
+1) << 3, `w` the ramp value. Measured at the default grid mid-outbreak, the Canvas tile
+costs 17–40 ms (a fill through thousands of adjacent hexes is superlinear in Skia);
+the GPU path holds 60 fps at 4× on a 2× display.
+
+Canvas text is Newsreader and waits on `_loadTextFonts()`; theme changes invalidate
+`plateTheme()` (a `MutationObserver` on `data-theme`), and the colophon's theme
+handler marks the tile, rose, strain and census panels dirty.
+
+### UI
+
+The colophon (`shared/colophon.js`) holds play, step, theme and help; the figure
+caption under the plate is live (`caption.js`, through `_colophon.caption`, throttled,
+and forced when the loop goes idle). The plate fills the left; the margin on the right
+(under the plate below 760 px) holds the surface picker, whose glyphs are each
+surface's fundamental polygon drawn from `SURFACES` and `cornerCones`, the run row
+(speed, reset, undo, redo, map view, hide), and four tabs: Counts (Nightingale's rose,
+census, observed Re, reservoir census), Strains (time-scaled phylogeny, top strains,
+genome editor), Paint, and Settings (preset, map view, toggles, advanced parameters).
+The zoom cluster sits at the plate's top left. `ui.js` assembles Settings and returns
+`{ resetUI, showAbout, showPreset }`.
+
+The page opens on a living frame: `openScene` applies `OPENING_PRESET` (SEIR vanilla on
+the torus, or the `?mi=` surface), seeds two cases (one near a glued edge), warms up 96
+days, and plays; under reduced motion it warms up 150 days and stays paused. Reset
+restores the default params and toggles, wipes the grid and seeds the same two cases;
+applying a preset seeds them too, so the plate is never empty.
+
+Nightingale's rose (`rose.js`, behind the old chart's `initTimeseries` API) counts
+exposures, recoveries and deaths per ten-day wedge from the tick's transition counts,
+overlaid from the center; a rose is 120 days, and the previous 120 are a dashed
+envelope at the same scale. The phylogeny (`lineage.js`) draws living strains and their
+ancestors (at most 28 living, the rest counted) as branches over real time, joined to
+their parent on their birth day (a dashed second connector for a recombinant), with a
+living branch's weight its current prevalence and its tip the strain's swatch.
+
+The loop in `main.js` runs `BASE_TICK_RATE` 10 × speed (0.25–4×) days per second, at
+most 16 ticks per frame, and idle-stops when paused with nothing dirty. Each tick pushes
+transition counts to `history` and the rose, computes stats once (`cachedStats`), stamps
+isochrone arrivals, and clears paint undo/redo so a stroke can never rewind evolved
+state.
+
+`camera.getEffectiveViewport()` returns one shared object, mutated on every call; its
+`frame` (the canvas below the colophon band) is measured on resize. The paint
+controller hit-tests through `pickAt`, which the plate answers, so a stroke on a faded
+copy lands on the world cell it shows. Pinch suppresses painting through
+`setSuppressed`, and pan is unclamped (reset recovers).
 
 The paint controller owns every canvas pointer event; its default is seed mode with
-brush 0, so a single tap seeds α. Each stroke is one snapshot entry (undo/redo depth
-20). `paint.js` handles 1–6, `[`/`]`, and Ctrl/Cmd+Z/Y/Shift+Z itself; `main.js`
-registers the other shortcuts with `initShortcuts` and lists the paint keys as
-documentation-only entries (`when: () => false`) so the about panel shows them without
-a second handler firing.
+brush 0. Each stroke is one snapshot entry (undo/redo depth 20). `paint.js` handles 1–6,
+`[`/`]`, and Ctrl/Cmd+Z/Y/Shift+Z itself; `main.js` registers the other shortcuts with
+`initShortcuts` and lists the paint keys as documentation-only entries (`when: () =>
+false`) so the about panel shows them without a second handler firing.
 
 ## Conventions
 
@@ -277,11 +368,14 @@ a second handler firing.
   pooled by id and reordered with `appendChild`. `document.startViewTransition` stays
   out of tick paths: its document snapshot was the main source of UI jank.
 - `stats.js` `buildPanelSkeleton` rebuilds the Counts tab but preserves
-  `#timeseries-panel`, whose canvas context `initTimeseries` captures once.
-- The transition history (200 ticks) and the chart (500 samples) are typed-array ring
-  buffers, avoiding per-tick allocation and `shift()`.
-- `#speed-btn` needs the `.speed-btn` class and an inner `<span class="speed-label">`;
-  `_toolbar.updateSpeedBtn` writes the multiplier into that span.
+  `#timeseries-panel` (the rose), whose canvas context `initTimeseries` captures once.
+- The transition history (200 ticks) is a typed-array ring buffer.
+- `#speed-btn` carries an inner `<span class="speed-label">` that `main.js` writes.
+- Inside the scene, an effect ships only if it reads a quantity in the model, and every
+  state is a pattern before it is a color (root AGENTS.md, "Inside the scene"). The red
+  is the disease alone; interventions are inks.
+- The plate never re-fits as text changes: the caption is a fixed three-line block
+  (two on phones), and the frame is measured only on resize.
 - Defaults are a showcase: `DEFAULT_PARAMS` avoids 0 and 1 so every mechanic is
   visible, and Z is off. `applyPreset` resets params and toggles to the defaults before
   merging, so a preset must set every key it needs at a textbook value; it also forces
@@ -294,17 +388,11 @@ a second handler firing.
 
 ## Open work
 
-- Möbius and Klein neighbor relations are not symmetric across the twisted edge pair
-  (118 one-way edges at 120×120). Under RP², the 12 cells at the middle of the six hex
-  edges each list one neighbor twice, and 6 of them list themselves. The tests only
-  smoke-test these surfaces.
-  `translateToHex` tries 9 lattice candidates, enough only for ±1 offsets.
 - A strain circulating only in animals is tombstoned until it spills back, because the
   extinction sweep skips `animal_strain`.
-- The theme toggle marks only the map dirty, so a paused chart keeps the old theme's
-  colors until the next tick or tab switch.
 - `tick()` returns counters (`zFight*`, `animalBirths`, `autoQuarantined`, …) that
-  nothing displays, and animal dots color only by S/I/R/D.
+  nothing displays, and animal marks shade only by S/I/R/D.
+- The plate's isochrone labels are upright; atlas labels often follow the line.
 - Deferred ideas: per-strain vaccine efficacy or waning, M-cell breakthrough (would need
   its own efficacy parameter), a separate breakthrough count for Re, a barricade brush
   for the zombie reading, a cross-immunity matrix view.

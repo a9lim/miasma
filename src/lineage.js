@@ -1,17 +1,16 @@
-// lineage.js — strain registry panel renderer and throttled lineage forest.
+// lineage.js — strain registry panel: prevalence, rows, phylogeny, genome editor.
 //
 // Two exports:
 //   computeStrainPrevalence(grid, registry, maxSlot)  — load-weighted tally of active strain slots
-//   renderStrainPanel(panelEl, prevalence, registry, onClick?) — idempotent build/update
+//   renderStrainPanel(panelEl, prevalence, registry, onClick?, tick?) — idempotent build/update
 //
-// The strain tab shows a throttled force-layout forest plus the top-8 most-
-// prevalent strains as horizontal bars. Clicking a row or forest node reveals
-// a detail block with the strain genome and lineage parentage.
+// The Strains tab shows a time-scaled phylogeny above the top-8 most-prevalent
+// strains as rows (each with its plate swatch: ink and hatch angle). Clicking a
+// row or a phylogeny branch reveals a detail block with the strain genome and
+// lineage parentage.
 //
 // Mirrors the stats.js pattern: build skeleton once (data-lineage-ready='1'),
-// then mutate text + bar widths on subsequent calls. The top-8 list is small
-// enough that clear-and-rebuild on every update is cheap and keeps the row
-// ordering trivially correct.
+// then mutate text + bar widths on subsequent calls.
 //
 // No innerHTML — all DOM via createElement / textContent / style.cssText
 // per the repo's pre-commit hook.
@@ -25,26 +24,10 @@ import {
 } from './strains.js';
 import { STRAIN_GENOME_LAYOUT, buildSliderRow } from './params.js';
 import { Compartment } from './config.js';
+import { strainStyle, strainInkVar } from './strain-style.js';
 
 // Top-K list cap. Anything beyond this gets surfaced via the "+N hidden" hint.
 const MAX_ROWS = 8;
-
-// Golden-ratio hue distribution — multiplies the strain ID by ~137.508° so
-// successive strains land far apart on the hue wheel and stay well-separated
-// even at high registry counts. Same trick used for swatch palettes in lots
-// of viz toolkits; cheap, deterministic, and ID-stable across re-renders.
-const HUE_STEP = 137.508;
-const HUE_SAT  = 60; // %, fixed for now — saturation knob isn't worth a token
-const HUE_LIGHT = 55; // %, sits between bg-panel and text on both themes
-
-function strainHue(id) {
-    // Deterministic, ID-stable. No need to normalize negatives — IDs are Uint16.
-    return (id * HUE_STEP) % 360;
-}
-
-function strainHsl(id) {
-    return `hsl(${strainHue(id).toFixed(2)}, ${HUE_SAT}%, ${HUE_LIGHT}%)`;
-}
 
 /**
  * Tally cells per strain. Single pass over grid.strain_ids using a load-
@@ -159,13 +142,13 @@ function buildPanelSkeleton(panelEl) {
     // Click hit-test routes through selectStrain → same flow as a row click.
     const forest = document.createElement('canvas');
     forest.className = 'strain-forest-canvas';
-    forest.dataset.role = 'lineage-forest';
-    forest.setAttribute('aria-label', 'Strain lineage forest');
+    forest.dataset.role = 'lineage-phylogeny';
+    forest.setAttribute('aria-label', 'Time-scaled phylogeny of the strains');
     forest.addEventListener('click', (ev) => {
         const rect = forest.getBoundingClientRect();
         const px = ev.clientX - rect.left;
         const py = ev.clientY - rect.top;
-        const id = pickForestNode(px, py);
+        const id = pickPhylo(px, py);
         if (id !== -1) selectStrain(panelEl, id);
     });
     panelEl.appendChild(forest);
@@ -433,301 +416,146 @@ function updateDetail(detailEl, registry, strainId) {
 // replaces it with a force-directed forest at the strain panel's top. The
 // per-strain detail block now focuses on the live genome editor.
 
-// ─── Phase D: force-directed strain forest ─────────────────────────────────
+// ─── Time-scaled phylogeny ─────────────────────────────────────────────────
 //
-// A canvas at the top of the strains panel renders all currently-alive
-// strains as nodes in a force-directed graph, edges connecting each strain
-// to its nearest *alive* ancestor (walks up `parent` for extinct
-// intermediates so the forest stays topologically connected through living
-// lineages; hybrids draw a second dashed edge to their alive parent2 / its
-// nearest alive ancestor).
-//
-// Layout state lives in module scope so it survives across renders. New
-// nodes spawn at their alive parent's position with a few px of jitter,
-// the spring layout pulls them into place gradually, and cooling decays
-// per step so the layout settles when the alive set is stable. A change
-// in the alive set re-heats cooling so the new node has time to find its
-// place.
-//
-// Click hit-test: a node click invokes the panel's stashed selection
-// pipeline (same as a rankings-row click) — marks the corresponding row
-// active, opens the genome editor in the detail block, fires onClick.
+// Each strain is a branch drawn along real time, from the day it emerged to
+// the day it went extinct (or today), and joins its parent with a vertical
+// connector on its birth day; a recombinant's second parent joins with a
+// dashed one. Rows are ladderized depth-first, children under their parent in
+// birth order. A living branch's weight is its current prevalence and it ends
+// in its plate swatch (ink and hatch angle); an extinct branch ends in a bar.
+// Only living strains and their ancestors are drawn, at most PHYLO_MAX_ROWS.
 
-const FOREST_REPULSION       = 1800;    // Coulomb constant (raw)
-const FOREST_SPRING_K        = 0.045;   // Hooke spring constant (per edge)
-const FOREST_SPRING_LEN      = 52;      // rest length (px)
-const FOREST_CENTER_PULL     = 0.006;   // weak gravity toward canvas centre
-const FOREST_DAMPING         = 0.72;    // velocity damping per step
-const FOREST_COOLING_DECAY   = 0.985;
-const FOREST_COOLING_RESEED  = 0.9;     // re-heat target when alive set changes
-const FOREST_COOLING_MIN     = 0.05;    // below this we skip the layout step
-const FOREST_NODE_MIN_RADIUS = 4;
-const FOREST_NODE_MAX_RADIUS = 14;
-const FOREST_CLICK_RADIUS_SQ = 18 * 18; // node hit-test radius² (CSS px)
+const PHYLO_MAX_ROWS = 28;
+const _phylo = { rows: [], x0: 0, x1: 1, t1: 1, rowH: 10, top: 0, hidden: 0 };
 
-// Module-private layout state. Resets implicitly when the registry is
-// rebuilt (resetGridOnly) because the strain IDs change — extinct entries
-// are pruned during ensureForestPositions and new ones bootstrap from the
-// parent's position.
-const _forestLayout = {
-    positions: new Map(),   // strainId → {x, y, vx, vy}
-    cooling:   1.0
-};
-
-// Walk parent links upward until we hit an alive strain or run out. Used
-// to render lineage edges through extinct intermediates without dangling
-// orphans in the canvas. Returns the alive ancestor's id, or -1 when
-// there's no alive ancestor on this chain.
-function nearestAliveAncestor(registry, startId, aliveSet) {
-    let cur = registry.parent[startId];
-    let safety = 1000; // anti-cycle (registry is append-only DAG; shouldn't hit)
-    while (cur !== null && cur !== undefined && safety-- > 0) {
-        if (aliveSet.has(cur)) return cur;
-        cur = registry.parent[cur];
+function phyloRows(registry, prevalence) {
+    const n = strainCount(registry);
+    const keep = new Uint8Array(n);
+    const live = [];
+    for (let id = 0; id < n; id++) if (!isExtinct(registry, id)) live.push(id);
+    const prev = new Map(prevalence.map(p => [p.id, p.count]));
+    live.sort((a, b) => (prev.get(b) || 0) - (prev.get(a) || 0));
+    _phylo.hidden = Math.max(0, live.length - PHYLO_MAX_ROWS);
+    for (const id of live.slice(0, PHYLO_MAX_ROWS)) {
+        for (let k = id; k >= 0 && k < n && !keep[k]; k = registry.parent[k]) keep[k] = 1;
     }
-    return -1;
-}
-// Same idea but starting from the parent2 link (hybrid second-parent edge).
-// After the first hop into the parent2 chain we walk via primary parents.
-function nearestAliveAncestor2(registry, startId, aliveSet) {
-    let cur = registry.parents2[startId];
-    let safety = 1000;
-    while (cur !== null && cur !== undefined && safety-- > 0) {
-        if (aliveSet.has(cur)) return cur;
-        cur = registry.parent[cur];
+    const kids = new Map();
+    for (let id = 1; id < n; id++) {
+        if (!keep[id]) continue;
+        const p = registry.parent[id];
+        if (!kids.has(p)) kids.set(p, []);
+        kids.get(p).push(id);
     }
-    return -1;
+    const order = [];
+    const visit = (id) => {
+        if (order.length >= PHYLO_MAX_ROWS + 24) return;
+        order.push(id);
+        for (const c of kids.get(id) || []) visit(c);
+    };
+    if (n && keep[0]) visit(0);
+    // roots other than α (shouldn't happen, but keep them visible)
+    for (let id = 1; id < n; id++) if (keep[id] && !(registry.parent[id] >= 0 && keep[registry.parent[id]])) if (!order.includes(id)) visit(id);
+    return order;
 }
 
-// Add positions for any alive strain that doesn't have one yet (spawned
-// near its alive parent's position + jitter so the spring layout has
-// somewhere coherent to start). Drop positions for ids that are no
-// longer alive. Re-heat cooling when the alive set changed.
-function ensureForestPositions(aliveIds, registry, w, h) {
-    const positions = _forestLayout.positions;
-    let changed = false;
-    const aliveSet = new Set(aliveIds);
-
-    for (const id of aliveIds) {
-        if (positions.has(id)) continue;
-        changed = true;
-        let x = w / 2;
-        let y = h / 2;
-        const pid = registry.parent[id];
-        if (pid !== null && pid !== undefined && positions.has(pid)) {
-            const pp = positions.get(pid);
-            x = pp.x + (Math.random() - 0.5) * 18;
-            y = pp.y + (Math.random() - 0.5) * 18;
+function renderPhylogeny(canvas, registry, prevalence, selectedId, tick) {
+    const rows = phyloRows(registry, prevalence);
+    const rowH = rows.length > 30 ? 7 : rows.length > 18 ? 10 : 13;
+    const cssH = Math.max(120, Math.min(420, rows.length * rowH + 52));
+    if (Math.abs(canvas.clientHeight - cssH) > 1) canvas.style.height = cssH + 'px';
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = canvas.clientWidth || 300, h = cssH;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+        canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    }
+    const c = canvas.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const P = _themePalette();
+    const now = Math.max(1, tick | 0);
+    const x0 = 6, x1 = w - 46, top = 10;
+    const X = (t) => x0 + (x1 - x0) * Math.max(0, Math.min(1, t / now));
+    const yOf = new Map(rows.map((id, i) => [id, top + i * rowH + rowH / 2]));
+    const prev = new Map(prevalence.map(p => [p.id, p.count]));
+    let maxPrev = 1;
+    for (const v of prev.values()) if (v > maxPrev) maxPrev = v;
+    Object.assign(_phylo, { rows, x0, x1, t1: now, rowH, top });
+    const muted = P.textMuted, rule = rgbaHex(P.text, 0.2);
+    // time axis
+    const ay = top + rows.length * rowH + 10;
+    c.strokeStyle = rule; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(x0, ay); c.lineTo(x1, ay); c.stroke();
+    c.font = `11px ${_FONT.text}`; c.fillStyle = muted; c.textAlign = 'center'; c.textBaseline = 'top';
+    const step = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000].find(s => now / s <= 5) || 10000;
+    for (let t = 0; t <= now; t += step) {
+        const x = X(t);
+        c.beginPath(); c.moveTo(x, ay); c.lineTo(x, ay + 3); c.stroke();
+        c.fillText(String(t), x, ay + 5);
+    }
+    c.textAlign = 'right';
+    c.fillText('day', w - 4, ay + 5);
+    if (_phylo.hidden) {
+        c.textAlign = 'left'; c.font = `italic 11px ${_FONT.text}`;
+        c.fillText(`${_phylo.hidden} rarer living ${_phylo.hidden === 1 ? 'strain' : 'strains'} not drawn`, x0, ay + 19);
+    }
+    for (const id of rows) {
+        const st = strainStyle(id), y = yOf.get(id);
+        const born = registry.birthTick[id] | 0;
+        const dead = !!registry.extinct[id];
+        const end = dead ? (registry.extinctTick[id] | 0) : now;
+        const p = registry.parent[id], p2 = registry.parents2 ? registry.parents2[id] : -1;
+        const ink = id === selectedId ? P.accent : st.ink;
+        c.strokeStyle = ink;
+        if (p >= 0 && yOf.has(p)) {
+            c.lineWidth = 1;
+            c.beginPath(); c.moveTo(X(born), yOf.get(p)); c.lineTo(X(born), y); c.stroke();
+        }
+        if (p2 >= 0 && p2 !== EMPTY_STRAIN && yOf.has(p2)) {
+            c.setLineDash([2, 2]); c.lineWidth = 1;
+            c.beginPath(); c.moveTo(X(born), yOf.get(p2)); c.lineTo(X(born), y); c.stroke();
+            c.setLineDash([]);
+        }
+        const lw = dead ? 1 : 1 + 4 * Math.sqrt((prev.get(id) || 0) / maxPrev);
+        c.lineWidth = lw;
+        c.beginPath(); c.moveTo(X(born), y); c.lineTo(X(end), y); c.stroke();
+        if (dead) {
+            c.lineWidth = 1;
+            c.beginPath(); c.moveTo(X(end), y - 2.5); c.lineTo(X(end), y + 2.5); c.stroke();
         } else {
-            x += (Math.random() - 0.5) * 60;
-            y += (Math.random() - 0.5) * 60;
-        }
-        positions.set(id, { x, y, vx: 0, vy: 0 });
-    }
-    for (const id of Array.from(positions.keys())) {
-        if (!aliveSet.has(id)) {
-            positions.delete(id);
-            changed = true;
-        }
-    }
-    if (changed) {
-        _forestLayout.cooling = Math.max(_forestLayout.cooling, FOREST_COOLING_RESEED);
-    }
-}
-
-// One Fruchterman-Reingold-flavoured step: pairwise repulsion, edge
-// attraction to nearest alive ancestor(s), weak center pull, integration,
-// damping, bounds clamp, then cooling decay. Bails early when cooling is
-// below FOREST_COOLING_MIN — the layout has settled.
-function stepForestLayout(aliveIds, registry, w, h) {
-    if (_forestLayout.cooling < FOREST_COOLING_MIN) return;
-    const positions = _forestLayout.positions;
-    const cx = w / 2;
-    const cy = h / 2;
-    const aliveSet = new Set(aliveIds);
-
-    // Repulsion — every pair pushes apart. O(n²) but n is bounded by the
-    // alive strain count which sits in the dozens for realistic runs.
-    for (let i = 0; i < aliveIds.length; i++) {
-        const a = positions.get(aliveIds[i]);
-        if (!a) continue;
-        for (let j = i + 1; j < aliveIds.length; j++) {
-            const b = positions.get(aliveIds[j]);
-            if (!b) continue;
-            const dx = a.x - b.x;
-            const dy = a.y - b.y;
-            let d2 = dx * dx + dy * dy;
-            if (d2 < 1) d2 = 1;
-            const d = Math.sqrt(d2);
-            const force = FOREST_REPULSION / d2;
-            const fx = (dx / d) * force;
-            const fy = (dy / d) * force;
-            a.vx += fx; a.vy += fy;
-            b.vx -= fx; b.vy -= fy;
-        }
-    }
-
-    // Attraction (Hooke) to alive parents + weak center pull. Edges go to
-    // nearest alive ancestor on each parent chain.
-    for (let i = 0; i < aliveIds.length; i++) {
-        const id = aliveIds[i];
-        const a = positions.get(id);
-        if (!a) continue;
-        const pA = nearestAliveAncestor(registry, id, aliveSet);
-        const pB = nearestAliveAncestor2(registry, id, aliveSet);
-        if (pA !== -1) {
-            const p = positions.get(pA);
-            if (p) {
-                const dx = p.x - a.x;
-                const dy = p.y - a.y;
-                const d = Math.sqrt(dx * dx + dy * dy) || 1;
-                const force = FOREST_SPRING_K * (d - FOREST_SPRING_LEN);
-                const fx = (dx / d) * force;
-                const fy = (dy / d) * force;
-                a.vx += fx; a.vy += fy;
-                p.vx -= fx; p.vy -= fy;
+            tipSwatch(c, X(end) + 7, y, Math.min(5, rowH * 0.45), st, ink);
+            if (rowH >= 9) {
+                c.font = `italic 11px ${_FONT.text}`; c.fillStyle = id === selectedId ? P.accent : P.textSecondary;
+                c.textAlign = 'left'; c.textBaseline = 'middle';
+                c.fillText(registry.names[id], X(end) + 14, y + 0.5);
             }
-        }
-        if (pB !== -1 && pB !== pA) {
-            const p = positions.get(pB);
-            if (p) {
-                const dx = p.x - a.x;
-                const dy = p.y - a.y;
-                const d = Math.sqrt(dx * dx + dy * dy) || 1;
-                // Half-strength on the parent2 edge so hybrids don't get
-                // double the spring pull as point mutants.
-                const force = 0.5 * FOREST_SPRING_K * (d - FOREST_SPRING_LEN);
-                const fx = (dx / d) * force;
-                const fy = (dy / d) * force;
-                a.vx += fx; a.vy += fy;
-                p.vx -= fx; p.vy -= fy;
-            }
-        }
-        a.vx += (cx - a.x) * FOREST_CENTER_PULL;
-        a.vy += (cy - a.y) * FOREST_CENTER_PULL;
-    }
-
-    // Integrate + damp + bounds clamp.
-    const step = _forestLayout.cooling;
-    for (const id of aliveIds) {
-        const p = positions.get(id);
-        if (!p) continue;
-        p.x += p.vx * step;
-        p.y += p.vy * step;
-        p.vx *= FOREST_DAMPING;
-        p.vy *= FOREST_DAMPING;
-        if (p.x < 10) p.x = 10;
-        if (p.y < 10) p.y = 10;
-        if (p.x > w - 10) p.x = w - 10;
-        if (p.y > h - 10) p.y = h - 10;
-    }
-
-    _forestLayout.cooling *= FOREST_COOLING_DECAY;
-}
-
-// Draw the forest. Edges underlay nodes; hybrid parent2 edges are dashed
-// so they read as "secondary parentage" without needing a separate hue.
-// Node radius scales with log(1 + prevalence count) so dominant strains
-// pop visually.
-function renderForest(canvas, aliveIds, prevalence, registry, selectedId) {
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    // Shared util signature is (canvas, ctx, opts) — the second positional
-    // arg is the rendering context. Sets the transform to dpr-scale so we
-    // draw in CSS pixels regardless of devicePixelRatio.
-    if (typeof window !== 'undefined' && typeof window.resizeCanvasDPR === 'function') {
-        window.resizeCanvasDPR(canvas, ctx);
-    }
-    const w = canvas.clientWidth || 1;
-    const h = canvas.clientHeight || 1;
-    ctx.clearRect(0, 0, w, h);
-
-    const prevById = new Map();
-    for (const row of prevalence) prevById.set(row.id, row.count);
-    const positions = _forestLayout.positions;
-    const aliveSet = new Set(aliveIds);
-
-    // Edge colour reads from a CSS variable so light/dark themes pick it
-    // up automatically. We compute on the canvas because getComputedStyle
-    // is cheap once per render.
-    let edgeColor = 'rgba(127,127,127,0.45)';
-    if (typeof window !== 'undefined' && window.getComputedStyle) {
-        const cs = window.getComputedStyle(canvas);
-        const v = cs.getPropertyValue('--text-secondary')
-            || cs.getPropertyValue('--text-muted');
-        if (v) edgeColor = v.trim() || edgeColor;
-    }
-    ctx.strokeStyle = edgeColor;
-    ctx.lineWidth = 1;
-
-    for (const id of aliveIds) {
-        const a = positions.get(id);
-        if (!a) continue;
-        const pA = nearestAliveAncestor(registry, id, aliveSet);
-        if (pA !== -1) {
-            const p = positions.get(pA);
-            if (p) {
-                ctx.setLineDash([]);
-                ctx.beginPath();
-                ctx.moveTo(p.x, p.y);
-                ctx.lineTo(a.x, a.y);
-                ctx.stroke();
-            }
-        }
-        const pB = nearestAliveAncestor2(registry, id, aliveSet);
-        if (pB !== -1 && pB !== pA) {
-            const p = positions.get(pB);
-            if (p) {
-                ctx.setLineDash([3, 3]);
-                ctx.beginPath();
-                ctx.moveTo(p.x, p.y);
-                ctx.lineTo(a.x, a.y);
-                ctx.stroke();
-                ctx.setLineDash([]);
-            }
-        }
-    }
-
-    for (const id of aliveIds) {
-        const p = positions.get(id);
-        if (!p) continue;
-        const count = prevById.get(id) || 0;
-        const r = Math.min(
-            FOREST_NODE_MAX_RADIUS,
-            FOREST_NODE_MIN_RADIUS + Math.log(1 + count) * 1.4
-        );
-        ctx.fillStyle = strainHsl(id);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        if (id === selectedId) {
-            // Selection ring — reuses the strain's own hue at higher
-            // saturation so it stays distinct from the fill.
-            ctx.strokeStyle = `hsl(${strainHue(id).toFixed(2)}, 80%, 35%)`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = edgeColor;
         }
     }
 }
 
-// Hit-test the alive-strain positions against a CSS-pixel click point.
-// Returns the closest strain id within FOREST_CLICK_RADIUS_SQ², or -1.
-function pickForestNode(px, py) {
-    const positions = _forestLayout.positions;
-    let bestId = -1;
-    let bestD2 = FOREST_CLICK_RADIUS_SQ;
-    for (const [id, p] of positions) {
-        const dx = p.x - px;
-        const dy = p.y - py;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; bestId = id; }
-    }
-    return bestId;
+function tipSwatch(c, x, y, r, st, ink) {
+    c.save();
+    c.beginPath();
+    const hh = r * 0.866;
+    c.moveTo(x, y - r); c.lineTo(x + hh, y - r / 2); c.lineTo(x + hh, y + r / 2); c.lineTo(x, y + r); c.lineTo(x - hh, y + r / 2); c.lineTo(x - hh, y - r / 2); c.closePath();
+    c.clip();
+    c.strokeStyle = ink; c.lineWidth = 1;
+    const a = st.angle * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a);
+    c.beginPath();
+    for (let s = -r; s <= r; s += 2.2) { c.moveTo(x - uy * s - ux * r * 1.5, y + ux * s - uy * r * 1.5); c.lineTo(x - uy * s + ux * r * 1.5, y + ux * s + uy * r * 1.5); }
+    c.stroke();
+    c.restore();
+}
+
+function rgbaHex(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function pickPhylo(px, py) {
+    const { rows, rowH, top } = _phylo;
+    const i = Math.floor((py - top) / rowH);
+    return i >= 0 && i < rows.length ? rows[i] : -1;
 }
 
 // Public hook for the panel's selection flow — mark a row active, refresh
@@ -764,10 +592,12 @@ function buildRow(id, name, panelEl, onClick) {
     const el = document.createElement('div');
     el.className = 'strain-row';
     el.dataset.strainId = String(id);
-    el.style.setProperty('--strain-color', strainHsl(id));
+    el.style.setProperty('--strain-color', `var(${strainInkVar(id)})`);
 
     const swatch = document.createElement('span');
     swatch.className = 'strain-swatch';
+    const st = strainStyle(id);
+    swatch.style.background = `repeating-linear-gradient(${st.angle}deg, var(${strainInkVar(id)}) 0 1px, transparent 1px 3px)`;
     el.appendChild(swatch);
 
     const nameEl = document.createElement('span');
@@ -820,8 +650,9 @@ function buildRow(id, name, panelEl, onClick) {
  * @param {Array<{id:number, name:string, count:number, fraction:number}>} prevalence
  * @param {object} registry — for detail-block parent lookups
  * @param {(strainId:number) => void} [onClick]
+ * @param {number} [tick] — today, the right edge of the phylogeny's time axis
  */
-export function renderStrainPanel(panelEl, prevalence, registry, onClick) {
+export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) {
     if (!panelEl) return;
     if (panelEl.dataset.lineageReady !== '1') {
         buildPanelSkeleton(panelEl);
@@ -969,33 +800,13 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick) {
         detailEl.style.display = 'none';
     }
 
-    // ── Phase D: force-directed forest ─────────────────────────────────────
-    //
-    // "Alive" for forest purposes = strains the registry has NOT tombstoned
-    // (Phase B). A strain may have prevalence 0 (no actively-transmitting
-    // cells right now) but still be alive if some cell carries it in memory
-    // (M / R+CARRIER / D+F / vax slots). The B sweep tombstones only when
-    // no slot of any cell holds the id — so registry liveness is the right
-    // signal for what to render in the lineage forest.
+    // ── Phylogeny ──
     if (registry && forestEl) {
-        const registrySize = strainCount(registry);
-        const forestAlive = [];
-        for (let id = 0; id < registrySize; id++) {
-            if (!isExtinct(registry, id)) forestAlive.push(id);
-        }
-        const now = (typeof performance !== 'undefined' && performance.now)
-            ? performance.now()
-            : Date.now();
-        const forestSignature = forestAlive.join(',') + '|sel=' + (activeId === null ? '' : activeId);
-        const due = now - refs.lastForestDraw >= 100;
-        const force = refs.lastForestSignature !== forestSignature;
-        if (due || force) {
-            const w = forestEl.clientWidth  || 1;
-            const h = forestEl.clientHeight || 1;
-            ensureForestPositions(forestAlive, registry, w, h);
-            stepForestLayout(forestAlive, registry, w, h);
-            renderForest(forestEl, forestAlive, prevalence, registry, activeId);
-            refs.lastForestSignature = forestSignature;
+        const now = performance.now();
+        const signature = strainCount(registry) + '|' + countLiving(registry) + '|' + (activeId === null ? '' : activeId) + '|' + document.documentElement.dataset.theme;
+        if (now - refs.lastForestDraw >= 250 || refs.lastForestSignature !== signature) {
+            renderPhylogeny(forestEl, registry, prevalence, activeId, tick);
+            refs.lastForestSignature = signature;
             refs.lastForestDraw = now;
         }
     }

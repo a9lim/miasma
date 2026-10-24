@@ -59,13 +59,12 @@ export const Animal = Object.freeze({
 });
 
 // ─── Topology enum ───
+// The four surfaces: no gluing, or all three edge pairs glued (topology.js).
 export const Topology = Object.freeze({
-    PLANE:    0,
-    CYLINDER: 1,
-    TORUS:    2,
-    MOBIUS:   3,
-    KLEIN:    4,
-    RP2:      5
+    PLANE: 0,
+    TORUS: 1,
+    KLEIN: 2,
+    RP2:   3
 });
 
 // ─── ViewMode enum ───
@@ -78,16 +77,25 @@ export const ViewMode = Object.freeze({
     SUSCEPTIBILITY: 'susceptibility'
 });
 
-// Map data-topology string → Topology enum value.
+// Map a data-topology / ?mi= string to the Topology enum. Anything else,
+// including the retired 'cylinder' and 'mobius', falls back to the default.
 export function topoFromString(s) {
     switch (s) {
-        case 'plane':    return Topology.PLANE;
-        case 'cylinder': return Topology.CYLINDER;
-        case 'torus':    return Topology.TORUS;
-        case 'mobius':   return Topology.MOBIUS;
-        case 'klein':    return Topology.KLEIN;
-        case 'rp2':      return Topology.RP2;
-        default:         return Topology.TORUS;
+        case 'plane': return Topology.PLANE;
+        case 'torus': return Topology.TORUS;
+        case 'klein': return Topology.KLEIN;
+        case 'rp2':   return Topology.RP2;
+        default:      return DEFAULTS.topology;
+    }
+}
+
+/** Topology enum → its data-topology string. */
+export function topoToString(t) {
+    switch (t) {
+        case Topology.PLANE: return 'plane';
+        case Topology.KLEIN: return 'klein';
+        case Topology.RP2:   return 'rp2';
+        default:             return 'torus';
     }
 }
 

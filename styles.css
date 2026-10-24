@@ -1,565 +1,588 @@
 /* ═══════════════════════════════════════════════════════════════
-   styles.css — Project-specific overrides for miasma.
-   Shared patterns (glass, tool-btn, layout tokens) in /shared/base.css.
-   All colors via CSS vars injected by shared/tokens.js and colors.js.
-   Compartment colors: --epi-s / -e / -i / -r / -d / -v / -m / -z
-                       plus -wash (0.18α) and -tint (0.10α) variants.
-   Type is Newsreader (--font-text) throughout; labels are sentence case.
+   styles.css — Miasma, the atlas.
+   The page is a plate and its margin: the plate (canvas, zoom and the
+   figure caption) fills the left, and a hairline margin column on the
+   right holds the surface picker, the run controls and four panels.
+   On phones the margin moves under the plate. No surfaces of their own:
+   everything sits on the paper (--bg-canvas), divided by 1px rules.
+   Shared: the colophon and caption (base.css), about panel, toasts,
+   .tool-btn, .mode-toggles. Everything else here is Miasma's own.
    ═══════════════════════════════════════════════════════════════ */
 
-/* ───── Base — full-viewport app shell ───── */
 html {
   font-size: clamp(14px, 1.5vw, 16px);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* ───── Speed button — widen for fractional speeds (0.25x, 0.5x) so the
-   four-character label doesn't clip the fixed 34px tool-btn box. Shared
-   .tool-btn pins width:34px; we override with width:auto + a side-pad. ───── */
-#speed-btn {
-  width: auto;
-  padding: 0 0.45rem;
+body.sim-body {
+  background: var(--bg-canvas);
+  width: 100%;
+  --margin-w: 368px;
+  --plate-top: 58px;
 }
 
-body {
+/* ───── Layout ───── */
+.atlas {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--margin-w);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.atlas.margin-closed { grid-template-columns: minmax(0, 1fr) 0; }
+.atlas.margin-closed .margin { visibility: hidden; }
+
+.plate {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-
-/* ═══════════════════════════════════════
-   MAIN LAYOUT — full-viewport canvas behind HUD sidebar/toolbar.
-   ═══════════════════════════════════════ */
-main {
-  flex: 1;
-  min-height: 0;
+/* The lattice is drawn by WebGPU on #plate-gpu; #sim-canvas above it (2D)
+   carries edges, labels and the plate furniture, and takes the pointer.
+   Without WebGPU, #sim-canvas draws everything. */
+.plate-stage {
   position: relative;
-  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-
-/* ═══════════════════════════════════════
-   CANVAS CONTAINER
-   ═══════════════════════════════════════ */
-#sim-container {
+.plate-stage canvas {
   position: absolute;
   inset: 0;
-  background: var(--bg-canvas);
-  cursor: crosshair;
-  touch-action: none;
-  overflow: hidden;
-  transition: background 0.3s var(--ease-out);
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-#sim-container.pan-mode { cursor: grab; }
-#sim-container.panning  { cursor: grabbing; }
+#plate-gpu { visibility: hidden; }
+.gpu #plate-gpu { visibility: visible; }
 
 #sim-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
   touch-action: none;
+  cursor: crosshair;
 }
 
-
-/* ═══════════════════════════════════════
-   THEME TOGGLE ICONS
-   ═══════════════════════════════════════ */
-#theme-btn .icon-auto,
-#theme-btn .icon-sun,
-#theme-btn .icon-moon { display: none; }
-
-#theme-btn[data-theme="auto"]  .icon-auto { display: block; }
-#theme-btn[data-theme="light"] .icon-sun  { display: block; }
-#theme-btn[data-theme="dark"]  .icon-moon { display: block; }
-
-
-/* ═══════════════════════════════════════
-   COMPARTMENT STAT READOUTS
-   Reuses .stat-value / .stat-label from shared-base.css.
-   Per-compartment color via --stat-color.
-   ═══════════════════════════════════════ */
-.stat-row[data-compartment="S"]     { --stat-color: var(--epi-s); }
-.stat-row[data-compartment="E"]     { --stat-color: var(--epi-e); }
-.stat-row[data-compartment="I"]     { --stat-color: var(--epi-i); }
-.stat-row[data-compartment="R"]     { --stat-color: var(--epi-r); }
-.stat-row[data-compartment="D"]     { --stat-color: var(--epi-d); }
-.stat-row[data-compartment="V"]     { --stat-color: var(--epi-v); }
-.stat-row[data-compartment="M"]     { --stat-color: var(--epi-m); }
-.stat-row[data-compartment="Z"]     { --stat-color: var(--epi-z); }
-.stat-row[data-compartment="empty"] { --stat-color: var(--text-secondary); }
-
-/* Dark theme: --epi-d collapses to canvas background so D cells render as
-   "holes" — but the same color on text disappears against the panel. Swap
-   in --text for the D row's label/value so the row stays readable; we lose
-   the per-compartment hue for D in dark mode, which is unavoidable when the
-   hue IS the background. */
-:root[data-theme="dark"] .stat-row[data-compartment="D"] { --stat-color: var(--text); }
-
-.stat-row[data-compartment] .stat-value,
-.stat-row[data-compartment] .stat-label { color: var(--stat-color); }
-
-/* Sub-rows (Latent under E, Carrier under R, Infectious-corpse under D)
-   inherit --stat-color from their parent compartment via [data-compartment]
-   above. Override .stat-sub's muted defaults so the label/value stay on the
-   parent's hue — slight alpha softening keeps the visual hierarchy without
-   washing the color out. */
-.stat-sub[data-compartment] .stat-label,
-.stat-sub[data-compartment] .stat-value { color: var(--stat-color); opacity: 0.85; }
-
-/* Dim zero-count rows so non-zero entries stand out */
-.stat-row[data-zero="true"] { opacity: 0.4; }
-
-/* Animal-reservoir census group. The animal S/I/R/D rows reuse the --epi-*
-   hues via [data-compartment] above (matching the animal-dot overlay). An
-   italic label separates the group from the human compartments above it —
-   spacing + label, no container border. */
-.stat-animal-group {
-  margin-top: 0.65rem;
-}
-
-.stat-subhead {
-  font-family: var(--font-text);
-  font-style: italic;
-  font-weight: 400;
-  font-size: var(--font-base);
-  line-height: 1.4;
-  color: var(--text-muted);
-  margin-bottom: 0.25rem;
-}
-
-
-/* ═══════════════════════════════════════
-   STRAIN REGISTRY PANEL — prevalence bars
-   ═══════════════════════════════════════ */
-.strain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.strain-row {
-  display: grid;
-  grid-template-columns: 10px 1fr auto;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.25rem 0.35rem;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background 0.2s var(--ease-out);
-}
-
-.strain-row:hover { background: var(--bg-hover); }
-
-.strain-row.active { background: var(--accent-subtle); }
-
-.strain-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--strain-color, var(--epi-i));
-}
-
-.strain-name {
-  font-family: var(--font-text);
-  font-size: var(--font-sm);
-  color: var(--text);
-  white-space: nowrap;
+.plate-caption {
+  /* a fixed three-line block, so the plate never re-fits as the text changes */
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  height: calc(3 * 1.45em);
+  margin: 0;
+  padding: 0.35rem 22px 0.75rem;
+  max-width: 64rem;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
-.strain-prev {
-  font-family: var(--font-text);
-  font-size: var(--font-sm);
-  font-variant-numeric: lining-nums tabular-nums;
-  color: var(--text-muted);
-}
-
-.strain-bar {
-  grid-column: 1 / -1;
-  height: 3px;
-  background: var(--strain-bar-bg);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.strain-bar-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--strain-color, var(--epi-i));
-  transition: width 0.3s var(--ease-out);
-}
-
-/* Phase D: force-directed strain forest at the top of the strain panel.
-   Replaces the Phase 8 ancestor-chain canvas (`.lineage-tree-canvas`) which
-   was removed in Phase C. Muted track-coloured background matches the time-
-   series chart aesthetic; fixed CSS height (the canvas backing buffer is
-   sized by resizeCanvasDPR). cursor: pointer because the canvas is
-   click-targetable — each node selects the corresponding strain. */
-.strain-forest-canvas {
-  display: block;
-  width: 100%;
-  height: 200px;
-  margin-bottom: 0.5rem;
-  background: var(--ts-track);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-
-/* ═══════════════════════════════════════
-   TIME SERIES PANEL — Compartments-tab chart
-   ═══════════════════════════════════════ */
-/* The stacked compartment chart docks at the top of the sidebar's Compartments
-   tab. Plain block, full panel width, fixed 16:9 chart area; the human
-   compartment census stacks below it. The --bg-canvas fill matches the chart's
-   "empty" band (also --bg-canvas) so unfilled headroom above the stack reads
-   as depopulated land, the same ground the map shows through empty cells. */
-#timeseries-panel {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  margin-bottom: 0.75rem;
-  border-radius: var(--radius);
-  overflow: hidden;
+.plate-zoom {
+  position: absolute;
+  z-index: 2;
+  left: 18px;
+  top: 64px;
   background: var(--bg-canvas);
-}
-
-/* Settings tab stacks four sections (presets, surface/map view, toggles,
-   parameters); a gap between them keeps each section label clear of the
-   controls above it. */
-.settings-section + .settings-section { margin-top: 0.85rem; }
-
-/* Surface and map-view controls live in Settings. */
-.settings-map-controls {
   display: flex;
   flex-direction: column;
-}
-
-.settings-mode-group {
-  width: 100%;
-  justify-content: stretch;
-}
-
-.settings-mode-group .mode-btn {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0.25rem 0.25rem;
-  font-size: var(--font-sm);
-}
-
-/* Phase-15: Advanced Parameters section — shoals-style inline collapsible.
-   The toggle button spans the panel width; the section underneath holds the
-   slider rows and animates in/out via .hidden (display:none). */
-.advanced-wrap {
-  margin-top: 0.5rem;
-}
-
-.advanced-toggle-btn {
-  width: 100%;
-  font-family: var(--font-text);
-  font-size: var(--font-base);
-  padding: 0.5rem 0.75rem;
-  font-weight: 500;
-}
-
-.advanced-toggle-btn.active {
-  color: var(--text-on-accent);
-  background: var(--accent);
-}
-
-.advanced-section {
-  margin-top: 0.4rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.advanced-section.hidden { display: none; }
-
-/* Slider rows (global parameters and the per-strain genome editor): a fixed
-   label / slider / value grid so every track starts and ends at the same x
-   whatever the label or readout width. */
-#dashboard .settings-dd-row[data-param] {
-  display: grid;
-  grid-template-columns: 10rem minmax(0, 1fr) 3.3rem;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 2px;
 }
 
-#dashboard .settings-dd-row[data-param] .settings-dd-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.zoom-level {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  font-variant-numeric: lining-nums tabular-nums;
+  padding: 1px 0;
+  min-width: 2.8em;
+  text-align: center;
 }
 
-/* The shared .tool-btn pins a 34px square; a text button needs its own width. */
-.settings-dd-row[data-role="reset"] .tool-btn {
-  width: 100%;
-  padding: 0 0.75rem;
+/* ───── Hairline buttons ───── */
+.hair-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
   font-family: var(--font-text);
   font-size: var(--font-base);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-#timeseries-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-
-/* (Removed) Brush size indicator — the DOM circle hovering above the canvas
-   was replaced by a render-pass overlay that tints the actual cells under
-   the brush footprint. See renderPaintOverlay() in src/render.js. */
-
-
-/* ═══════════════════════════════════════
-   PAINT MODE — Interventions tab UI
-   3×2 grid of buttons (sidebar is narrow; bindModeGroup's single-row
-   sliding indicator doesn't tolerate wrapping). Per-mode active accent
-   recolors the active button background to its intervention target.
-   ═══════════════════════════════════════ */
-.paint-mode-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  padding: 3px;
-  margin: 0.25rem 0 0.5rem;
-  background: var(--bg-hover);
-  border-radius: var(--radius);
-}
-
-.paint-mode-btn {
-  background: transparent;
-  border: none;
-  padding: 0.45rem 0.4rem;
-  font-family: var(--font-text);
-  font-size: var(--font-sm);
-  font-weight: 500;
-  color: var(--text-muted);
   cursor: pointer;
-  border-radius: var(--radius);
-  line-height: 1;
-  transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out);
+  transition: color 0.15s var(--ease-out), opacity 0.15s var(--ease-out);
 }
 
-.paint-mode-btn:hover  { color: var(--text); }
-.paint-mode-btn.active { color: var(--text-on-accent); background: var(--accent); }
-
-/* Per-mode accent on the active button — recolor the background fill to the
-   intervention's semantic compartment color. */
-.paint-mode-btn#mode-seed.active       { background: var(--epi-i); color: var(--text-on-accent); }
-.paint-mode-btn#mode-vaccinate.active  { background: var(--epi-v); color: var(--text-on-accent); }
-.paint-mode-btn#mode-quarantine.active { background: var(--epi-e); color: var(--text-on-accent); }
-.paint-mode-btn#mode-sanitize.active   { background: var(--epi-r); color: var(--text-on-accent); }
-.paint-mode-btn#mode-cull.active       { background: var(--epi-d); color: var(--text-on-accent); }
-:root[data-theme="dark"] .paint-mode-btn#mode-cull.active { background: var(--text); }
-
-/* Brush-size mode group: same inline-mode-toggles container as the animal-
-   display row, but with explicit active styling because the three buttons
-   carry single-character labels and need a clear visual selection cue.
-   bindModeGroup isn't called here (paint.js handles clicks directly so the
-   controller stays the source of truth), so we paint the active button's
-   background inline via this rule instead of via the sliding indicator. */
-#brush-size-group {
-  flex: 0 0 auto;
-  min-width: 160px;
-}
-#brush-size-group .mode-btn {
-  padding: 0.25rem 0.7rem;
-  min-width: 38px;
-  border-radius: var(--radius);
-  font-variant-numeric: tabular-nums;
-}
-#brush-size-group .mode-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent);
+.hair-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
+.hair-btn:hover { color: var(--text); }
+.hair-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+.hair-btn:disabled { opacity: 0.28; cursor: default; }
+.hair-btn.active { color: var(--accent); }
 
-/* ═══════════════════════════════════════
-   PRESETS — preset chooser at top of Settings tab
-   Dropdown + Apply button on one row, description hint below.
-   ═══════════════════════════════════════ */
-.preset-row {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
+.speed-btn { font-variant-numeric: lining-nums tabular-nums; min-width: 42px; }
+
+.margin-open[hidden] { display: none; }
+.margin-open {
+  position: fixed;
+  right: 14px;
+  top: 14px;
+  z-index: 90;
 }
 
-.preset-select {
-  flex: 1 1 auto;
+/* ───── The margin ───── */
+.margin {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-canvas);
+  user-select: none;
 }
 
-.preset-apply-btn {
+.margin-head {
   flex: 0 0 auto;
-  width: auto;
+  padding: 14px 18px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.surface-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.surface-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 0 5px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--text-muted);
   font-family: var(--font-text);
-  font-size: var(--font-base);
-  padding: 0.45rem 0.9rem;
-  font-weight: 500;
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: color 0.15s var(--ease-out), border-color 0.15s var(--ease-out);
 }
 
-.preset-apply-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.surface-btn svg { width: 46px; height: 40px; overflow: visible; }
+.surface-btn:hover { color: var(--text); }
+.surface-btn[aria-checked="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.surface-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
 }
 
-.preset-desc {
-  margin-top: 0.25rem;
+.transport #menu-btn { margin-left: auto; }
+
+.margin-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 18px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
 }
 
-
-/* ═══════════════════════════════════════
-   RESPONSIVE — Tablet (≤ 900px)
-   Sidebar collapses to bottom-sheet (handled by .sim-panel
-   in shared-base.css); time-series shrinks above it.
-   ═══════════════════════════════════════ */
-@media (max-width: 900px) {
-  main {
-    position: fixed;
-    inset: 0;
-    height: 100%;
-  }
-
-  #sim-container {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  #dashboard { z-index: 95; }
-}
-
-
-/* ═══════════════════════════════════════
-   RESPONSIVE — Phone (≤ 600px)
-   ═══════════════════════════════════════ */
-@media (max-width: 600px) {
-  #top-bar { gap: 0.4rem; }
-}
-
-
-/* ═══════════════════════════════════════
-   ACCESSIBILITY — coarse pointer touch targets
-   ═══════════════════════════════════════ */
-@media (pointer: coarse) {
-  .tab-btn { padding: 0.65rem 0.4rem 0.55rem; }
-  .strain-row { padding: 0.4rem 0.5rem; }
-}
-
-
-/* ═══════════════════════════════════════
-   REDUCED MOTION
-   ═══════════════════════════════════════ */
-@media (prefers-reduced-motion: reduce) {
-  .strain-bar-fill { transition: none; }
-}
-
-
-/* ═══════════════════════════════════════
-   TOGGLES PANEL — Phase 3 compartment + flag toggles
-   Lives inside #tab-settings alongside the param sliders.
-   Reuses .settings-dd-row / .settings-dd-label / .checkbox-label
-   from shared-base.css; only the section headers + tiny layout
-   tweaks are sim-specific.
-   ═══════════════════════════════════════ */
-.toggles-section-header {
+.margin-tabs .tab-btn {
+  padding: 10px 0 8px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
   font-family: var(--font-text);
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: inset 0 -1px 0 transparent;
+  transition: color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+}
+
+.margin-tabs .tab-btn:hover { color: var(--text); }
+.margin-tabs .tab-btn.active { color: var(--accent); box-shadow: inset 0 -1px 0 var(--accent); }
+.margin-tabs .tab-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: -2px; }
+
+.margin-panels {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 14px 18px 28px;
+  user-select: text;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.panel-hint {
   font-style: italic;
-  font-weight: 400;
+  color: var(--text-muted);
+  font-size: var(--font-base);
+  line-height: 1.45;
+  margin: 0.6rem 0 0;
+}
+
+.toggles-section-header {
+  font-style: italic;
   font-size: var(--font-base);
   color: var(--text-muted);
-  margin-top: 0.75rem;
-  margin-bottom: 0.35rem;
+  margin: 1.1rem 0 0.4rem;
 }
 
 .toggles-section-header:first-child { margin-top: 0; }
 
-/* ───── Phase-14 restyle: worldline-style colored toggles + shoals-style
-   colored label text. The row binds a per-key `tog-{key}` class that
-   sets a single `--tog-color` CSS custom property; the .tog switch in
-   shared-base.css picks it up for the on-state gradient, and the label
-   text on the row inherits the same color. ───── */
-.toggle-row {
+.settings-section + .settings-section {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+/* ───── Segmented controls: text over a hairline, the active one underlined ───── */
+.margin .mode-toggles {
+  background: none;
+  padding: 0;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
+}
+
+.margin .mode-indicator {
+  top: auto;
+  bottom: -1px;
+  left: 3px;
+  height: 1px;
+  border-radius: 0;
+  background: var(--accent);
+}
+
+.margin .mode-btn {
+  padding: 7px 2px 6px;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+.margin .mode-btn:hover { color: var(--text); }
+.margin .mode-btn.active { color: var(--accent); }
+
+/* ───── Rows, switches and sliders ───── */
+.settings-dd-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  min-height: 30px;
+  font-size: var(--font-base);
+  color: var(--text);
 }
 
-.toggle-row .toggle-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--tog-color, var(--text));
-  /* Slightly darker base; the colored letter prefix (V — Vaccinated, ...)
-     reads as the affordance. Match the worldline-on-blue feel. */
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.2s var(--ease-out);
-}
-
-.toggle-row .tog-wrap {
+.settings-dd-row[data-param] { flex-wrap: wrap; row-gap: 0; padding: 3px 0; }
+.settings-dd-label { flex: 1 1 auto; min-width: 0; color: var(--text-secondary); }
+.settings-dd-val {
   flex: 0 0 auto;
+  font-variant-numeric: lining-nums tabular-nums;
+  color: var(--text);
+  min-width: 3.6em;
+  text-align: right;
 }
 
-/* Per-compartment color bindings. The base `.tog` rules in shared-base.css
-   read `--tog-color`; we just point it at the appropriate --epi-* var.
-   Flag-row toggles inherit their parent-compartment color (L→E, C→R, F→D)
-   so the visual register matches the rendered overlay. */
-.tog-s, .toggle-row.tog-s { --tog-color: var(--epi-s); }
-.tog-e, .toggle-row.tog-e { --tog-color: var(--epi-e); }
-.tog-i, .toggle-row.tog-i { --tog-color: var(--epi-i); }
-.tog-r, .toggle-row.tog-r { --tog-color: var(--epi-r); }
-.tog-d, .toggle-row.tog-d { --tog-color: var(--epi-d); }
+.settings-dd-row[data-param] input[type=range] { flex: 1 0 100%; }
+
+.toggle-row .toggle-label { flex: 1 1 auto; min-width: 0; cursor: pointer; color: var(--text); }
+.toggle-row.ctrl-disabled .toggle-label,
+.toggle-row.ctrl-disabled .tog { opacity: 0.38; pointer-events: none; }
+
+.tog-wrap { position: relative; flex: 0 0 auto; }
+.tog-wrap input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.tog {
+  display: inline-block;
+  position: relative;
+  width: 30px;
+  height: 14px;
+  border: 1px solid var(--text-muted);
+  cursor: pointer;
+  --tog-color: var(--accent);
+  transition: border-color 0.2s var(--ease-out);
+}
+
+.tog-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  background: var(--text-muted);
+  transition: transform 0.22s var(--ease-out), background 0.2s var(--ease-out);
+}
+
+.tog-icon { display: none; }
+.tog-wrap input:checked + .tog { border-color: var(--tog-color); }
+.tog-wrap input:checked + .tog .tog-thumb { transform: translateX(16px); background: var(--tog-color); }
+.tog-wrap input:focus-visible + .tog { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+
+.tog-s, .toggle-row.tog-s { --tog-color: var(--text); }
+.tog-e, .toggle-row.tog-e { --tog-color: var(--epi-e-solid); }
+.tog-i, .toggle-row.tog-i { --tog-color: var(--accent); }
+.tog-r, .toggle-row.tog-r { --tog-color: var(--text); }
+.tog-d, .toggle-row.tog-d { --tog-color: var(--text); }
 .tog-v, .toggle-row.tog-v { --tog-color: var(--epi-v); }
 .tog-m, .toggle-row.tog-m { --tog-color: var(--epi-m); }
 .tog-z, .toggle-row.tog-z { --tog-color: var(--epi-z); }
 
-/* D is the canvas color in dark mode (deceased cells read as holes), so as a
-   label or switch tint it would vanish into the panel. D rows use --text. */
-:root[data-theme="dark"] .tog-d,
-:root[data-theme="dark"] .toggle-row.tog-d { --tog-color: var(--text); }
+.margin input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: none;
+  cursor: pointer;
+}
 
-/* Disabled rows (via `bindDeps` enable-mode → adds `.ctrl-disabled`) get
-   muted across both label and switch. Existing shared rules already fade
-   .ctrl-disabled — repeat for the label text under our color binding. */
-.toggle-row.ctrl-disabled .toggle-label,
-.toggle-row.ctrl-disabled .tog { opacity: 0.4; pointer-events: none; }
+.margin input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--rule-soft); }
+.margin input[type=range]::-moz-range-track { height: 1px; background: var(--rule-soft); }
+.margin input[type=range]::-moz-range-progress { height: 1px; background: var(--text-muted); }
+.margin input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3px;
+  height: 13px;
+  margin-top: -6px;
+  border: 0;
+  border-radius: 0;
+  background: var(--text);
+}
+.margin input[type=range]::-moz-range-thumb { width: 3px; height: 13px; border: 0; border-radius: 0; background: var(--text); }
+.margin input[type=range]:focus-visible { outline: none; }
+.margin input[type=range]:focus-visible::-webkit-slider-thumb { background: var(--accent); }
+.margin input[type=range]:focus-visible::-moz-range-thumb { background: var(--accent); }
 
-/* Animal-display row uses the inline mode-group layout — sits the buttons
-   on the right of the label and gives them the same tinted feel as the
-   topology / view-mode toggles. */
-.animal-display-row {
+/* Buttons built by the panels (preset apply, advanced, reset) */
+.margin .tool-btn {
+  width: auto;
+  height: 28px;
+  padding: 0 2px;
+  font-family: var(--font-text);
+  font-size: var(--font-base);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--rule-soft);
+  border-radius: 0;
+}
+
+.margin .tool-btn:hover { color: var(--text); border-bottom-color: var(--text); }
+.margin .tool-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.advanced-wrap { margin-top: 0.4rem; }
+.advanced-section { margin-top: 0.5rem; }
+.advanced-section.hidden { display: none; }
+.advanced-section .toggles-section-header { margin-top: 0.9rem; }
+
+/* ───── Preset dropdown (shared/dropdown.js markup) ───── */
+.preset-row { gap: 0.6rem; }
+.sim-select { width: 100%; font: inherit; }
+.sim-dropdown { position: relative; flex: 1 1 auto; min-width: 0; }
+.sim-dropdown-trigger {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  width: 100%;
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--rule-soft);
+  background: none;
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: var(--font-base);
+  cursor: pointer;
+  text-align: left;
 }
+.sim-dropdown-trigger:hover,
+.sim-dropdown.open .sim-dropdown-trigger { border-bottom-color: var(--text); }
+.sim-dropdown-trigger:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+.sim-dropdown-chevron { width: 7px; height: 7px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: translateY(-2px) rotate(45deg); margin-right: 4px; }
+.sim-dropdown-list {
+  display: none;
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-canvas);
+  border: 1px solid var(--rule);
+  padding: 4px 0;
+}
+.sim-dropdown.open .sim-dropdown-list { display: block; }
+.sim-dropdown-item { padding: 5px 10px; font-size: var(--font-base); color: var(--text-secondary); cursor: pointer; }
+.sim-dropdown-item:hover,
+.sim-dropdown-item.focused { color: var(--text); background: var(--bg-hover); }
+.sim-dropdown-item.selected { color: var(--accent); }
+.sim-dropdown-item.disabled { opacity: 0.4; cursor: default; }
+.preset-desc { display: block; color: var(--text-muted); font-style: italic; font-size: var(--font-sm); line-height: 1.45; margin-top: 0.35rem; }
 
-.inline-mode-toggles {
-  position: relative;
-  display: inline-flex;
+/* ───── Census: an agate table, each row keyed by the plate's own mark ───── */
+.stat-group { display: flex; flex-direction: column; }
+.stat-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 2px 0;
+  font-size: var(--font-base);
+}
+.stat-label { color: var(--text-secondary); display: flex; align-items: center; gap: 0.55rem; min-width: 0; }
+.stat-value { color: var(--text); font-variant-numeric: lining-nums tabular-nums; }
+.stat-sub .stat-label { padding-left: 1.55rem; font-size: var(--font-sm); color: var(--text-muted); }
+.stat-sub .stat-value { font-size: var(--font-sm); color: var(--text-muted); }
+.stat-row[data-zero="true"] { opacity: 0.42; }
+.stat-subhead { font-style: italic; color: var(--text-muted); margin: 0.9rem 0 0.2rem; }
+.stat-animal-group { margin-top: 0.5rem; }
+
+.stat-row[data-compartment]:not(.stat-sub) > .stat-label::before {
+  content: '';
   flex: 0 0 auto;
-  gap: 0;
-  padding: 2px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--bg-panel-solid) 60%, transparent);
+  width: 13px;
+  height: 13px;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: var(--sw, none);
+}
+.stat-row[data-compartment="S"] { --sw: radial-gradient(circle, var(--epi-s) 0 1.4px, transparent 1.6px); }
+.stat-row[data-compartment="E"] { --sw: var(--epi-e); }
+.stat-row[data-compartment="I"] { --sw: var(--epi-i); }
+.stat-row[data-compartment="R"] { --sw: radial-gradient(circle at 30% 35%, var(--text) 0 0.7px, transparent 0.9px) 0 0 / 4px 4px, radial-gradient(circle at 70% 75%, var(--text) 0 0.7px, transparent 0.9px) 0 0 / 5px 5px; }
+.stat-row[data-compartment="D"] { --sw: linear-gradient(45deg, transparent 44%, var(--text) 44% 56%, transparent 56%) center / 8px 8px no-repeat, linear-gradient(-45deg, transparent 44%, var(--text) 44% 56%, transparent 56%) center / 8px 8px no-repeat; }
+.stat-row[data-compartment="V"] { --sw: repeating-linear-gradient(-45deg, var(--epi-v) 0 1px, transparent 1px 3.2px); }
+.stat-row[data-compartment="M"] { --sw: radial-gradient(circle, transparent 0 2.6px, var(--epi-m) 2.7px 3.6px, transparent 3.7px); }
+.stat-row[data-compartment="Z"] { --sw: repeating-linear-gradient(45deg, var(--epi-z) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, var(--epi-z) 0 1px, transparent 1px 3px); }
+.stat-row[data-compartment="empty"] { --sw: none; }
+
+/* ───── Rose ───── */
+.rose { margin: 0 0 0.9rem; }
+#timeseries-canvas { display: block; width: 100%; aspect-ratio: 1 / 1; max-width: 330px; margin: 0 auto; }
+.rose-caption { font-size: var(--font-sm); margin-top: 0.3rem; }
+
+/* ───── Strains ───── */
+.strain-list { display: flex; flex-direction: column; margin-bottom: 0.4rem; }
+.strain-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.strain-row:hover { color: var(--text); }
+.strain-row.active { color: var(--accent); }
+.strain-swatch { width: 15px; height: 13px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.strain-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strain-prev { text-align: right; font-variant-numeric: lining-nums tabular-nums; color: var(--text); }
+.strain-bar { grid-column: 2 / 4; height: 1px; background: var(--border); position: relative; }
+.strain-bar-fill { position: absolute; left: 0; top: -0.5px; height: 2px; background: var(--strain-color, currentColor); }
+.strain-forest-canvas { display: block; width: 100%; height: 240px; margin: 0.4rem 0 0.2rem; touch-action: pan-y; }
+.strain-detail { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+
+/* ───── Paint ───── */
+.paint-mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 10px; margin: 0.2rem 0 0.6rem; }
+.paint-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 7px 0 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--font-text);
+  font-size: var(--font-base);
+  cursor: pointer;
+  text-align: left;
+}
+.paint-mode-btn::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: var(--sw, var(--rule-soft));
+}
+.paint-mode-btn:hover { color: var(--text); }
+.paint-mode-btn.active { color: var(--text); border-bottom-color: var(--text); }
+#mode-none { --sw: linear-gradient(var(--rule-soft), var(--rule-soft)); }
+#mode-seed { --sw: var(--epi-i); }
+#mode-vaccinate { --sw: repeating-linear-gradient(-45deg, var(--epi-v) 0 1px, transparent 1px 3.2px); }
+#mode-quarantine { --sw: linear-gradient(var(--bg-canvas), var(--bg-canvas)) center / 7px 7px no-repeat, var(--ink-indigo); }
+#mode-sanitize { --sw: var(--ink-verdigris); }
+#mode-cull { --sw: linear-gradient(45deg, transparent 42%, var(--text) 42% 58%, transparent 58%), linear-gradient(-45deg, transparent 42%, var(--text) 42% 58%, transparent 58%); }
+#brush-size-group { margin-top: 0.2rem; }
+
+.animal-display-row .mode-toggles { flex: 0 0 auto; min-width: 9.5rem; }
+
+/* ───── Phones and narrow windows: the margin moves under the plate ───── */
+@media (max-width: 760px) {
+  body.sim-body { --plate-top: 50px; }
+  .atlas {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 40dvh);
+  }
+  .atlas.margin-closed { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 0; }
+  .margin { border-left: 0; border-top: 1px solid var(--border); }
+  .margin-head { padding: 8px 14px 4px; display: flex; align-items: center; gap: 6px; }
+  .surface-picker { flex: 1 1 auto; gap: 0; }
+  .surface-btn svg { width: 30px; height: 26px; }
+  .surface-btn { font-size: 0.8rem; padding: 2px 0 3px; }
+  .transport { margin-top: 0; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; max-width: 128px; gap: 0; }
+  .transport .hair-btn { min-width: 32px; height: 32px; }
+  .transport #menu-btn { margin-left: 0; }
+  .margin-tabs { padding: 0 14px; gap: 16px; }
+  .margin-tabs .tab-btn { padding: 8px 0 7px; }
+  .margin-panels { padding: 10px 14px 22px; }
+  .plate-caption { padding: 0.2rem 14px 0.45rem; font-size: 0.86rem; height: calc(2 * 1.45em); -webkit-line-clamp: 2; }
+  .plate-zoom { display: none; }
+  .margin-open { top: auto; bottom: 14px; right: 12px; }
+  #timeseries-canvas { max-width: 260px; }
 }
 
-.inline-mode-toggles .mode-btn {
-  font-size: var(--font-sm);
-  padding: 0.2rem 0.55rem;
-  white-space: nowrap;
-}
-
-.inline-mode-toggles .mode-btn.active {
-  background: var(--accent);
-  color: var(--text-on-accent);
+@media (pointer: coarse) {
+  .hair-btn { min-width: 38px; height: 38px; }
+  .tog { width: 36px; height: 18px; }
+  .tog-thumb { width: 12px; height: 12px; }
+  .tog-wrap input:checked + .tog .tog-thumb { transform: translateX(16px); }
 }

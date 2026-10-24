@@ -247,7 +247,7 @@ function paintCell(grid, q, r, mode, toggles) {
  * @returns {object} controller handle (see below)
  */
 export function createPaintController(opts) {
-    const { canvas, getGrid, getToggles, getViewport, onMutate, onHover, onHistoryChange } = opts || {};
+    const { canvas, getGrid, getToggles, getViewport, pickAt, onMutate, onHover, onHistoryChange } = opts || {};
     if (!canvas) throw new Error('paint: canvas required');
     if (typeof getGrid !== 'function') throw new Error('paint: getGrid required');
     if (typeof getViewport !== 'function') throw new Error('paint: getViewport required');
@@ -446,6 +446,13 @@ export function createPaintController(opts) {
         const vp = getViewport();
         if (!grid || !vp) return null;
         const rect = canvas.getBoundingClientRect();
+        // The owner may hit-test for us (the plate maps a point on a faded
+        // copy beyond a glued edge to the world cell it shows).
+        if (pickAt) {
+            const hit = pickAt(event.clientX - rect.left, event.clientY - rect.top);
+            if (!hit || hit.q < 0 || hit.q >= grid.W || hit.r < 0 || hit.r >= grid.H) return null;
+            return grid.mask && grid.mask[grid.idx(hit.q, hit.r)] === 0 ? null : hit;
+        }
         const x = event.clientX - rect.left - vp.originX;
         const y = event.clientY - rect.top - vp.originY;
         const { q, r } = pixelToAxial(x, y, vp.hexSize);
@@ -772,10 +779,10 @@ export function buildInterventionsPanel(panelEl, controller, onChange) {
     panelEl.appendChild(buildSectionHeader('Paint mode'));
     panelEl.appendChild(buildModeRow(controller, onChange));
     panelEl.appendChild(buildHint(
-        'Click or drag on the canvas to apply the selected mode. ' +
+        'Click or drag on the plate, or on the faded copies beyond a glued edge. ' +
         'Seed places strain α infections; Vaccinate, Quarantine, ' +
         'Sanitize, and Cull act on the cells under the brush. ' +
-        'Undo / redo strokes live in the top bar.'
+        'Undo and redo sit in the run row above, until the next day.'
     ));
 
     panelEl.appendChild(buildSectionHeader('Brush'));

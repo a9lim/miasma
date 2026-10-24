@@ -1,732 +1,440 @@
-// render.js — canvas drawing for the hex grid.
+// render.js — the plate: Miasma's world drawn as an epidemiological atlas.
 //
-// Performance notes:
-// - CSS-var colors are read once per theme change via a MutationObserver on
-//   <html data-theme> rather than getComputedStyle on every render. Reading
-//   computed styles forces a synchronous style/layout pass; doing that at
-//   60 Hz was a major UI-stall source.
-// - Hex corner unit-offsets are computed once at module load. The per-cell
-//   inner loop pulls cx/cy from precomputed Float32Array caches keyed by
-//   viewport hash — no per-cell hexToPixel allocations, no per-cell trig.
-// - Fill + outline + flag/status overlays share the same precomputed
-//   geometry so the four old passes collapse into one viewport-pixel cache
-//   rebuild + tight per-cell render loops.
+// The scene is a plate in the line of John Snow's 1854 cholera map. The world
+// hexagon is drawn once per change into an offscreen tile (cells, patterns,
+// isochrones, overlays); each frame composites that tile at the world's place
+// and, faded, under each glued edge's isometry, so the world visibly carries
+// on across its edges. Edges, labels and the plate furniture (title,
+// Reference cartouche, scale bar) are drawn in screen space on top.
 //
-// View modes:
-//   compartment    — color by Compartment enum via --epi-* vars
-//   strain         — color cells with an active strain by strain-ID
-//                    hue (golden-ratio mapping)
-//   age            — green → amber → near-black ramp on age
-//   health         — red → amber → green ramp on per-cell health
-//   status         — H cyan, Q amber, others muted-slate, D dark
-//   susceptibility — red (no prior exposure) → green (saturated bloom)
+// Encodings, compartment view (every state is a pattern first, a color
+// second, so the plate survives grayscale):
+//   S  graphite dot         E  pale red          I  solid red (the disease)
+//   R  stipple              D  small cross       V  hatching (prussian)
+//   M  small ring           Z  cross-hatch (sap) EMPTY  the paper
+//   latent E: a dot in the red; carrier R: a red dot in the stipple;
+//   F-corpse: a red cross; H: a plus; Q: a cordon (hex outline).
+// Strain view hatches each carrier at its strain's angle and ink
+// (strain-style.js). Age, health and susceptibility are single-ink ramps.
+// The oncoviral preset turns the tile into an H&E-stained section (histology.js).
+//
+// This is the Canvas 2D renderer: the fallback when WebGPU is unavailable
+// (gpu-plate.js draws the same marks from a state texture). The tile is
+// redrawn only when the state, view, theme, zoom or brush changes; frames in
+// between are a handful of drawImage calls.
 
-import { Compartment, COMPARTMENT_CSS_VAR, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.js';
+import { Compartment, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.js';
+import { hexBounds } from './topology.js';
+import { strainSlot, strainStyle, STRAIN_STYLES } from './strain-style.js';
+import { drawHistology } from './histology.js';
+import { ISO_LABEL } from './isochrones.js';
 
-// ─── Color cache (theme-aware) ──────────────────────────────────────────────
-// Reading getComputedStyle is expensive (forces sync style recomputation), so
-// we resolve --epi-* + --text once and refresh only when the theme attribute
-// changes. The cache also pre-parses each color into r/g/b ints so the ramp
-// helpers don't re-parse on every cell.
+// ─── Theme ──────────────────────────────────────────────────────────────────
+let _theme = null;
+let _themeKey = '';
 
-let _colorCache = null;
-let _colorCacheTheme = null;
-
-function readCss(varName, fallback) {
-    const v = getComputedStyle(document.documentElement)
-        .getPropertyValue(varName)
-        .trim();
-    return v || fallback;
+function rgba(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function parseColor(s) {
-    if (!s) return { r: 136, g: 136, b: 136 };
-    s = s.trim();
-    if (s[0] === '#') {
-        if (s.length === 4) {
-            return {
-                r: parseInt(s[1] + s[1], 16),
-                g: parseInt(s[2] + s[2], 16),
-                b: parseInt(s[3] + s[3], 16)
-            };
-        }
-        return {
-            r: parseInt(s.substr(1, 2), 16),
-            g: parseInt(s.substr(3, 2), 16),
-            b: parseInt(s.substr(5, 2), 16)
-        };
-    }
-    if (s.startsWith('rgb')) {
-        const m = s.match(/-?\d+(?:\.\d+)?/g);
-        if (m && m.length >= 3) {
-            return {
-                r: Math.round(parseFloat(m[0])),
-                g: Math.round(parseFloat(m[1])),
-                b: Math.round(parseFloat(m[2]))
-            };
-        }
-    }
-    return { r: 136, g: 136, b: 136 };
-}
-
-function rebuildColorCache() {
-    const colors = {};
-    for (const key in COMPARTMENT_CSS_VAR) {
-        colors[key] = readCss(COMPARTMENT_CSS_VAR[key], '#888');
-    }
-    const text = readCss('--text', '#000');
-    const stroke = readCss('--hex-stroke', 'rgba(0, 0, 0, 0.06)');
-    const parsed = {
-        s: parseColor(colors[Compartment.S]),
-        e: parseColor(colors[Compartment.E]),
-        i: parseColor(colors[Compartment.I]),
-        r: parseColor(colors[Compartment.R]),
-        d: parseColor(colors[Compartment.D]),
-        v: parseColor(colors[Compartment.V]),
-        m: parseColor(colors[Compartment.M]),
-        empty: parseColor(colors[Compartment.EMPTY])
+/** The current theme's plate colors, rebuilt when <html data-theme> changes. */
+export function plateTheme() {
+    const key = document.documentElement.dataset.theme || 'light';
+    if (_theme && key === _themeKey) return _theme;
+    const P = _themePalette(), dark = key === 'dark';
+    _themeKey = key;
+    _theme = {
+        dark, P, rgba,
+        paper: P.canvas, panel: P.panelSolid, text: P.text, text2: P.textSecondary, muted: P.textMuted,
+        accent: P.accent, inks: P.inks,
+        dot: rgba(P.textMuted, dark ? 0.62 : 0.55),
+        exposed: rgba(P.accent, dark ? 0.36 : 0.3),
+        infectious: rgba(P.accent, 0.94),
+        stipple: rgba(P.text, dark ? 0.6 : 0.55),
+        cross: rgba(P.text, dark ? 0.82 : 0.86),
+        hatch: P.inks.prussian,
+        zombie: P.inks.sap,
+        maternal: P.inks.mulberry,
+        cordon: P.inks.indigo,
+        rule: rgba(P.text, 0.5),
+        ruleSoft: rgba(P.text, 0.24),
+        iso: rgba(P.text, dark ? 0.36 : 0.32),
+        isoMajor: rgba(P.text, dark ? 0.66 : 0.6)
     };
-    _colorCache = {
-        colors,
-        text,
-        stroke,
-        parsed,
-        statusBase: lerpColor(parsed.s, parsed.empty, 0.55),
-        ramps: {
-            age: makeGradient3(parsed.r, parsed.e, parsed.d),
-            health: makeGradient3(parsed.i, parsed.e, parsed.r),
-            susceptibility: makeGradient3(parsed.r, parsed.e, parsed.i)
-        }
-    };
-    _colorCacheTheme = document.documentElement.dataset.theme || '';
+    return _theme;
 }
 
-function getColors() {
-    const theme = document.documentElement.dataset.theme || '';
-    if (_colorCache === null || theme !== _colorCacheTheme) rebuildColorCache();
-    return _colorCache;
-}
+export function invalidateColorCache() { _theme = null; }
 
-// Public hook used by main.js after theme toggles so callers don't need to
-// know about the cache. Cheap; the next render is the one that pays.
-export function invalidateColorCache() {
-    _colorCache = null;
-}
-
-// One-time MutationObserver: any change to <html data-theme> invalidates the
-// cache so the next render reads the new vars. Cheaper than calling
-// invalidateColorCache from every theme handler, and means CSS-only theme
-// switches (e.g. system prefers-color-scheme follow) also work.
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
-    const mo = new MutationObserver((muts) => {
-        for (const m of muts) {
-            if (m.attributeName === 'data-theme') {
-                _colorCache = null;
-                return;
+    new MutationObserver(() => invalidateColorCache())
+        .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+
+function cellHash(n) {
+    let x = (n * 747796405 + 2891336453) >>> 0;
+    x = Math.imul((x >>> ((x >>> 28) + 4)) ^ x, 277803737) >>> 0;
+    x = ((x >>> 22) ^ x) >>> 0;
+    return x / 4294967295;
+}
+
+// ─── Geometry ───────────────────────────────────────────────────────────────
+// Cells are pointy-top hexes of circumradius rc; the world hexagon has its
+// corners at E and W, apothem apo = 1.5·rc·(R + ½) and circumradius
+// Rb = √3·rc·(R + ½).
+
+/** Pixel offset of relative axial (q, r) for cell radius rc. */
+export function axialToPx(q, r, rc) {
+    return [SQRT3 * rc * (q + r / 2), 1.5 * rc * r];
+}
+
+/** Fractional relative axial coords of a pixel offset. */
+export function pxToAxial(x, y, rc) {
+    const r = y / (1.5 * rc);
+    return [x / (SQRT3 * rc) - r / 2, r];
+}
+
+export function roundAxial(q, r) {
+    let x = Math.round(q), z = Math.round(r), y = Math.round(-q - r);
+    const dx = Math.abs(x - q), dy = Math.abs(y + q + r), dz = Math.abs(z - r);
+    if (dx > dy && dx > dz) x = -y - z;
+    else if (dy <= dz) z = -x - y;
+    return [x, z];
+}
+
+/**
+ * Fit the world hexagon into the plate frame (CSS px). Returns the base
+ * viewport { cssWidth, cssHeight, hexSize, originX, originY, frame }, where
+ * origin is the pixel of axial (0, 0) — the convention paint.js hit-tests in.
+ */
+export function computeViewport(canvas, grid, frame) {
+    const rect = canvas.getBoundingClientRect();
+    const cssWidth = rect.width || canvas.clientWidth, cssHeight = rect.height || canvas.clientHeight;
+    const f = frame || { x: 0, y: 0, w: cssWidth, h: cssHeight };
+    const { cq, cr, R } = hexBounds(grid.W, grid.H);
+    const narrow = f.w < 600;
+    const apo = Math.max(40, Math.min(f.h * (narrow ? 0.45 : 0.415), f.w * (narrow ? 0.475 : 0.43) * SQRT3 / 2));
+    const hexSize = apo / (1.5 * (R + 0.5));
+    // Shift right into any spare width so the Reference cartouche (bottom
+    // left) clears the world's south-west edge.
+    const slack = f.w - 2 * apo * 2 / SQRT3;
+    const cx = f.x + f.w / 2 + (narrow ? 0 : Math.max(0, Math.min(80, slack / 2 - 30))), cy = f.y + f.h / 2 + (narrow ? 4 : 10);
+    const [ox, oy] = axialToPx(cq, cr, hexSize);
+    return { cssWidth, cssHeight, hexSize, originX: cx - ox, originY: cy - oy, frame: f };
+}
+
+// ─── The tile ───────────────────────────────────────────────────────────────
+const tile = { c: null, x: null, w: 0, h: 0, dpr: 1, rc: 0, grid: null, px: null, py: null, mask: null };
+
+function ensureTile(grid, rc, dpr) {
+    const { R } = hexBounds(grid.W, grid.H);
+    const Rb = SQRT3 * rc * (R + 0.5), apo = 1.5 * rc * (R + 0.5);
+    const w = Math.ceil(2 * Rb + 4 * rc + 4), h = Math.ceil(2 * apo + 4 * rc + 4);
+    if (!tile.c) { tile.c = document.createElement('canvas'); tile.x = tile.c.getContext('2d'); }
+    if (tile.w !== w || tile.h !== h || tile.dpr !== dpr) {
+        tile.w = w; tile.h = h; tile.dpr = dpr;
+        tile.c.width = Math.ceil(w * dpr); tile.c.height = Math.ceil(h * dpr);
+        tile.rc = 0;
+    }
+    if (tile.rc !== rc || tile.grid !== grid) {
+        tile.rc = rc; tile.grid = grid;
+        const act = grid.activeIndices, { cq, cr } = hexBounds(grid.W, grid.H);
+        tile.px = new Float32Array(grid.W * grid.H);
+        tile.py = new Float32Array(grid.W * grid.H);
+        tile.mask = new Path2D();
+        for (let k = 0; k < act.length; k++) {
+            const i = act[k], r = (i / grid.W) | 0, q = i - r * grid.W;
+            const [x, y] = axialToPx(q - cq, r - cr, rc);
+            tile.px[i] = x; tile.py[i] = y;
+            hexPath(tile.mask, x, y, rc * 1.02);
+        }
+    }
+    return tile;
+}
+
+/** Pointy-top hex of circumradius rr, appended to a path or context. */
+export function hexPath(p, x, y, rr) {
+    const h = rr * 0.8660254;
+    p.moveTo(x, y - rr); p.lineTo(x + h, y - rr / 2); p.lineTo(x + h, y + rr / 2);
+    p.lineTo(x, y + rr); p.lineTo(x - h, y + rr / 2); p.lineTo(x - h, y - rr / 2); p.closePath();
+}
+
+// Parallel lines at `angle` (degrees) every `gap` px across the tile, through
+// whatever clip is current.
+function hatch(c, angle, gap, w, h) {
+    const a = angle * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a), L = Math.hypot(w, h) / 2 + gap;
+    c.beginPath();
+    for (let s = -L; s <= L; s += gap) {
+        const ox = -uy * s, oy = ux * s;
+        c.moveTo(ox - ux * L, oy - uy * L); c.lineTo(ox + ux * L, oy + uy * L);
+    }
+    c.stroke();
+}
+
+function fillCells(c, cells, fill, rr) {
+    if (!cells.length) return;
+    c.fillStyle = fill;
+    c.beginPath();
+    for (let k = 0; k < cells.length; k++) hexPath(c, tile.px[cells[k]], tile.py[cells[k]], rr);
+    c.fill();
+}
+
+function clipCells(c, cells, rr) {
+    c.beginPath();
+    for (let k = 0; k < cells.length; k++) hexPath(c, tile.px[cells[k]], tile.py[cells[k]], rr);
+    c.clip();
+}
+
+const PAINT_INK = { seed: 'accent', vaccinate: 'prussian', quarantine: 'indigo', sanitize: 'verdigris', cull: 'text' };
+
+/**
+ * Draw the world into the tile. opts: { mode, ageMax, animalDisplay,
+ * paintOverlay, contours, histology, dpr }.
+ */
+export function renderTile(grid, rc, opts) {
+    const dpr = opts.dpr || 1, T = ensureTile(grid, rc, dpr), t = plateTheme(), c = T.x;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, T.c.width, T.c.height);
+    c.setTransform(dpr, 0, 0, dpr, dpr * T.w / 2, dpr * T.h / 2);
+    c.save();
+    c.clip(T.mask);
+    c.fillStyle = t.paper;
+    c.fill(T.mask);
+    if (opts.histology) drawHistology(c, grid, T, rc, t, opts);
+    else drawAtlas(c, grid, T, rc, t, opts);
+    if (!opts.histology || opts.mode !== ViewMode.COMPARTMENT) drawContours(c, rc, t, opts.contours);
+    if (opts.paintOverlay && opts.paintOverlay.inside && opts.paintOverlay.mode !== 'none') drawBrush(c, grid, T, rc, t, opts.paintOverlay);
+    c.restore();
+    return T;
+}
+
+function drawAtlas(c, grid, T, rc, t, opts) {
+    const mode = opts.mode || ViewMode.COMPARTMENT, act = grid.activeIndices;
+    const comp = grid.compartment, flags = grid.flags, status = grid.status, rr = rc * 1.005;
+    const human = opts.animalDisplay !== 'only';
+    const S = [], E = [], I = [], R = [], D = [], Dc = [], V = [], M = [], Z = [], lat = [], car = [], H = [], Q = [];
+    const strains = mode === ViewMode.STRAIN ? Array.from({ length: STRAIN_STYLES }, () => []) : null;
+    const ramp = mode === ViewMode.AGE || mode === ViewMode.HEALTH || mode === ViewMode.SUSCEPTIBILITY ? [] : null;
+    for (let k = 0; k < act.length; k++) {
+        const i = act[k], x = comp[i];
+        if (x === Compartment.EMPTY) continue;
+        if (status[i] === Status.H) H.push(i); else if (status[i] === Status.Q) Q.push(i);
+        if (ramp && x !== Compartment.D) { ramp.push(i); continue; }
+        if (strains && (x === Compartment.E || x === Compartment.I || x === Compartment.Z)) {
+            const sid = dominantStrain(grid, i);
+            if (sid !== 0xFFFF) { strains[strainSlot(sid)].push(i); continue; }
+        }
+        switch (x) {
+            case Compartment.S: S.push(i); break;
+            case Compartment.E: E.push(i); if (flags[i] & Flag.LATENT) lat.push(i); break;
+            case Compartment.I: I.push(i); break;
+            case Compartment.R: R.push(i); if (flags[i] & Flag.CARRIER) car.push(i); break;
+            case Compartment.D: (flags[i] & Flag.F_CORPSE ? Dc : D).push(i); break;
+            case Compartment.V: V.push(i); break;
+            case Compartment.M: M.push(i); break;
+            case Compartment.Z: Z.push(i); break;
+        }
+    }
+    const quiet = mode === ViewMode.STATUS;    // status view mutes everything but H and Q
+    if (human) {
+        if (ramp) drawRamp(c, grid, ramp, mode, rr, t, opts);
+        // susceptible: one graphite dot per cell
+        const ds = Math.max(0.9, rc * 0.34);
+        c.fillStyle = quiet ? t.rgba(t.muted, 0.3) : t.dot;
+        c.beginPath();
+        for (const i of S) c.rect(T.px[i] - ds / 2, T.py[i] - ds / 2, ds, ds);
+        c.fill();
+        fillCells(c, E, quiet ? t.rgba(t.accent, 0.12) : t.exposed, rr);
+        fillCells(c, I, quiet ? t.rgba(t.accent, 0.3) : t.infectious, rr);
+        if (R.length) {
+            // dots at hashed spots in each cell: filling thousands of adjacent
+            // hexes with a pattern costs Canvas ~20 ms, rects under 1 ms
+            const ds = Math.max(0.9, 1.05 / T.dpr);
+            c.fillStyle = t.stipple;
+            c.beginPath();
+            for (const i of R) {
+                for (let k = 0; k < 3; k++) {
+                    const hx = cellHash(i * 3 + k) - 0.5, hy = cellHash(i * 3 + k + 101) - 0.5;
+                    c.rect(T.px[i] + hx * rc * 1.15 - ds / 2, T.py[i] + hy * rc * 1.15 - ds / 2, ds, ds);
+                }
+            }
+            c.fill();
+        }
+        if (V.length) {
+            c.save(); clipCells(c, V, rr);
+            c.strokeStyle = t.hatch; c.lineWidth = Math.max(0.7, rc * 0.2);
+            hatch(c, -45, Math.max(2.4, rc * 0.82), T.w, T.h);
+            c.restore();
+        }
+        if (Z.length) {
+            fillCells(c, Z, t.rgba(t.zombie, 0.22), rr);
+            c.save(); clipCells(c, Z, rr);
+            c.strokeStyle = t.zombie; c.lineWidth = Math.max(0.7, rc * 0.18);
+            const g = Math.max(2.4, rc * 0.8);
+            hatch(c, 45, g, T.w, T.h); hatch(c, -45, g, T.w, T.h);
+            c.restore();
+        }
+        if (strains) {
+            for (let s = 0; s < STRAIN_STYLES; s++) {
+                const cells = strains[s];
+                if (!cells.length) continue;
+                const st = strainStyle(s);
+                fillCells(c, cells, t.rgba(st.ink, 0.14), rr);
+                c.save(); clipCells(c, cells, rr);
+                c.strokeStyle = st.ink; c.lineWidth = Math.max(0.8, rc * 0.24);
+                hatch(c, st.angle, Math.max(2.4, rc * 0.78), T.w, T.h);
+                c.restore();
             }
         }
-    });
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-}
-
-// ─── Heatmap ramp helpers ───────────────────────────────────────────────────
-
-/** Linear interpolation in RGB space. t ∈ [0, 1]; returns a CSS rgb() string. */
-function lerpColor(c0, c1, t) {
-    if (t < 0) t = 0; else if (t > 1) t = 1;
-    const r = (c0.r + (c1.r - c0.r) * t) | 0;
-    const g = (c0.g + (c1.g - c0.g) * t) | 0;
-    const b = (c0.b + (c1.b - c0.b) * t) | 0;
-    return 'rgb(' + r + ',' + g + ',' + b + ')';
-}
-
-/** 3-stop gradient on t ∈ [0, 1]: c0 → c1 → c2 at t = 0, 0.5, 1. */
-function lerpColor3(c0, c1, c2, t) {
-    if (t < 0) t = 0; else if (t > 1) t = 1;
-    if (t < 0.5) return lerpColor(c0, c1, t * 2);
-    return lerpColor(c1, c2, (t - 0.5) * 2);
-}
-
-function makeGradient3(c0, c1, c2) {
-    const out = new Array(256);
-    for (let i = 0; i < 256; i++) {
-        out[i] = lerpColor3(c0, c1, c2, i / 255);
+        if (M.length) {
+            c.strokeStyle = t.maternal; c.lineWidth = Math.max(0.7, rc * 0.18);
+            c.beginPath();
+            const mr = rc * 0.42;
+            for (const i of M) { c.moveTo(T.px[i] + mr, T.py[i]); c.arc(T.px[i], T.py[i], mr, 0, Math.PI * 2); }
+            c.stroke();
+        }
+        crosses(c, D, rc, t.cross, Math.max(0.75, rc * 0.2));
+        crosses(c, Dc, rc, t.accent, Math.max(0.85, rc * 0.24));
+        if (mode === ViewMode.COMPARTMENT) {
+            const dd = Math.max(0.9, rc * 0.36);
+            c.fillStyle = t.text;
+            c.beginPath();
+            for (const i of lat) c.rect(T.px[i] - dd / 2, T.py[i] - dd / 2, dd, dd);
+            c.fill();
+            c.fillStyle = t.accent;
+            c.beginPath();
+            for (const i of car) c.rect(T.px[i] - dd / 2, T.py[i] - dd / 2, dd, dd);
+            c.fill();
+        }
     }
-    return out;
+    if (mode === ViewMode.COMPARTMENT || mode === ViewMode.STATUS) {
+        if (Q.length) {
+            c.strokeStyle = t.cordon; c.lineWidth = Math.max(0.8, rc * (quiet ? 0.3 : 0.22));
+            c.beginPath();
+            for (const i of Q) hexPath(c, T.px[i], T.py[i], rc * 0.78);
+            c.stroke();
+        }
+        if (H.length) {
+            const a = rc * 0.4;
+            c.strokeStyle = quiet ? t.text : t.cross; c.lineWidth = Math.max(0.8, rc * (quiet ? 0.3 : 0.2));
+            c.beginPath();
+            for (const i of H) { const x = T.px[i], y = T.py[i]; c.moveTo(x - a, y); c.lineTo(x + a, y); c.moveTo(x, y - a); c.lineTo(x, y + a); }
+            c.stroke();
+        }
+    }
+    if (opts.animalDisplay !== 'off' && grid.animal && rc >= 2) drawAnimals(c, grid, T, rc, t, !human);
 }
 
-const _strainFillCache = new Map();
-
-function strainFill(strainId) {
-    let fill = _strainFillCache.get(strainId);
-    if (fill !== undefined) return fill;
-    const hue = (strainId * 137.508) % 360;
-    fill = 'hsl(' + hue + ', 60%, 55%)';
-    _strainFillCache.set(strainId, fill);
-    return fill;
+function crosses(c, cells, rc, color, lw) {
+    if (!cells.length) return;
+    const a = rc * 0.4;
+    c.strokeStyle = color; c.lineWidth = lw; c.lineCap = 'round';
+    c.beginPath();
+    for (const i of cells) {
+        const x = tile.px[i], y = tile.py[i];
+        c.moveTo(x - a, y - a); c.lineTo(x + a, y + a); c.moveTo(x + a, y - a); c.lineTo(x - a, y + a);
+    }
+    c.stroke();
+    c.lineCap = 'butt';
 }
 
-// 64-bit-bloom popcount over grid.strain_hist starting at cellIdx * 8.
-function bloomPopcount8(bloom, cellIdx) {
+/** Style slot (0..7) of a cell's dominant active strain, or -1. */
+export function strainSlotOf(grid, i) {
+    const id = dominantStrain(grid, i);
+    return id === 0xFFFF ? -1 : strainSlot(id);
+}
+
+/** The ink of a paint brush's footprint. */
+export function paintInk(mode, t) {
+    const name = PAINT_INK[mode] || 'text';
+    return name === 'accent' ? t.accent : name === 'text' ? t.text : t.inks[name];
+}
+
+function dominantStrain(grid, i) {
+    const base = i * DEFAULTS.maxActiveStrains;
+    let best = 0xFFFF, load = 0;
+    for (let s = 0; s < DEFAULTS.maxActiveStrains; s++) {
+        const id = grid.strain_ids[base + s];
+        if (id === 0xFFFF) continue;
+        const l = grid.strain_loads[base + s];
+        if (l > load) { load = l; best = id; }
+    }
+    return best;
+}
+
+function bloomCount(bloom, i) {
     let n = 0;
-    const base = cellIdx * 8;
-    for (let k = 0; k < 8; k++) {
-        let b = bloom[base + k];
-        b = (b & 0x55) + ((b >>> 1) & 0x55);
-        b = (b & 0x33) + ((b >>> 2) & 0x33);
-        b = (b & 0x0f) + ((b >>> 4) & 0x0f);
-        n += b;
-    }
+    for (let k = 0; k < 8; k++) { let b = bloom[i * 8 + k]; while (b) { n += b & 1; b >>= 1; } }
     return n;
 }
 
-// ─── Hex corner unit offsets (precomputed) ──────────────────────────────────
-// Flat-top hex: corner k sits at angle (60k - 30)°. Computing the trig once
-// at module load means the per-cell hex path is just six adds — no Math.cos
-// / Math.sin / array-of-{x,y}-objects allocations.
-const HEX_UNIT_X = new Float32Array(6);
-const HEX_UNIT_Y = new Float32Array(6);
-for (let k = 0; k < 6; k++) {
-    const angle = Math.PI / 180 * (60 * k - 30);
-    HEX_UNIT_X[k] = Math.cos(angle);
-    HEX_UNIT_Y[k] = Math.sin(angle);
+// Single-ink ramps, quantized to eight steps so each step is one batched fill.
+function drawRamp(c, grid, cells, mode, rr, t, opts) {
+    const ink = mode === ViewMode.AGE ? t.inks.umber : mode === ViewMode.HEALTH ? t.inks.viridian : t.inks.prussian;
+    const bins = Array.from({ length: 8 }, () => []);
+    // age reads relative to the oldest living cell, so the ramp spans the population
+    let ageMax = 1;
+    if (mode === ViewMode.AGE) for (const i of cells) if (grid.age[i] > ageMax) ageMax = grid.age[i];
+    for (const i of cells) {
+        let v;
+        if (mode === ViewMode.AGE) v = Math.min(1, grid.age[i] / ageMax);
+        else if (mode === ViewMode.HEALTH) v = Math.max(0, Math.min(1, grid.health[i]));
+        else v = (1 - Math.min(1, bloomCount(grid.strain_hist, i) / 16)) * (grid.status[i] === Status.Q ? 0.5 : 1);
+        bins[Math.min(7, (v * 8) | 0)].push(i);
+    }
+    for (let b = 0; b < 8; b++) fillCells(c, bins[b], t.rgba(ink, 0.08 + 0.1 * b), rr);
 }
 
-/** Inline a hex path on the supplied context. cx,cy = center; size = radius. */
-function hexPathInline(ctx, cx, cy, size) {
-    ctx.moveTo(cx + HEX_UNIT_X[0] * size, cy + HEX_UNIT_Y[0] * size);
-    for (let k = 1; k < 6; k++) {
-        ctx.lineTo(cx + HEX_UNIT_X[k] * size, cy + HEX_UNIT_Y[k] * size);
-    }
-    ctx.closePath();
-}
-
-// ─── Per-cell pixel-position cache ──────────────────────────────────────────
-// Cell (q, r) → (cx, cy) depends on hexSize + originX + originY. Two Float32
-// arrays keyed by the numeric viewport components, rebuilt only when the
-// viewport changes (resize / zoom / pan). The render loop reads from these
-// directly. Hash via separate numeric fields, not a concatenated string, so
-// cache hits don't allocate a 30-char string every frame.
-
-let _posCache = null;
-let _posCacheGrid = null;
-let _posCacheHexSize = NaN;
-let _posCacheOriginX = NaN;
-let _posCacheOriginY = NaN;
-let _posCacheW = 0;
-let _posCacheH = 0;
-
-function ensurePositionCache(grid, hexSize, originX, originY) {
-    if (
-        _posCache !== null &&
-        _posCacheGrid    === grid     &&
-        _posCacheHexSize === hexSize  &&
-        _posCacheOriginX === originX  &&
-        _posCacheOriginY === originY  &&
-        _posCacheW       === grid.W   &&
-        _posCacheH       === grid.H
-    ) {
-        return _posCache;
-    }
-    const N = grid.W * grid.H;
-    // Reuse the underlying buffers when the cell count hasn't changed —
-    // pinch-zoom / pan fires this many times per second and we don't want
-    // to allocate a 50kB+ pair of Float32Arrays each time.
-    let cx, cy;
-    if (_posCache !== null && _posCache.cx.length === N) {
-        cx = _posCache.cx;
-        cy = _posCache.cy;
-    } else {
-        cx = new Float32Array(N);
-        cy = new Float32Array(N);
-    }
-    const w = SQRT3 * hexSize;
-    const h = 1.5 * hexSize;
-    const active = grid.activeIndices;
-    if (active && active.length) {
-        for (let k = 0; k < active.length; k++) {
-            const i = active[k];
-            const r = (i / grid.W) | 0;
-            const q = i - r * grid.W;
-            cx[i] = w * (q + r / 2) + originX;
-            cy[i] = h * r + originY;
+function drawAnimals(c, grid, T, rc, t, only) {
+    const an = grid.animal, act = grid.activeIndices, s = Math.max(1, rc * (only ? 0.5 : 0.34));
+    const ox = only ? 0 : rc * 0.42, oy = only ? 0 : rc * 0.36;
+    const groups = [[], [], [], [], []];
+    for (let k = 0; k < act.length; k++) { const i = act[k]; if (an[i]) groups[an[i]].push(i); }
+    const fills = [null, t.rgba(t.inks.umber, 0.75), t.accent, t.rgba(t.inks.umber, 0.35), t.text];
+    for (let a = 1; a <= 4; a++) {
+        if (!groups[a].length) continue;
+        c.fillStyle = fills[a];
+        c.beginPath();
+        // a small triangle: the reservoir's mark, distinct from the human square dot
+        for (const i of groups[a]) {
+            const x = T.px[i] + ox, y = T.py[i] + oy;
+            c.moveTo(x, y - s); c.lineTo(x + s, y + s * 0.8); c.lineTo(x - s, y + s * 0.8); c.closePath();
         }
-    } else {
-        for (let r = 0; r < grid.H; r++) {
-            const baseY = h * r + originY;
-            for (let q = 0; q < grid.W; q++) {
-                const i = r * grid.W + q;
-                cx[i] = w * (q + r / 2) + originX;
-                cy[i] = baseY;
-            }
+        c.fill();
+    }
+}
+
+function drawContours(c, rc, t, contours) {
+    if (!contours || !contours.length) return;
+    c.lineCap = 'round';
+    for (const { level, segs } of contours) {
+        const major = level % ISO_LABEL === 0;
+        c.strokeStyle = major ? t.isoMajor : t.iso;
+        c.lineWidth = major ? 1.15 : 0.75;
+        c.beginPath();
+        for (let k = 0; k < segs.length; k += 4) { c.moveTo(segs[k] * rc, segs[k + 1] * rc); c.lineTo(segs[k + 2] * rc, segs[k + 3] * rc); }
+        c.stroke();
+    }
+    c.lineCap = 'butt';
+}
+
+function drawBrush(c, grid, T, rc, t, o) {
+    const inkName = PAINT_INK[o.mode] || 'text';
+    const col = inkName === 'accent' ? t.accent : inkName === 'text' ? t.text : t.inks[inkName];
+    c.beginPath();
+    const n = o.brushSize | 0;
+    for (let dq = -n; dq <= n; dq++) {
+        for (let dr = Math.max(-n, -dq - n); dr <= Math.min(n, -dq + n); dr++) {
+            const q = o.q + dq, r = o.r + dr;
+            if (q < 0 || q >= grid.W || r < 0 || r >= grid.H) continue;
+            const i = r * grid.W + q;
+            if (grid.mask[i] === 0) continue;
+            hexPath(c, T.px[i], T.py[i], rc);
         }
     }
-    _posCache = { cx, cy };
-    _posCacheGrid    = grid;
-    _posCacheHexSize = hexSize;
-    _posCacheOriginX = originX;
-    _posCacheOriginY = originY;
-    _posCacheW       = grid.W;
-    _posCacheH       = grid.H;
-    return _posCache;
+    c.fillStyle = t.rgba(col, 0.24); c.fill();
+    c.strokeStyle = t.rgba(col, 0.9); c.lineWidth = 1.2; c.stroke();
 }
 
-// ─── Main render ────────────────────────────────────────────────────────────
-
-/**
- * Draw the grid.
- * @param {CanvasRenderingContext2D} ctx — DPR-transformed by resizeCanvasDPR
- * @param {Grid} grid
- * @param {string} mode — ViewMode value
- * @param {object} viewport — { cssWidth, cssHeight, hexSize, originX, originY }
- * @param {object} [opts] — additional render options:
- *   - animalDisplay: 'dots' | 'only' | 'off' (default 'dots')
- *   - ageMax: number — AGE view ramp saturation (default 5000)
- *   - paintOverlay: { q, r, brushSize, mode, inside } — when present and
- *     `inside` is true, the cells under the brush footprint are filled with
- *     a translucent paint-mode-accent tint. Replaces the DOM brush circle.
- */
-export function render(ctx, grid, mode, viewport, opts) {
-    const { cssWidth, cssHeight, hexSize, originX, originY } = viewport;
-    const animalDisplay = (opts && opts.animalDisplay) || 'dots';
-    const ageMax = (opts && opts.ageMax) || 5000;
-    const paintOverlay = (opts && opts.paintOverlay) || null;
-
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-    const {
-        colors,
-        text: textColor,
-        stroke: strokeColor,
-        ramps,
-        statusBase
-    } = getColors();
-
-    // Slight overscale so hex tiles butt-join without sub-pixel seams.
-    const drawSize = hexSize + 0.5;
-
-    const mask = grid.mask;
-    const compartmentArr = grid.compartment;
-    const flagsArr = grid.flags;
-    const statusArr = grid.status;
-    const ageArr = grid.age;
-    const healthArr = grid.health;
-    const strainIds = grid.strain_ids;
-    const strainLoads = grid.strain_loads;
-    const strainHist = grid.strain_hist;
-    const animalArr = grid.animal;
-    const N = grid.W * grid.H;
-    const active = grid.activeIndices;
-    const activeCount = active ? active.length : N;
-    const MAX_ACTIVE_RENDER = DEFAULTS.maxActiveStrains;
-
-    const { cx: posX, cy: posY } = ensurePositionCache(grid, hexSize, originX, originY);
-
-    // Build a per-cell fill resolver bound to the current view mode. Resolving
-    // once per render instead of once per cell saves a stack of branches in
-    // the inner loop.
-    const pickFill = buildFillResolver(mode, colors, {
-        ageArr, healthArr, strainIds, strainLoads, strainHist, statusArr,
-        ageMax, maxActive: MAX_ACTIVE_RENDER, ramps, statusBase
-    });
-
-    const drawHumanLayer = (animalDisplay !== 'only');
-
-    if (drawHumanLayer) {
-        // Single fused pass: fill each cell, then stroke its outline. The path
-        // is built once per cell and used for both ops. Empty (unoccupied)
-        // cells skip both fill AND stroke so they render transparent — the
-        // canvas ground (--bg-canvas) shows through, and there's no hex
-        // outline to read as "cell here."
-        ctx.lineWidth = 1;
-        ctx.lineJoin = 'miter';
-        ctx.strokeStyle = strokeColor;
-
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
-            if (mask && mask[i] === 0) continue;
-            const comp = compartmentArr[i];
-            if (comp === Compartment.EMPTY) continue;
-            const cx = posX[i];
-            const cy = posY[i];
-            ctx.beginPath();
-            hexPathInline(ctx, cx, cy, drawSize);
-            ctx.fillStyle = pickFill(i, comp);
-            ctx.fill();
-            ctx.stroke();
-        }
-
-        // Flag overlays (only in COMPARTMENT view — flags are modifiers on
-        // their base compartment, so other modes intentionally hide them).
-        if (mode === ViewMode.COMPARTMENT) {
-            renderFlagOverlays(ctx, grid, colors, drawSize, posX, posY, hexSize, active, activeCount);
-        }
-        // Status overlays (H badge, Q ring) render in both COMPARTMENT and
-        // STATUS views.
-        if (mode === ViewMode.COMPARTMENT || mode === ViewMode.STATUS) {
-            renderStatusOverlays(ctx, grid, textColor, drawSize, posX, posY, hexSize, active, activeCount);
-        }
-    } else {
-        // animalDisplay === 'only': skip the human-compartment fill entirely
-        // so the canvas background shows through. Animal dots draw on top.
-        // Previously we filled the inscribed region with `colors[EMPTY]`
-        // (beige) as a backdrop for dots — with EMPTY now transparent,
-        // dots read fine against the page background.
-    }
-
-    // Animal dots — three-way: 'dots' overlay, 'only' (skipped above's human
-    // pass), 'off' (skipped here). Below the min hex-size threshold the dots
-    // become indistinguishable from the cell center, so skip then too.
-    if (animalArr && hexSize >= 3 && animalDisplay !== 'off') {
-        renderAnimalDots(ctx, animalArr, mask, colors, hexSize, posX, posY, active, activeCount);
-    }
-
-    // Brush footprint overlay — translucent fill on every cell under the
-    // current brush, plus a thin outline tracing the outer edge of the
-    // footprint. Drawn last so it sits on top of every base/strain/age fill.
-    if (paintOverlay && paintOverlay.inside && paintOverlay.mode !== 'none') {
-        renderPaintOverlay(ctx, grid, paintOverlay, drawSize, posX, posY);
-    }
-}
-
-// ─── View-mode-specific fill resolvers ──────────────────────────────────────
-// Resolving (mode → fill function) once per render eliminates the per-cell
-// switch in the hot loop. Each resolver closes over the arrays it needs.
-
-function buildFillResolver(mode, colors, ctx) {
-    const { ageArr, healthArr, strainIds, strainLoads, strainHist, statusArr,
-            ageMax, maxActive, ramps, statusBase } = ctx;
-    const emptyFill = colors[Compartment.EMPTY];
-    const sFill = colors[Compartment.S];
-    const dFill = colors[Compartment.D];
-    const zFill = colors[Compartment.Z];
-    const vFill = colors[Compartment.V];
-    const mFill = colors[Compartment.M];
-    const eFill = colors[Compartment.E];
-
-    if (mode === ViewMode.STRAIN) {
-        return (i, comp) => {
-            const base = i * maxActive;
-            let bestSid = 0xFFFF;
-            let bestLoad = 0;
-            for (let s = 0; s < maxActive; s++) {
-                const sid = strainIds[base + s];
-                if (sid === 0xFFFF) continue;
-                const ld = strainLoads ? strainLoads[base + s] : 1;
-                if (ld > bestLoad) { bestLoad = ld; bestSid = sid; }
-            }
-            if (bestSid !== 0xFFFF) {
-                return strainFill(bestSid);
-            }
-            return colors[comp] || sFill;
-        };
-    }
-
-    if (mode === ViewMode.AGE) {
-        return (i, comp) => {
-            if (comp === Compartment.EMPTY) return emptyFill;
-            if (comp === Compartment.D) return dFill;
-            const a = ageArr[i];
-            const t = a >= ageMax ? 1 : (a / ageMax);
-            // young (R) → mid (E) → old (D)
-            return ramps.age[(t * 255) | 0];
-        };
-    }
-
-    if (mode === ViewMode.HEALTH) {
-        return (i, comp) => {
-            if (comp === Compartment.EMPTY) return emptyFill;
-            if (comp === Compartment.D)     return dFill;
-            if (comp === Compartment.Z)     return zFill;
-            const h = healthArr[i];
-            const t = h < 0 ? 0 : (h > 1 ? 1 : h);
-            return ramps.health[(t * 255) | 0];
-        };
-    }
-
-    if (mode === ViewMode.STATUS) {
-        // Pre-compute the muted base color (mid-mix of slate and empty). Same
-        // across cells, so no need to re-lerp per cell.
-        const baseMuted = statusBase;
-        return (i, comp) => {
-            if (comp === Compartment.EMPTY) return emptyFill;
-            if (comp === Compartment.D)     return dFill;
-            const st = statusArr[i];
-            if (st === 1) return vFill; // H → cyan
-            if (st === 2) return eFill; // Q → amber
-            return baseMuted;
-        };
-    }
-
-    if (mode === ViewMode.SUSCEPTIBILITY) {
-        return (i, comp) => {
-            if (comp === Compartment.EMPTY) return emptyFill;
-            if (comp === Compartment.D)     return dFill;
-            if (comp === Compartment.V)     return vFill;
-            if (comp === Compartment.M)     return mFill;
-            let suscept = 1;
-            if (strainHist) {
-                const pc = bloomPopcount8(strainHist, i);
-                suscept = 1 - Math.min(1, pc / 16);
-            }
-            if (statusArr[i] === 2) suscept *= 0.5;
-            return ramps.susceptibility[(suscept * 255) | 0];
-        };
-    }
-
-    // Default: COMPARTMENT view — direct table lookup, no branching.
-    return (i, comp) => colors[comp] || sFill;
-}
-
-// ─── Animal dot overlay ─────────────────────────────────────────────────────
-
-function renderAnimalDots(ctx, anim, mask, colors, hexSize, posX, posY, active, activeCount) {
-    const dotR = Math.max(1, hexSize * 0.22);
-
-    // Index dot-color by Animal enum so the inner loop avoids the if-else
-    // chain. Indices match Animal.VOID/S/I/R/D enum values.
-    const dotColors = [
-        null,                                  // VOID — never drawn
-        colors[Compartment.S],                 // S
-        colors[Compartment.I],                 // I
-        colors[Compartment.R],                 // R
-        colors[Compartment.D]                  // D
-    ];
-
-    // Group draws by color so we minimize fillStyle changes (canvas state
-    // changes are cheap individually but add up across thousands of cells).
-    const TWO_PI = Math.PI * 2;
-    for (let state = 1; state <= 4; state++) {
-        const color = dotColors[state];
-        if (!color) continue;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        let any = false;
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
-            if (mask && mask[i] === 0) continue;
-            if (anim[i] !== state) continue;
-            ctx.moveTo(posX[i] + dotR, posY[i]);
-            ctx.arc(posX[i], posY[i], dotR, 0, TWO_PI);
-            any = true;
-        }
-        if (any) ctx.fill();
-    }
-}
-
-// ─── Flag overlays (L stripes on E, C rim on R, F rim on D) ─────────────────
-
-function renderFlagOverlays(ctx, grid, colors, drawSize, posX, posY, hexSize, active, activeCount) {
-    const stripeColor = colors[Compartment.S];
-    const rimColor    = colors[Compartment.I];
-
-    // 60° stripe geometry — direction (cos60°, sin60°), normal (-sin60°, cos60°).
-    const stripeDx = 0.5;
-    const stripeDy = SQRT3 / 2;
-    const stripeNx = -SQRT3 / 2;
-    const stripeNy = 0.5;
-    const stripeHalf = drawSize * 1.2;
-    const stripeSpacing = hexSize * 0.55;
-    const stripeOffsets = [-stripeSpacing, 0, stripeSpacing];
-
-    const rimSize = drawSize * 0.82;
-
-    const compartmentArr = grid.compartment;
-    const flagsArr = grid.flags;
-
-    for (let ak = 0; ak < activeCount; ak++) {
-        const i = active ? active[ak] : ak;
-        const flags = flagsArr[i];
-        if (flags === Flag.NONE) continue;
-
-        const comp = compartmentArr[i];
-        const isLatentE  = comp === Compartment.E && (flags & Flag.LATENT);
-        const isCarrierR = comp === Compartment.R && (flags & Flag.CARRIER);
-        const isCorpseFD = comp === Compartment.D && (flags & Flag.F_CORPSE);
-        if (!isLatentE && !isCarrierR && !isCorpseFD) continue;
-
-        const cx = posX[i];
-        const cy = posY[i];
-
-        if (isLatentE) {
-            ctx.save();
-            ctx.beginPath();
-            hexPathInline(ctx, cx, cy, drawSize);
-            ctx.clip();
-            ctx.globalAlpha = 0.78;
-            ctx.strokeStyle = stripeColor;
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            for (let s = 0; s < stripeOffsets.length; s++) {
-                const off = stripeOffsets[s];
-                const ox = cx + stripeNx * off;
-                const oy = cy + stripeNy * off;
-                ctx.moveTo(ox - stripeDx * stripeHalf, oy - stripeDy * stripeHalf);
-                ctx.lineTo(ox + stripeDx * stripeHalf, oy + stripeDy * stripeHalf);
-            }
-            ctx.stroke();
-            ctx.restore();
-        } else if (isCarrierR) {
-            ctx.save();
-            ctx.globalAlpha = 0.75;
-            ctx.strokeStyle = rimColor;
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            hexPathInline(ctx, cx, cy, rimSize);
-            ctx.stroke();
-            ctx.restore();
-        } else {
-            ctx.save();
-            ctx.globalAlpha = 0.5;
-            ctx.strokeStyle = rimColor;
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            hexPathInline(ctx, cx, cy, rimSize);
-            ctx.stroke();
-            ctx.restore();
-        }
-    }
-}
-
-// ─── Status overlays (H "+" badge, Q ring) ──────────────────────────────────
-
-function renderStatusOverlays(ctx, grid, textColor, drawSize, posX, posY, hexSize, active, activeCount) {
-    const crossHalf = hexSize * 0.225;
-    const crossLineWidth = 1.2;
-    const crossAlpha = 0.85;
-    const ringAlpha = 0.55;
-    const ringLineWidth = 1.5;
-
-    const statusArr = grid.status;
-
-    // Batch Q rings into one stroke, H badges into one stroke. Same color +
-    // line settings → drastically fewer ctx state changes.
-    let anyQ = false;
-    let anyH = false;
-    for (let ak = 0; ak < activeCount; ak++) {
-        const i = active ? active[ak] : ak;
-        const s = statusArr[i];
-        if (s === Status.Q) { anyQ = true; if (anyH) break; }
-        else if (s === Status.H) { anyH = true; if (anyQ) break; }
-    }
-
-    if (anyQ) {
-        ctx.save();
-        ctx.globalAlpha = ringAlpha;
-        ctx.strokeStyle = textColor;
-        ctx.lineWidth = ringLineWidth;
-        ctx.beginPath();
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
-            if (statusArr[i] !== Status.Q) continue;
-            hexPathInline(ctx, posX[i], posY[i], drawSize);
-        }
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    if (anyH) {
-        ctx.save();
-        ctx.globalAlpha = crossAlpha;
-        ctx.strokeStyle = textColor;
-        ctx.lineWidth = crossLineWidth;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
-            if (statusArr[i] !== Status.H) continue;
-            const cx = posX[i];
-            const cy = posY[i];
-            ctx.moveTo(cx - crossHalf, cy);
-            ctx.lineTo(cx + crossHalf, cy);
-            ctx.moveTo(cx, cy - crossHalf);
-            ctx.lineTo(cx, cy + crossHalf);
-        }
-        ctx.stroke();
-        ctx.restore();
-    }
-}
-
-// ─── Brush footprint overlay ───────────────────────────────────────────────
-// Tint the cells under the current brush with the paint-mode accent color
-// so the user sees exactly which hexes a stroke would affect. Replaces the
-// old DOM .brush-indicator circle — the cell-accurate outline is the whole
-// point on a hex lattice (a circle never matches the seven/nineteen-hex
-// footprints precisely). The tint is the target compartment's data color, not
-// the theme accent.
-const PAINT_ACCENT_VARS = {
-    seed:       '--epi-i',
-    vaccinate:  '--epi-v',
-    quarantine: '--epi-e',
-    sanitize:   '--epi-r',
-    cull:       '--text'   // = --epi-d in light; --epi-d is the ground color in dark and would vanish
-};
-
-function readAccentColor(paintMode) {
-    const varName = PAINT_ACCENT_VARS[paintMode];
-    if (!varName) return '#888';
-    return readCss(varName, '#888');
-}
-
-function renderPaintOverlay(ctx, grid, overlay, drawSize, posX, posY) {
-    const { q, r, brushSize } = overlay;
-    const accent = readAccentColor(overlay.mode);
-    const parsed = parseColor(accent);
-    const fillAlpha = 0.28;
-    const strokeAlpha = 0.85;
-    const fillStyle = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${fillAlpha})`;
-    const strokeStyle = `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${strokeAlpha})`;
-
-    // Walk the (q, r) ± brushSize triangular axial bound — same enumeration
-    // as paint.js hexesInRadius, inlined to avoid the array allocation.
-    ctx.save();
-    ctx.fillStyle = fillStyle;
-    ctx.beginPath();
-    let any = false;
-    for (let dq = -brushSize; dq <= brushSize; dq++) {
-        const drLo = Math.max(-brushSize, -dq - brushSize);
-        const drHi = Math.min(brushSize,  -dq + brushSize);
-        for (let dr = drLo; dr <= drHi; dr++) {
-            const cq = q + dq;
-            const cr = r + dr;
-            if (cq < 0 || cq >= grid.W || cr < 0 || cr >= grid.H) continue;
-            const i = cr * grid.W + cq;
-            if (grid.mask && grid.mask[i] === 0) continue;
-            hexPathInline(ctx, posX[i], posY[i], drawSize);
-            any = true;
-        }
-    }
-    if (any) {
-        ctx.fill();
-        // Restroke the same path so the footprint reads as a coherent
-        // outline even when neighboring cells share edges.
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = strokeStyle;
-        ctx.stroke();
-    }
-    ctx.restore();
-}
-
-/** Compute a viewport that fits a W×H grid into the canvas. */
-export function computeViewport(canvas, grid) {
-    const rect = canvas.getBoundingClientRect();
-    const cssWidth = rect.width || canvas.clientWidth;
-    const cssHeight = rect.height || canvas.clientHeight;
-
-    const widthPerUnit  = SQRT3 * (grid.W + grid.H / 2);
-    const heightPerUnit = 1.5 * grid.H + 1;
-
-    const fitW = cssWidth  / widthPerUnit;
-    const fitH = cssHeight / heightPerUnit;
-    const hexSize = Math.max(2, Math.min(fitW, fitH));
-
-    const drawnW = SQRT3 * hexSize * (grid.W + grid.H / 2);
-    const drawnH = 1.5 * hexSize * grid.H + hexSize;
-    const originX = (cssWidth  - drawnW) / 2 + SQRT3 * hexSize / 2;
-    const originY = (cssHeight - drawnH) / 2 + hexSize;
-
-    return { cssWidth, cssHeight, hexSize, originX, originY };
-}
-
-// Re-export the default view mode so main.js can stay decoupled.
-export { ViewMode, DEFAULTS };
+export { tile as _tile };

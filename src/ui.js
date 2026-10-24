@@ -1,49 +1,112 @@
-// ui.js — control panel setup for miasma.
-// Phase 1: topology + view-mode mode-toggles, about panel.
-// Phase 2: parameter sliders in #tab-settings (built via params.buildSettingsPanel),
-// step/reset buttons wired to main-loop callbacks.
-// Phase 3: compartment / flag toggles split into their own sub-section above the
-// parameter sliders. The settings tab root is wiped once on setup and given two
-// children — a toggles container and a params container — so the two builders
-// don't clobber each other. _forms.bindDeps wiring for compartment / strain /
-// preset deps still lives in Phase 3 follow-up work inside toggles.js.
+// ui.js — the margin's controls.
+// The surface picker draws each surface as a topology textbook draws a
+// fundamental polygon: the world hexagon with chevrons on glued edges
+// (one, two or three per pair; agreeing for a translation, opposed for a
+// twist), hachured shores on open ones and circles at cone points, from the
+// same tables the plate uses. Settings holds presets, the map view, the
+// toggles and the advanced parameters; the transport row's eye jumps there.
 
-import { topoFromString, ViewMode } from './config.js';
+import { topoFromString, topoToString, ViewMode } from './config.js';
+import { SURFACES, cornerCones } from './topology.js';
 import { buildSettingsPanel, syncSliders } from './params.js';
 import { buildTogglesPanel, syncToggles } from './toggles.js';
 import { buildInterventionsPanel } from './paint.js';
 import { buildPresetsPanel } from './presets.js';
 
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+/** SVG glyph of a surface's gluing. */
+export function surfaceGlyph(topology) {
+    const S = SURFACES[topology], R = 16;
+    const svg = document.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('viewBox', '-23 -20 46 40');
+    svg.setAttribute('aria-hidden', 'true');
+    const el = (name, attrs) => {
+        const e = document.createElementNS(SVGNS, name);
+        for (const k in attrs) e.setAttribute(k, attrs[k]);
+        svg.appendChild(e);
+        return e;
+    };
+    const pt = (k) => [R * Math.cos(k * Math.PI / 3), R * Math.sin(k * Math.PI / 3)];
+    const pairOf = new Array(6).fill(null);
+    S.pairs.forEach(([e, f, kind], n) => { pairOf[e] = { n: n + 1, kind, first: true }; pairOf[f] = { n: n + 1, kind, first: false }; });
+    for (let k = 0; k < 6; k++) {
+        const [x0, y0] = pt(k), [x1, y1] = pt(k + 1), p = pairOf[k];
+        const nx = Math.cos((60 * k + 30) * Math.PI / 180), ny = Math.sin((60 * k + 30) * Math.PI / 180);
+        if (!p) {
+            el('line', { x1: x0, y1: y0, x2: x1, y2: y1, stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round' });
+            let d = '';
+            for (const u of [0.25, 0.5, 0.75]) {
+                const x = x0 + (x1 - x0) * u, y = y0 + (y1 - y0) * u;
+                d += `M${(x + nx * 1.6).toFixed(2)} ${(y + ny * 1.6).toFixed(2)}L${(x + nx * 4.2).toFixed(2)} ${(y + ny * 4.2).toFixed(2)}`;
+            }
+            el('path', { d, stroke: 'currentColor', 'stroke-width': 0.9, opacity: 0.6 });
+            continue;
+        }
+        el('line', { x1: x0, y1: y0, x2: x1, y2: y1, stroke: 'currentColor', 'stroke-width': 0.8, opacity: 0.55 });
+        let tx = x1 - x0, ty = y1 - y0;
+        const L = Math.hypot(tx, ty); tx /= L; ty /= L;
+        if (!p.first && p.kind === 'translate') { tx = -tx; ty = -ty; }
+        const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        let d = '';
+        for (let i = 0; i < p.n; i++) {
+            const o = (i - (p.n - 1) / 2) * 2.6;
+            const cx = mx + tx * o, cy = my + ty * o;
+            d += `M${(cx - tx * 1.3 - ty * 2.2).toFixed(2)} ${(cy - ty * 1.3 + tx * 2.2).toFixed(2)}` +
+                 `L${(cx + tx * 1.2).toFixed(2)} ${(cy + ty * 1.2).toFixed(2)}` +
+                 `L${(cx - tx * 1.3 + ty * 2.2).toFixed(2)} ${(cy - ty * 1.3 - tx * 2.2).toFixed(2)}`;
+        }
+        el('path', { d, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.1, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+    }
+    if (S.closed) {
+        cornerCones(topology, 59).forEach((angles, k) => {
+            if (!angles.length) return;
+            const [x, y] = pt(k);
+            el('circle', { cx: x, cy: y, r: 1.7, fill: 'var(--bg-canvas)', stroke: 'currentColor', 'stroke-width': 0.9 });
+        });
+    }
+    return svg;
+}
+
 /**
- * Wire control panel UI. The cache `$` is built in main.js; the `sim` object
- * is mutated in callbacks. The callbacks let main.js own the run-loop side
- * effects without ui.js importing anything from main.
- *
- * Returns a small handle so main.js can ask ui.js to re-sync DOM state on
- * reset (the toggles checkboxes need re-checking when the toggles object is
- * mutated back to defaults).
- *
- * @param {Object} $ — DOM cache from main.js
- * @param {Object} sim — sim state object (mutated in callbacks)
- * @param {Object} hooks — { onTopologyChange, onViewModeChange, onParamChange,
- *                          onTogglesChange, onStep, onReset, params, toggles,
- *                          settingsPanelEl, paintController,
- *                          interventionsPanelEl, onPaintChange }
- * @returns {{ resetUI: () => void }}
+ * Wire the margin's controls. `$` is main.js's DOM cache; `sim` is mutated
+ * by the callbacks. Returns { resetUI, showAbout }.
  */
 export function setupUI($, sim, hooks) {
     hooks = hooks || {};
 
-    // ── Topology mode-toggle ──
-    if ($.topologyToggles) {
-        window._forms.bindModeGroup($.topologyToggles, 'topology', (val) => {
-            const t = topoFromString(val);
-            sim.topology = t;
-            if (hooks.onTopologyChange) hooks.onTopologyChange(t);
+    // ── Surface picker ──
+    const surfaceBtns = $.topologyToggles ? [...$.topologyToggles.querySelectorAll('.surface-btn')] : [];
+    function syncSurface() {
+        const key = topoToString(sim.topology);
+        surfaceBtns.forEach((b) => {
+            const on = b.dataset.topology === key;
+            b.setAttribute('aria-checked', String(on));
+            b.tabIndex = on ? 0 : -1;
         });
     }
+    surfaceBtns.forEach((b, i) => {
+        b.prepend(surfaceGlyph(topoFromString(b.dataset.topology)));
+        b.addEventListener('click', () => {
+            const t = topoFromString(b.dataset.topology);
+            if (t === sim.topology) return;
+            sim.topology = t;
+            syncSurface();
+            if (typeof _haptics !== 'undefined') _haptics.trigger('selection');
+            if (hooks.onTopologyChange) hooks.onTopologyChange(t);
+        });
+        b.addEventListener('keydown', (e) => {
+            const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+            if (!d) return;
+            e.preventDefault();
+            const next = surfaceBtns[(i + d + surfaceBtns.length) % surfaceBtns.length];
+            next.focus();
+            next.click();
+        });
+    });
+    syncSurface();
 
-    // ── View-mode mode-toggle (Settings tab) ──
+    // ── Map view ──
     if ($.viewModeToggles) {
         window._forms.bindModeGroup($.viewModeToggles, 'viewmode', (val) => {
             sim.viewMode = val || ViewMode.COMPARTMENT;
@@ -51,176 +114,86 @@ export function setupUI($, sim, hooks) {
         });
     }
 
-    const mapControlsEl = $.mapControls
-        || ($.topologyToggles && $.topologyToggles.closest('#map-controls-section'))
-        || null;
+    const mapControlsEl = $.mapControls || null;
 
-    // ── Settings tab — presets + toggles + parameter sliders ──
-    // The tab-settings root holds three stacked sub-sections, each owned
-    // by its own builder. Build them with createElement and hand each child
-    // element to the corresponding builder. The builders wipe their own
-    // panelEl on each call, so passing them sub-containers keeps their
-    // wipes scoped.
-    let presetsEl = null;
-    let togglesEl = null;
-    let paramsEl = null;
+    // ── Settings: presets, map view, toggles, parameters ──
+    let togglesEl = null, paramsEl = null;
     const panelEl = hooks.settingsPanelEl;
     if (panelEl) {
-        // Clear the tab-settings panel once — the Phase 1 hint paragraph and
-        // any prior content are removed via node-by-node removal so we
-        // never touch HTML-string assignment.
         while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
-
-        presetsEl = document.createElement('div');
-        presetsEl.className = 'settings-section settings-presets';
-        panelEl.appendChild(presetsEl);
-
-        if (mapControlsEl) {
-            panelEl.appendChild(mapControlsEl);
-        }
-
-        togglesEl = document.createElement('div');
-        togglesEl.className = 'settings-section settings-toggles';
-        panelEl.appendChild(togglesEl);
-
-        paramsEl = document.createElement('div');
-        paramsEl.className = 'settings-section settings-params';
-        panelEl.appendChild(paramsEl);
-
-        if (hooks.onApplyPreset) {
-            buildPresetsPanel(presetsEl, hooks.onApplyPreset);
-        }
-
-        if (hooks.toggles) {
-            buildTogglesPanel(togglesEl, hooks.toggles, (key, value) => {
-                if (hooks.onTogglesChange) hooks.onTogglesChange(key, value);
-            });
-        }
-
-        if (hooks.params) {
-            buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
-        }
+        const section = (cls) => { const d = document.createElement('div'); d.className = 'settings-section ' + cls; panelEl.appendChild(d); return d; };
+        const presetsEl = section('settings-presets');
+        if (mapControlsEl) panelEl.appendChild(mapControlsEl);
+        togglesEl = section('settings-toggles');
+        paramsEl = section('settings-params');
+        if (hooks.onApplyPreset) buildPresetsPanel(presetsEl, hooks.onApplyPreset);
+        if (hooks.toggles) buildTogglesPanel(togglesEl, hooks.toggles, (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); });
+        if (hooks.params) buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
     }
 
-    // ── Top-bar map-controls button ──
-    // The topology + view controls live in Settings now. The toolbar eye is
-    // a jump handle: open the sidebar, select Settings, and scroll the map
-    // controls into view without owning selection state itself.
+    // The transport eye opens Settings at the map view.
     if ($.viewModeBtn) {
-        $.viewModeBtn.setAttribute('aria-pressed', 'false');
         $.viewModeBtn.addEventListener('click', () => {
-            if ($.dashboard && $.menuBtn && !$.dashboard.classList.contains('open')) {
-                $.menuBtn.click();
-            }
-            const settingsTab = $.dashboard
-                ? $.dashboard.querySelector('.tab-btn[data-tab="settings"]')
-                : null;
-            if (settingsTab && !settingsTab.classList.contains('active')) {
-                settingsTab.click();
-            }
-            if (mapControlsEl) {
-                requestAnimationFrame(() => {
-                    mapControlsEl.scrollIntoView({ block: 'nearest' });
-                });
-            }
+            if ($.atlas && $.atlas.classList.contains('margin-closed') && $.marginOpen) $.marginOpen.click();
+            const tab = $.dashboard ? $.dashboard.querySelector('.tab-btn[data-tab="settings"]') : null;
+            if (tab && !tab.classList.contains('active')) tab.click();
+            if (mapControlsEl) requestAnimationFrame(() => mapControlsEl.scrollIntoView({ block: 'nearest' }));
         });
     }
 
-    // ── Interventions tab (Phase 11 paint) ──
     if (hooks.interventionsPanelEl && hooks.paintController) {
-        buildInterventionsPanel(
-            hooks.interventionsPanelEl,
-            hooks.paintController,
-            hooks.onPaintChange || null
-        );
+        buildInterventionsPanel(hooks.interventionsPanelEl, hooks.paintController, hooks.onPaintChange || null);
     }
 
-    // ── Step button ──
-    // Advances one tick when paused. Holding step under play is a no-op
-    // (the run loop is already moving forward).
-    if ($.stepBtn && hooks.onStep) {
-        $.stepBtn.addEventListener('click', () => {
-            if (!sim.playing) hooks.onStep();
-        });
-    }
-
-    // ── Reset button ──
-    if ($.resetBtn && hooks.onReset) {
-        $.resetBtn.addEventListener('click', () => hooks.onReset());
-    }
+    if ($.resetBtn && hooks.onReset) $.resetBtn.addEventListener('click', () => hooks.onReset());
 
     // ── About panel ──
-    // Prefer the unified shortcut registry built in main.js (sim._shortcuts);
-    // fall back to a hardcoded list if the integration ever changes.
-    const fallbackShortcuts = [
-        { key: 'space',        group: 'Simulation', label: 'Play / pause' },
-        { key: '.',            group: 'Simulation', label: 'Step one tick' },
-        { key: '1–6',          group: 'Paint',      label: 'Paint mode (none/seed/vaccinate/quarantine/sanitize/cull)' },
-        { key: '[ / ]',        group: 'Paint',      label: 'Brush size down / up' },
-        { key: 'Ctrl+Z',       group: 'History',    label: 'Undo last stroke' },
-        { key: 'Ctrl+Shift+Z', group: 'History',    label: 'Redo last stroke' },
-        { key: '? ',           group: 'View',       label: 'Toggle this panel' }
-    ];
-    const shortcuts = (sim && sim._shortcuts) || fallbackShortcuts;
+    let about = null;
     if (typeof window.initAboutPanel === 'function') {
-        const panel = window.initAboutPanel({
-            title: 'miasma',
+        about = window.initAboutPanel({
+            title: 'Miasma',
             description:
-                'Stochastic spatial epidemic simulator on a hex lattice. ' +
-                'Configurable compartmental model, multi-strain evolution, ' +
-                'topology toggle (plane through RP²), intervention painting.',
+                'A stochastic epidemic on a hexagonal world, drawn as a plate from an epidemiological atlas. ' +
+                'Glue the world\'s edges into a plane, torus, Klein bottle or projective plane, seed cases, ' +
+                'paint interventions, and read the outbreak in its isochrones, Nightingale\'s rose and the phylogeny of its strains.',
             controls: [
-                { label: 'Paint',  value: 'Click or drag on the canvas' },
-                { label: 'Pan',    value: 'Two-finger drag (mobile) or pinch' },
-                { label: 'Zoom',   value: 'Scroll wheel / pinch / = / - / 0' },
-                { label: 'Undo',   value: 'Toolbar buttons or Ctrl+Z / Ctrl+Shift+Z' }
+                { label: 'Seed or paint', value: 'Click or drag on the plate, the faded copies included' },
+                { label: 'Zoom', value: 'Scroll, pinch, or = - 0' },
+                { label: 'Pan', value: 'Two-finger drag' },
+                { label: 'Undo', value: 'Ctrl+Z / Ctrl+Shift+Z, until the next day' }
             ],
-            shortcuts,
+            shortcuts: sim._shortcuts || [],
             repo: 'https://github.com/a9lim/a9lim.github.io',
-            lastUpdated: '2026-07-17'
+            lastUpdated: '2026-10-24'
         });
-        if ($.aboutBtn && panel && typeof panel.show === 'function') {
-            $.aboutBtn.addEventListener('click', panel.show);
-        }
     }
 
     return {
-        // Re-sync the toggles checkbox DOM to whatever the toggles object
-        // currently holds. main.js calls this after Object.assign(toggles,
-        // DEFAULT_TOGGLES) on reset so the UI matches reality. Phase 12
-        // extends this to also re-sync the slider values + the topology
-        // mode-group so an applied preset is visible everywhere.
+        showAbout() { if (about && about.show) about.show(); },
+        // Show the preset the plate is running (null: the sandbox defaults).
+        showPreset(key) {
+            const sel = panelEl && panelEl.querySelector('.preset-select');
+            if (!sel) return;
+            sel.value = key || '';
+            sel.dispatchEvent(new Event('change'));
+        },
+        // Re-sync the controls to the live params, toggles, surface and view
+        // after a reset or a preset.
         resetUI() {
-            if (togglesEl && hooks.toggles) {
-                syncToggles(togglesEl, hooks.toggles);
-            }
-            if (paramsEl && hooks.params) {
-                syncSliders(paramsEl, hooks.params);
-            }
-            function syncModeGroup(container, datasetKey, targetKey) {
-                if (!container) return;
-                const btns = container.querySelectorAll('.mode-btn');
-                let activeBtn = null;
-                btns.forEach((b) => {
-                    const on = (b.dataset[datasetKey] === targetKey);
+            if (togglesEl && hooks.toggles) syncToggles(togglesEl, hooks.toggles);
+            if (paramsEl && hooks.params) syncSliders(paramsEl, hooks.params);
+            syncSurface();
+            if ($.viewModeToggles) {
+                let active = null;
+                $.viewModeToggles.querySelectorAll('.mode-btn').forEach((b) => {
+                    const on = b.dataset.viewmode === (sim.viewMode || ViewMode.COMPARTMENT);
                     b.classList.toggle('active', on);
-                    b.setAttribute('aria-selected', on ? 'true' : 'false');
-                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-                    if (on) activeBtn = b;
+                    b.setAttribute('aria-selected', String(on));
+                    if (on) active = b;
                 });
-                // Reposition the sliding mode-indicator if shared-forms wrote one.
-                const indicator = container.querySelector('.mode-indicator');
-                if (indicator && activeBtn) {
-                    indicator.style.width = activeBtn.offsetWidth + 'px';
-                    indicator.style.transform = 'translateX(' + (activeBtn.offsetLeft - 3) + 'px)';
-                }
+                const ind = $.viewModeToggles.querySelector('.mode-indicator');
+                if (ind && active) { ind.style.width = active.offsetWidth + 'px'; ind.style.transform = 'translateX(' + (active.offsetLeft - 3) + 'px)'; }
             }
-            const reverseTopo = {
-                0: 'plane', 1: 'cylinder', 2: 'torus',
-                3: 'mobius', 4: 'klein', 5: 'rp2'
-            };
-            syncModeGroup($.topologyToggles, 'topology', reverseTopo[sim.topology] || 'torus');
-            syncModeGroup($.viewModeToggles, 'viewmode', sim.viewMode || ViewMode.COMPARTMENT);
         }
     };
 }
