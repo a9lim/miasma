@@ -20,15 +20,17 @@
 import { Grid } from './src/grid.js';
 import { computeViewport } from './src/render.js';
 import { createPlate } from './src/plate.js';
-import { DEFAULTS, ViewMode, Compartment, Topology, topoFromString } from './src/config.js';
+import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
 import { initializeGrid, initializeAnimals } from './src/initialization.js';
 import { computeStats, computeReff, renderStatsPanel } from './src/stats.js';
 import { makeParams } from './src/params.js';
+import { DEFAULT_PARAMS } from './src/default-params.js';
+import { memoryOf, remember } from './src/immunity.js';
 import { makeToggles, DEFAULT_TOGGLES } from './src/toggles.js';
 import { initTimeseries } from './src/rose.js';
-import { createRegistry, getStrain } from './src/strains.js';
+import { createRegistry, getStrain, GENOME_FIELDS } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
 import { applyPreset, getPreset } from './src/presets.js';
@@ -36,7 +38,7 @@ import { createCamera, ZOOM_STEP_BTN, ZOOM_STEP_WHEEL } from './src/camera.js';
 import { createTransitionHistory } from './src/history.js';
 import { makeRngFromLocation } from './src/prng.js';
 import { createIsochrones } from './src/isochrones.js';
-import { plateCaption, plateLegend } from './src/caption.js';
+import { plateCaption, plateLegend, presetMeasure } from './src/caption.js';
 import { hexBounds } from './src/topology.js';
 
 function cacheDOM() {
@@ -60,9 +62,11 @@ const BASE_TICK_RATE = 10;     // ticks (days) per second at 1×
 const HISTORY_CAP = 200;
 // The opening outbreak: two cases, one near a glued edge so the wave is seen
 // crossing it, one inland. Offsets are axial, relative to the world center.
-const OPENING_PRESET = 'seir-vanilla';
+const OPENING_PRESET = 'threshold';
 const OPENING_SEEDS = [[30, -42], [-24, 10]];
-const OPENING_WARMUP = 96, OPENING_WARMUP_STILL = 150;
+// Days the opening runs before it is shown: the preset's own warm-up, and
+// longer under reduced motion, which opens on a still plate.
+const OPENING_WARMUP = 96, OPENING_STILL_EXTRA = 120;
 
 export default function init(dom) {
     const $ = dom || cacheDOM();
@@ -154,9 +158,9 @@ export default function init(dom) {
         if (paintController) paintController.clearUndo();
         const counts = tick(sim.grid, params, toggles, sim.topology, rng, strains, sim.tick + 1);
         sim.tick++;
-        history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD);
         lastCounts = counts;
         cachedStats = computeStats(sim.grid);
+        history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, cachedStats.Z);
         cachedStats.tick = sim.tick;
         if (ts) ts.push(cachedStats, counts);
         iso.record(sim.grid, sim.tick);
@@ -184,7 +188,7 @@ export default function init(dom) {
 
     const setCaption = window._colophon ? window._colophon.caption($.caption, 250) : () => {};
     const setRoseCaption = window._colophon ? window._colophon.caption($.roseCaption, 1000) : () => {};
-    const histology = () => sim.presetKey === 'oncoviral-transformation';
+    const histology = () => sim.presetKey === 'immunoediting';
 
     function drawPlate() {
         const vp = getEffectiveViewport();
@@ -212,10 +216,23 @@ export default function init(dom) {
             }
         });
         const reff = computeReff(history, params);
-        lastCaption = plateCaption(sim, stats, reff, strains, paintController, histology(), vp.frame.w < 600);
+        lastCaption = plateCaption(sim, stats, reff, strains, paintController, histology(), vp.frame.w < 600, measureCtx());
         setCaption(lastCaption);
     }
     let lastCaption = '';
+
+    // What presetMeasure reads: the params, the history, how many cells the
+    // wave has reached (the isochrones' stamps), the strain registry.
+    function measureCtx() {
+        let reached = 0;
+        const arr = iso.arrival;
+        if (arr) for (const i of sim.grid.activeIndices) if (arr[i] !== Infinity) reached++;
+        return {
+            params, history, strains, reached,
+            active: sim.grid.activeIndices.length, unvax0: sim.unvax0 || 0,
+            prevalence: () => computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains)
+        };
+    }
 
     // The immunity view's strain: the one selected in the Strains tab while it
     // lives, else the most prevalent, else α.
@@ -305,29 +322,50 @@ export default function init(dom) {
     // isochrones. Called at boot and by reset.
     function openScene(still) {
         const p = getPreset(OPENING_PRESET);
-        if (p) {
-            applyPreset(p, params, toggles, sim);
-            sim.presetKey = OPENING_PRESET;
-            if (qs.has('mi')) sim.topology = topoFromString(qs.get('mi'));
-            resetGridOnly();
-        }
-        seedOpening(OPENING_SEEDS);
-        const n = still ? OPENING_WARMUP_STILL : OPENING_WARMUP;
+        applyScene(p, null, qs.has('mi') ? topoFromString(qs.get('mi')) : null);
+        const n = (p.warmup || OPENING_WARMUP) + (still ? OPENING_STILL_EXTRA : 0);
         for (let k = 0; k < n; k++) tickOnce();
         iso.build(sim.grid, sim.topology, sim.tick, 0);
-        if (ui && ui.showPreset) ui.showPreset(sim.presetKey);
     }
 
+    // Random vaccine coverage given when the world is built (vax_coverage):
+    // each S cell becomes V with that chance, remembering the vaccine's
+    // antigen. Records how many living cells were left unvaccinated.
+    function applyCoverage() {
+        const g = sim.grid, cov = params.vax_coverage || 0;
+        let unvax = 0;
+        const mem = memoryOf(g);
+        for (const i of g.activeIndices) {
+            const c = g.compartment[i];
+            if (c === Compartment.EMPTY || c === Compartment.D) continue;
+            if (toggles.V && cov > 0 && c === Compartment.S && rng() < cov) {
+                g.compartment[i] = Compartment.V;
+                remember(mem, i, params.vax_ag_x || 0, params.vax_ag_y || 0, MemoryKind.VACCINE);
+            } else unvax++;
+        }
+        sim.unvax0 = unvax;
+    }
+
+    // Reset restarts the running experiment, keeping its knob where it is;
+    // in the sandbox it restores every default.
     function reset() {
+        const p = getPreset(sim.presetKey);
+        if (p) applyScene(p, { [p.knob.key]: params[p.knob.key] });
+        else applySandbox();
+        if (typeof showToast === 'function') showToast(p ? 'Restarted: ' + p.label : 'Simulation reset');
+        if (typeof _haptics !== 'undefined') _haptics.trigger('warning');
+    }
+
+    function applySandbox() {
+        Object.assign(params, DEFAULT_PARAMS);
         Object.assign(toggles, DEFAULT_TOGGLES);
         sim.presetKey = null;
         resetGridOnly();
+        applyCoverage();
         if (ui && typeof ui.resetUI === 'function') ui.resetUI();
         if (ui && ui.showPreset) ui.showPreset(null);
         seedOpening(OPENING_SEEDS);
         requestFrame();
-        if (typeof showToast === 'function') showToast('Simulation reset');
-        if (typeof _haptics !== 'undefined') _haptics.trigger('warning');
     }
 
     function syncUndoRedoBtns() {
@@ -403,20 +441,36 @@ export default function init(dom) {
         },
         onApplyPreset: (presetKey) => {
             const p = getPreset(presetKey);
-            if (!p) return;
-            applyScene(p);
-            if (typeof showToast === 'function') showToast('Preset: ' + (p.label || presetKey));
+            if (p) applyScene(p);
+            else applySandbox();
             if (typeof _haptics !== 'undefined') _haptics.trigger('medium');
+        },
+        onKnob: (key, value, knob) => {
+            const p = getPreset(sim.presetKey);
+            if (knob.reset && p) { applyScene(p, { [key]: value }); return; }
+            params[key] = value;
+            // A genome field lives on every strain: the knob sets it on all of them.
+            const field = GENOME_FIELDS.find(f => f.key === key);
+            if (field) {
+                const v = Math.min(field.max, Math.max(field.min, value));
+                for (let id = 0; id < strains.ids.length; id++) strains[key][id] = v;
+            }
+            invalidateDerived({ stats: true, strains: true });
         }
     });
 
-    // Apply a preset object: params, toggles and surface, a fresh world, the
+    // Apply a preset object: params, toggles and surface, then `overrides`
+    // (a knob's value) and `topology`, a fresh world, its coverage, and the
     // opening's two cases.
-    function applyScene(p) {
+    function applyScene(p, overrides, topology) {
         applyPreset(p, params, toggles, sim);
+        if (overrides) Object.assign(params, overrides);
+        if (topology != null) sim.topology = topology;
         sim.presetKey = p.key || null;
         resetGridOnly();
+        applyCoverage();
         if (ui && typeof ui.resetUI === 'function') ui.resetUI();
+        if (ui && ui.showPreset) ui.showPreset(sim.presetKey);
         seedOpening(OPENING_SEEDS);
         requestFrame();
     }

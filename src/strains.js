@@ -483,7 +483,8 @@ export function countLiving(reg) {
 export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, agStep, agJump) {
     const src = getStrain(reg, sourceId);
     if (src === null) return -1;
-    const strength = mutationStrength > 0 ? mutationStrength : DEFAULT_MUTATION_STRENGTH;
+    // 0 is a real choice (antigenic steps only); only a missing value falls back.
+    const strength = typeof mutationStrength === 'number' ? Math.max(0, mutationStrength) : DEFAULT_MUTATION_STRENGTH;
     const r = rng || Math.random;
     // Multiplicative gaussian on every per-strain field. Note: a parent
     // with value 0 in some field stays at 0 in the child — this is

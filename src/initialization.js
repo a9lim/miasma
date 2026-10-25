@@ -67,6 +67,7 @@ export function initializeAnimals(grid, params, rng) {
     const maxAge = typeof p.animal_max_age === 'number' && p.animal_max_age > 0
         ? p.animal_max_age
         : 2500;
+    const seed = p.animal_seed > 0 ? Math.min(1, p.animal_seed) : 0;
     const N = animal.length;
     for (let i = 0; i < N; i++) {
         if (animal_age) animal_age[i] = 0;
@@ -76,7 +77,12 @@ export function initializeAnimals(grid, params, rng) {
             continue;
         }
         if (r() < density) {
-            animal[i] = Animal.S;
+            // A fraction `animal_seed` starts infected with α: a reservoir
+            // the disease already lives in.
+            if (seed > 0 && r() < seed) {
+                animal[i] = Animal.I;
+                if (animal_strain) animal_strain[i] = 0;
+            } else animal[i] = Animal.S;
             if (animal_age) animal_age[i] = (r() * maxAge) | 0;
         } else {
             animal[i] = Animal.VOID;

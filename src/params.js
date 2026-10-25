@@ -52,6 +52,7 @@ const ADVANCED_LAYOUT = [
     { heading: 'Vaccination rollout' },
     { key: 'vax_rollout_rate',    label: 'Rollout rate / tick', min: 0,    max: 0.05, step: 0.0005, digits: 4 },
     { key: 'vax_efficacy',        label: 'Vaccine efficacy',    min: 0,    max: 1,    step: 0.01,  digits: 2 },
+    { key: 'vax_coverage',        label: 'Coverage at reset',   min: 0,    max: 0.9,  step: 0.01,  digits: 2 },
 
     { heading: 'Immunity' },
     { key: 'immunity_strength',   label: 'Infection protection', min: 0,   max: 1,    step: 0.01,  digits: 2 },
@@ -74,6 +75,7 @@ const ADVANCED_LAYOUT = [
     // and live in STRAIN_GENOME_LAYOUT's "Reservoir (animal)" section instead.
     { heading: 'Reservoir — population' },
     { key: 'animal_density',            label: 'Animal density',        min: 0,   max: 0.5,   step: 0.01,   digits: 2 },
+    { key: 'animal_seed',               label: 'Infected at reset',     min: 0,   max: 0.5,   step: 0.005,  digits: 3 },
     { key: 'animal_birth_rate',         label: 'Animal birth / nbr',    min: 0,   max: 0.2,   step: 0.005,  digits: 3 },
     { key: 'animal_birth_threshold',    label: 'Animal birth nbr min',  min: 1,   max: 6,     step: 1,      digits: 0 },
     { key: 'animal_mortality_baseline', label: 'Animal nat. death 0',   min: 0,   max: 0.01,  step: 0.0001, digits: 4 },

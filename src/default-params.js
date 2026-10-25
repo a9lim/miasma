@@ -65,6 +65,7 @@ export const DEFAULT_PARAMS = Object.freeze({
 
     // Vector / reservoir
     animal_density:            0.12,
+    animal_seed:               0.005,  // fraction of animals infected at the start
     animal_birth_rate:         0.05,
     animal_birth_threshold:    3,
     animal_mortality_baseline: 0.0005,
@@ -77,8 +78,10 @@ export const DEFAULT_PARAMS = Object.freeze({
     animal_gamma:              0.06,
     animal_mu:                 0.006,
 
-    // Vaccination rollout
+    // Vaccination: the background rollout, and random coverage given when the
+    // world is built (main.js applyCoverage)
     vax_rollout_rate:        0.0015,
+    vax_coverage:            0,
 
     // Immunity by antigenic distance (immunity.js). A memory protects
     // against its own antigen with strength c, falling off as exp(−d) with

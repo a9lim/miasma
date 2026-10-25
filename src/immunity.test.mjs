@@ -118,6 +118,8 @@ check('midpoint the short way', near(agMid(0.5, S - 0.5), 0) || near(agMid(0.5, 
     grid.compartment[grid.activeIndices[2]] = Compartment.I;
     grid.strain_ids[grid.activeIndices[2] * 4] = reused; grid.strain_loads[grid.activeIndices[2] * 4] = 1;
     runExtinctionSweep(grid, reg, 2 * EXTINCTION_SWEEP_INTERVAL);
+    check('below the splice threshold the full descent is kept', !reg.freed[p1] && reg.parent[live] === p1);
+    runExtinctionSweep(grid, reg, 3 * EXTINCTION_SWEEP_INTERVAL, 0);
     check('a single-line dead ancestor is spliced out', reg.freed[p1] && reg.parent[live] === 0, [reg.freed[p1], reg.parent[live]]);
     check('splicing keeps the generation count', reg.gen[live] === 2);
 }

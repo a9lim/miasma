@@ -11,7 +11,7 @@ import { SURFACES, cornerCones } from './topology.js';
 import { buildSettingsPanel, syncSliders } from './params.js';
 import { buildTogglesPanel, syncToggles } from './toggles.js';
 import { buildInterventionsPanel } from './paint.js';
-import { buildPresetsPanel } from './presets.js';
+import { buildExperimentStrip } from './presets.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -116,17 +116,21 @@ export function setupUI($, sim, hooks) {
 
     const mapControlsEl = $.mapControls || null;
 
+    // ── The experiment strip: preset, knob, description ──
+    const strip = buildExperimentStrip(document.getElementById('experiment'), {
+        onApply: (key) => { if (hooks.onApplyPreset) hooks.onApplyPreset(key); },
+        onKnob: (key, value, knob) => { if (hooks.onKnob) hooks.onKnob(key, value, knob); }
+    });
+
     // ── Settings: presets, map view, toggles, parameters ──
     let togglesEl = null, paramsEl = null;
     const panelEl = hooks.settingsPanelEl;
     if (panelEl) {
         while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
         const section = (cls) => { const d = document.createElement('div'); d.className = 'settings-section ' + cls; panelEl.appendChild(d); return d; };
-        const presetsEl = section('settings-presets');
         if (mapControlsEl) panelEl.appendChild(mapControlsEl);
         togglesEl = section('settings-toggles');
         paramsEl = section('settings-params');
-        if (hooks.onApplyPreset) buildPresetsPanel(presetsEl, hooks.onApplyPreset);
         if (hooks.toggles) buildTogglesPanel(togglesEl, hooks.toggles, (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); });
         if (hooks.params) buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
     }
@@ -172,10 +176,7 @@ export function setupUI($, sim, hooks) {
         showAbout() { if (about && about.show) about.show(); },
         // Show the preset the plate is running (null: the sandbox defaults).
         showPreset(key) {
-            const sel = panelEl && panelEl.querySelector('.preset-select');
-            if (!sel) return;
-            sel.value = key || '';
-            sel.dispatchEvent(new Event('change'));
+            strip.show(key, hooks.params);
         },
         // Re-sync the controls to the live params, toggles, surface and view
         // after a reset or a preset.

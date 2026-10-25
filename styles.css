@@ -200,6 +200,21 @@ body.sim-body {
 
 .transport #menu-btn { margin-left: auto; }
 
+/* The experiment strip: the preset, its one knob, its line of description. */
+.experiment { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.experiment .knob-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 3.4em;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 28px;
+}
+.experiment .knob-row[hidden] { display: none; }
+.knob-label { color: var(--text-secondary); font-size: var(--font-base); }
+.knob-slider { width: 100%; }
+.knob-value { text-align: right; font-size: var(--font-base); font-variant-numeric: lining-nums tabular-nums; color: var(--text); }
+.experiment-hint { margin: 2px 0 2px; color: var(--text-muted); font-style: italic; font-size: var(--font-sm); line-height: 1.45; }
+
 .margin-tabs {
   flex: 0 0 auto;
   display: flex;
@@ -409,7 +424,6 @@ body.sim-body {
 .advanced-section .toggles-section-header { margin-top: 0.9rem; }
 
 /* ───── Preset dropdown (shared/dropdown.js markup) ───── */
-.preset-row { gap: 0.6rem; }
 .sim-select { width: 100%; font: inherit; }
 .sim-dropdown { position: relative; flex: 1 1 auto; min-width: 0; }
 .sim-dropdown-trigger {
@@ -451,7 +465,6 @@ body.sim-body {
 .sim-dropdown-item.focused { color: var(--text); background: var(--bg-hover); }
 .sim-dropdown-item.selected { color: var(--accent); }
 .sim-dropdown-item.disabled { opacity: 0.4; cursor: default; }
-.preset-desc { display: block; color: var(--text-muted); font-style: italic; font-size: var(--font-sm); line-height: 1.45; margin-top: 0.35rem; }
 
 /* ───── Census: an agate table, each row keyed by the plate's own mark ───── */
 .stat-group { display: flex; flex-direction: column; }
@@ -569,7 +582,8 @@ body.sim-body {
   }
   .atlas.margin-closed { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 0; }
   .margin { border-left: 0; border-top: 1px solid var(--border); }
-  .margin-head { padding: 8px 14px 4px; display: flex; align-items: center; gap: 6px; }
+  .margin-head { padding: 8px 14px 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .margin-head .experiment { flex: 1 0 100%; margin-top: 2px; }
   .surface-picker { flex: 1 1 auto; gap: 0; }
   .surface-btn svg { width: 30px; height: 26px; }
   .surface-btn { font-size: 0.8rem; padding: 2px 0 3px; }

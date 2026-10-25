@@ -6,22 +6,25 @@
 // no living strain descends from (through either parent) is reclaimed, so its
 // id can be reused; cells remember antigens, not ids, so nothing else points
 // at it, and the phylogeny draws only living strains and their ancestors.
-// A dead ancestor with a single descendant line is spliced out of `parent`
-// (its child takes its parent) and reclaimed too: the tree keeps its branch
-// points and every birth time, and the registry holds about two slots per
-// living strain however long the run.
+// When the registry passes SPLICE_ABOVE slots, a dead ancestor with a single
+// descendant line is also spliced out of `parent` (its child takes its parent)
+// and reclaimed: the tree keeps its branch points and every birth time, and
+// the registry holds about three slots per living strain however long the
+// run. Below that the full descent is kept, so the antigenic map can draw
+// the trunk's whole path.
 
 import { DEFAULTS } from './config.js';
 import { EMPTY_STRAIN, markExtinct, reclaimStrain, strainCount, unmarkExtinct } from './strains.js';
 
 export const EXTINCTION_SWEEP_INTERVAL = 30;
+export const SPLICE_ABOVE = 16384;
 
 let aliveBitsScratch = new Uint8Array(0);
 let neededScratch = new Uint8Array(0);
 let kidsScratch = new Uint16Array(0);
 let p2Scratch = new Uint8Array(0);
 
-export function runExtinctionSweep(grid, strainRegistry, tickIdx) {
+export function runExtinctionSweep(grid, strainRegistry, tickIdx, spliceAbove = SPLICE_ABOVE) {
     if (!strainRegistry || (tickIdx % EXTINCTION_SWEEP_INTERVAL) !== 0) return;
     const reg = strainRegistry;
     const sCount = strainCount(reg);
@@ -81,22 +84,24 @@ export function runExtinctionSweep(grid, strainRegistry, tickIdx) {
         if (p !== null && p >= 0 && p < sCount && !needed[p]) stack.push(p);
         if (p2 !== null && p2 >= 0 && p2 < sCount && !needed[p2]) stack.push(p2);
     }
-    // Splice: walk up from each kept strain past dead ancestors that have no
-    // other kept child and are nobody's second parent.
+    // Splice (only under pressure): walk up from each kept strain past dead
+    // ancestors that have no other kept child and are nobody's second parent.
     const kids = kidsScratch, p2 = p2Scratch;
-    for (let id = 0; id < sCount; id++) {
-        if (!needed[id]) continue;
-        const p = reg.parent[id], q = reg.parents2[id];
-        if (p !== null && p >= 0 && p < sCount) kids[p]++;
-        if (q !== null && q >= 0 && q < sCount) p2[q] = 1;
-    }
-    for (let id = 0; id < sCount; id++) {
-        if (!needed[id]) continue;
-        let p = reg.parent[id];
-        while (p !== null && p > 0 && needed[p] && reg.extinct[p] && kids[p] === 1 && !p2[p]) {
-            needed[p] = 0;
-            p = reg.parent[p];
-            reg.parent[id] = p;
+    if (sCount > spliceAbove) {
+        for (let id = 0; id < sCount; id++) {
+            if (!needed[id]) continue;
+            const p = reg.parent[id], q = reg.parents2[id];
+            if (p !== null && p >= 0 && p < sCount) kids[p]++;
+            if (q !== null && q >= 0 && q < sCount) p2[q] = 1;
+        }
+        for (let id = 0; id < sCount; id++) {
+            if (!needed[id]) continue;
+            let p = reg.parent[id];
+            while (p !== null && p > 0 && needed[p] && reg.extinct[p] && kids[p] === 1 && !p2[p]) {
+                needed[p] = 0;
+                p = reg.parent[p];
+                reg.parent[id] = p;
+            }
         }
     }
     for (let id = 1; id < sCount; id++) {
