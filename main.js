@@ -2,7 +2,7 @@
 //
 // The run loop advances simulated time by dt each frame, drains the
 // accumulator into dynamics.tick() calls, pushes each tick's transition
-// counts to the observed-Re history and the rose, stamps first exposures for
+// counts to the observed-Re history and the rose, stamps arrivals for
 // the isochrones, then draws the plate. The plate's world tile is redrawn only
 // when something it shows changed (a tick, paint, the brush, the view, the
 // theme, the zoom); otherwise a frame is a few drawImage calls. The loop
@@ -214,12 +214,12 @@ export default function init(dom) {
         }
         if (statsDirty) { updateStats(); statsDirty = false; }
         if (renderDirty) { drawPlate(); renderDirty = false; }
-        if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption()); tsDirty = false; }
+        if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(histology())); tsDirty = false; }
         if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         if (!sim.playing && !renderDirty && !statsDirty && !tsDirty && !strainsDirty) {
             // the caption setter is throttled; going idle, write the last one for sure
             setCaption(lastCaption, true);
-            if (ts) setRoseCaption(ts.caption(), true);
+            if (ts) setRoseCaption(ts.caption(histology()), true);
             running = false; rafId = null; return;
         }
         rafId = requestAnimationFrame(frame);

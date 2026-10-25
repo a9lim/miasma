@@ -72,6 +72,7 @@ export function plateLegend(sim, s, toggles, histology, topStrains) {
                 rows.push({ kind: 'H#', ink: st.ink, angle: st.angle, label: `Strain ${p.name}, ${p.fraction < 0.01 ? '<1' : Math.round(p.fraction * 100)}%` });
             }
             if (!rows.length) rows.push({ kind: 'S', label: 'No carriers' });
+            if (s.V) rows.push({ kind: 'V', label: 'Vaccinated' });   // its hatching is drawn in this view too
             break;
         }
         case ViewMode.AGE: rows.push({ kind: 'ramp', ink: _themePalette().inks.umber, label: 'Age, newborn to oldest' }); break;

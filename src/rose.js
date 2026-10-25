@@ -5,12 +5,14 @@
 // count, with two roses for two years side by side. Here a wedge is ten days
 // and its area counts the events in them: new exposures (pale red), recoveries
 // (stipple) and deaths (cross-hatched), overlaid from the center, largest at
-// the back, as she overlaid her three causes. A rose is twelve wedges, 120
+// the back, as she overlaid her three causes. A fourth series, arrivals in Z
+// (zombies, or transformed cells), is hatched in the plate's sap and appears
+// only when the current rose holds any. A rose is twelve wedges, 120
 // days, filling clockwise from nine o'clock; the previous rose stands beside
 // it at the same scale, so the two can be compared.
 //
 // API (same as the stacked-area chart it replaces): initTimeseries(panel,
-// canvas) → { push(stats, counts), render(), resize(), clear(), caption() }.
+// canvas) → { push(stats, counts), render(), resize(), clear(), caption(histology) }.
 
 export const ROSE_PERIOD = 10;
 export const ROSE_WEDGES = 12;
@@ -18,7 +20,7 @@ const SPAN = ROSE_PERIOD * ROSE_WEDGES;
 
 export function initTimeseries(panelEl, canvasEl) {
     const ctx = canvasEl.getContext('2d');
-    // per wedge: [exposures, recoveries, deaths]; index = floor(tick / period)
+    // per wedge: [exposures, recoveries, deaths, Z arrivals]; index = floor(tick / period)
     let wedges = [];
     let lastTick = 0;
     let w = 0, h = 0, dpr = 1;
@@ -37,14 +39,24 @@ export function initTimeseries(panelEl, canvasEl) {
         lastTick = t;
         if (!counts || t <= 0) return;
         const k = Math.floor((t - 1) / ROSE_PERIOD);
-        while (wedges.length <= k) wedges.push([0, 0, 0]);
+        while (wedges.length <= k) wedges.push([0, 0, 0, 0]);
         const wv = wedges[k];
         wv[0] += counts.sToE || 0;
         wv[1] += counts.iToR || 0;
         wv[2] += counts.iToD || 0;
+        wv[3] += (counts.dToZ || 0) + (counts.iToZ || 0) + (counts.lToZ || 0) + (counts.zInfect || 0);
     }
 
     function clear() { wedges = []; lastTick = 0; }
+
+    // the scale spans the current rose and the one before it; Z is named only
+    // when the current rose, the one drawn in full, holds any
+    const roseFrom = () => Math.floor(Math.max(0, lastTick - 1) / SPAN) * ROSE_WEDGES;
+    const shownFrom = () => Math.max(0, roseFrom() - ROSE_WEDGES);
+    function hasZ() {
+        for (let k = roseFrom(); k < wedges.length; k++) if (wedges[k][3]) return true;
+        return false;
+    }
 
     function render() {
         if (!w) resize();
@@ -55,7 +67,7 @@ export function initTimeseries(panelEl, canvasEl) {
         const cur = Math.floor(Math.max(0, lastTick - 1) / SPAN);
         const first = cur * ROSE_WEDGES;
         let max = 1;
-        for (let k = Math.max(0, first - ROSE_WEDGES); k < wedges.length; k++) for (const v of wedges[k]) if (v > max) max = v;
+        for (let k = shownFrom(); k < wedges.length; k++) for (const v of wedges[k]) if (v > max) max = v;
         const R = Math.min(w, h) * 0.39, cx = w / 2, cy = h * 0.5;
         // the previous 120 days, at the same scale: a dashed envelope behind
         if (cur > 0) drawEnvelope(t, cx, cy, R, first - ROSE_WEDGES, max);
@@ -69,7 +81,7 @@ export function initTimeseries(panelEl, canvasEl) {
         for (let i = 0; i < ROSE_WEDGES; i++) {
             const v = wedges[first + i];
             if (!v) continue;
-            const r = R * Math.sqrt(Math.max(v[0], v[1], v[2]) / max), a0 = Math.PI + i * step;
+            const r = R * Math.sqrt(Math.max(v[0], v[1], v[2], v[3]) / max), a0 = Math.PI + i * step;
             ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, a0, a0 + step); ctx.closePath();
         }
         ctx.stroke();
@@ -93,7 +105,7 @@ export function initTimeseries(panelEl, canvasEl) {
                 ctx.textBaseline = 'alphabetic';
             }
             if (!v) continue;
-            const order = [0, 1, 2].sort((p, q) => v[q] - v[p]);
+            const order = [0, 1, 2, 3].sort((p, q) => v[q] - v[p]);
             for (const c of order) {
                 if (!v[c]) continue;
                 const r = R * Math.sqrt(v[c] / max);
@@ -102,7 +114,14 @@ export function initTimeseries(panelEl, canvasEl) {
                 else {
                     ctx.save(); ctx.clip();
                     ctx.fillStyle = t.paper; ctx.fill();
-                    if (c === 1) {
+                    if (c === 3) {
+                        // the plate's Z: a sap tint under wide cross-hatching
+                        ctx.fillStyle = t.zombieTint; ctx.fill();
+                        ctx.strokeStyle = t.zombie; ctx.lineWidth = 0.9;
+                        ctx.beginPath();
+                        for (let s = -R; s <= R; s += 4.5) { ctx.moveTo(cx + s - R, cy - R); ctx.lineTo(cx + s + R, cy + R); ctx.moveTo(cx + s + R, cy - R); ctx.lineTo(cx + s - R, cy + R); }
+                        ctx.stroke();
+                    } else if (c === 1) {
                         ctx.fillStyle = t.stipple;
                         for (let k = 0; k < 220 * (r / R) ** 2 + 4; k++) {
                             const rr = r * Math.sqrt(hash(first + i, k)), aa = a0 + step * hash(k, first + i + 99);
@@ -131,8 +150,9 @@ export function initTimeseries(panelEl, canvasEl) {
         }
     }
 
-    function caption() {
-        return `Each wedge is ${ROSE_PERIOD} days, and its area counts what happened in them: exposures in pale red, recoveries in stipple, deaths cross-hatched. A rose is 120 days, read clockwise from nine o'clock; the dashed outline is the 120 before, at the same scale.`;
+    function caption(histology) {
+        const z = hasZ() ? `, ${histology ? 'newly transformed cells' : 'new zombies'} in green hatching` : '';
+        return `Each wedge is ${ROSE_PERIOD} days, and its area counts what happened in them: exposures in pale red, recoveries in stipple, deaths cross-hatched${z}. A rose is 120 days, read clockwise from nine o'clock; the dashed outline is the 120 before, at the same scale.`;
     }
 
     return { push, render, resize, clear, caption };
@@ -152,6 +172,7 @@ function plateColors() {
         exposed: rgba(P.accent, dark ? 0.36 : 0.3),
         stipple: rgba(P.text, dark ? 0.7 : 0.62),
         cross: rgba(P.text, dark ? 0.7 : 0.66),
+        zombie: P.inks.sap, zombieTint: rgba(P.inks.sap, 0.22),
         rule: rgba(P.text, 0.5), ruleSoft: rgba(P.text, 0.14)
     };
 }

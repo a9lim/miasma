@@ -27,7 +27,7 @@ import { Compartment, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.j
 import { hexBounds } from './topology.js';
 import { strainSlot, strainStyle, STRAIN_STYLES } from './strain-style.js';
 import { drawHistology } from './histology.js';
-import { ISO_LABEL } from './isochrones.js';
+import { ISO_LABEL, isoFade } from './isochrones.js';
 
 // ─── Theme ──────────────────────────────────────────────────────────────────
 let _theme = null;
@@ -59,8 +59,8 @@ export function plateTheme() {
         cordon: P.inks.indigo,
         rule: rgba(P.text, 0.5),
         ruleSoft: rgba(P.text, 0.24),
-        iso: rgba(P.text, dark ? 0.36 : 0.32),
-        isoMajor: rgba(P.text, dark ? 0.66 : 0.6)
+        isoMajor: rgba(P.text, dark ? 0.66 : 0.6),
+        isoA: dark ? 0.36 : 0.32, isoMajorA: dark ? 0.66 : 0.6
     };
     return _theme;
 }
@@ -190,7 +190,7 @@ const PAINT_INK = { seed: 'accent', vaccinate: 'prussian', quarantine: 'indigo',
 
 /**
  * Draw the world into the tile. opts: { mode, ageMax, animalDisplay,
- * paintOverlay, contours, histology, dpr }.
+ * paintOverlay, contours, isoLatest, histology, dpr }.
  */
 export function renderTile(grid, rc, opts) {
     const dpr = opts.dpr || 1, T = ensureTile(grid, rc, dpr), t = plateTheme(), c = T.x;
@@ -203,7 +203,7 @@ export function renderTile(grid, rc, opts) {
     c.fill(T.mask);
     if (opts.histology) drawHistology(c, grid, T, rc, t, opts);
     else drawAtlas(c, grid, T, rc, t, opts);
-    if (!opts.histology || opts.mode !== ViewMode.COMPARTMENT) drawContours(c, rc, t, opts.contours);
+    if (!opts.histology || opts.mode !== ViewMode.COMPARTMENT) drawContours(c, rc, t, opts.contours, opts.isoLatest);
     if (opts.paintOverlay && opts.paintOverlay.inside && opts.paintOverlay.mode !== 'none') drawBrush(c, grid, T, rc, t, opts.paintOverlay);
     c.restore();
     return T;
@@ -405,12 +405,14 @@ function drawAnimals(c, grid, T, rc, t, only) {
     }
 }
 
-function drawContours(c, rc, t, contours) {
+// Each level is drawn at its base opacity times isoFade of its age behind
+// `latest`, the newest stamp (the GPU shader does the same per pixel).
+function drawContours(c, rc, t, contours, latest) {
     if (!contours || !contours.length) return;
     c.lineCap = 'round';
     for (const { level, segs } of contours) {
         const major = level % ISO_LABEL === 0;
-        c.strokeStyle = major ? t.isoMajor : t.iso;
+        c.strokeStyle = t.rgba(t.text, (major ? t.isoMajorA : t.isoA) * isoFade(latest - level));
         c.lineWidth = major ? 1.15 : 0.75;
         c.beginPath();
         for (let k = 0; k < segs.length; k += 4) { c.moveTo(segs[k] * rc, segs[k + 1] * rc); c.lineTo(segs[k + 2] * rc, segs[k + 3] * rc); }

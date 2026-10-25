@@ -76,7 +76,7 @@ src/params.js            Advanced-parameters sliders (sim-wide) and STRAIN_GENOM
 src/toggles.js           compartment, flag, and automatic-response toggles; animal-display group
 src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), Paint tab
 src/camera.js            zoom/pan over the fitted plate
-src/isochrones.js        first-exposure day per cell, smoothed and contoured on the lattice
+src/isochrones.js        latest-wave arrival day per cell, smoothed, contoured and faded on the lattice
 src/plate.js             the plate per frame: copies, edges, cone points, labels, title, cartouche, scale bar
 src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a state texture
 src/render.js            Canvas 2D fallback for the lattice (the same marks), plate geometry
@@ -287,12 +287,27 @@ health and susceptibility are single-ink ramps in eight steps; the status view m
 but H and Q. Animals are small triangles off the cell center. The oncoviral preset
 (`sim.presetKey`) draws the lattice as an H&E section (`histology.js`).
 
-Isochrones: `isochrones.js` stamps each cell's first E/I/Z tick, smooths the field by
-neighbor averaging over the surface's own neighbor table (so it is continuous across
-glued edges), and contours it every 8 days by marching triangles on the cell-center
-lattice; segments feed the label placement and the Canvas renderer, and a padded copy
-of the field (one cell past every edge, read through the gluing) feeds the GPU, which
-draws the isolines per pixel with their analytic gradient.
+Isochrones: `isochrones.js` stamps each cell with the tick it last became E, I or Z. A
+cell that was not E/I/Z at the previous `record` and is now is stamped if it never was or
+its stamp is at least `REARRIVE_GAP` (32 days) old, so a cell exposed again by a later
+wave takes that wave's day, while one still passing through the same wave keeps its own
+(`was` tracks the previous record). `latest` is the newest stamp, and cells the wave has
+not reached read `latest + 6`. `build` smooths the field by neighbor averaging over the
+surface's own neighbor table (so it is continuous across glued edges), mixing only
+neighbors within `CLIFF` (24 days) of a cell's own value so an old wave's stamps and a new
+wave's stay sharp, and contours it every 8 days by marching triangles on the cell-center
+lattice. A triangle whose corners span more than `CLIFF_SPAN` (32 days) is skipped: where
+a new wave meets old stamps the field jumps by hundreds of days, and contouring it would
+stack a line for every level. A contour is drawn at its base opacity times
+`isoFade(latest − level)`, a quadratic ramp from 1 down to `FADE_FLOOR` (0.12) over
+`FADE_DAYS` (420), so the plate keeps the newest waves and lets old ones go. The clock is
+`latest`, not the tick: once an outbreak ends nothing fades further. The fade and the
+cliff rule run per pixel on the GPU (uniform 43; the shader tests the same triangle span
+the CPU does) and per level in `drawContours`, so the two paths agree. Segments feed the
+label placement and the Canvas renderer, and a padded copy of the field (one cell past
+every edge, read through the gluing) feeds the GPU, which draws the isolines per pixel
+with their analytic gradient. On each labeled level `runLen[k]` is the length in cells of
+the connected line segment `k` belongs to (endpoints joined by union-find).
 
 Each frame `plate.js` composes: the lattice (WebGPU: `gpu-plate.js`, one full-screen
 pass; each pixel finds its cell, through the inverse edge isometry on a faded copy, and
@@ -302,7 +317,9 @@ one, two or three chevrons per glued pair, agreeing for a translation and oppose
 twist; a heavy rule with hachures for a shore), cone-point circles with their angles, the
 title (top right; one plate numeral per view), the Reference cartouche (bottom left;
 rows from `caption.js`), the scale bar (cells; µm on the slide) and the isochrone labels
-(every 24 days, collision-checked against each other and the furniture). Without WebGPU
+(every 24 days, only while the level's fade is at least 0.5 and on lines at least 6 cells
+long, so a spillover-driven run's small loops carry no number; the text is drawn at the
+fade, and labels are collision-checked against each other and the furniture). Without WebGPU
 (or with `?canvas2d`), `render.js` draws the same marks into an offscreen tile once per
 change and `plate.js` blits it, and its copies through `destination-in` fading. The
 GPU state texel is `x` compartment, `y` flags | status << 4, `z` animal | (strain slot +
@@ -335,7 +352,9 @@ applying a preset seeds them too, so the plate is never empty.
 
 Nightingale's rose (`rose.js`, behind the old chart's `initTimeseries` API) counts
 exposures, recoveries and deaths per ten-day wedge from the tick's transition counts,
-overlaid from the center; a rose is 120 days, and the previous 120 are a dashed
+overlaid from the center, plus arrivals in Z (`dToZ + iToZ + lToZ + zInfect`) in the
+plate's sap, wide cross-hatching over a tint, when the current rose holds any (the
+caption then names them); a rose is 120 days, and the previous 120 are a dashed
 envelope at the same scale. The phylogeny (`lineage.js`) draws living strains and their
 ancestors (at most 28 living, the rest counted) as branches over real time, joined to
 their parent on their birth day (a dashed second connector for a recombinant), with a
@@ -402,7 +421,6 @@ below are known gaps; 2.1 fixes the first four.
   own load as its fitness (`src/dynamics.js:460`), so the incumbent always wins.
 - Default-on `auto_quarantine` (instant, unlimited, omniscient tracing) makes the
   COVID-like and smallpox presets fizzle in 5 of 5 seeds (`tools/survey.mjs`).
-- The rose counts E, R and D transitions only, so Z runs (oncoviral) leave it empty.
 - A strain circulating only in animals is tombstoned until it spills back, because the
   extinction sweep skips `animal_strain`.
 - `tick()` returns counters (`zFight*`, `animalBirths`, `autoQuarantined`, …) that

@@ -8,13 +8,18 @@
 // from the smoothed arrival field (isochrones.js), padded one cell past the
 // edges through the gluing, interpolated linearly on the triangles of cell
 // centers; their width uses the field's analytic gradient, so lines stay one
-// pixel-true width at any zoom. The 2D canvas on top carries edges, labels
-// and the plate furniture.
+// pixel-true width at any zoom. A triangle whose corners span more than
+// CLIFF_SPAN days (a new wave against an old one) draws no line, and each
+// line is faded by how far its level lies behind the newest stamp, exactly
+// as isochrones.js and the Canvas path do. The 2D canvas on top carries
+// edges, labels and the plate furniture.
 //
 // The encodings match render.js, the Canvas fallback, mark for mark.
 //
 // State texel: x compartment · y flags | status<<4 · z animal | (strain slot+1)<<3
 // · w ramp value (age, health or susceptibility, 0–255).
+
+import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
 
 const SHADER = /* wgsl */`
 @group(0) @binding(0) var<uniform> u: array<vec4f, 48>;
@@ -201,24 +206,30 @@ fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
     let o = vec2i(base) + vec2i(i32(R) + 1);
     let v10 = fieldAt(o + vec2i(1, 0)); let v01 = fieldAt(o + vec2i(0, 1));
     var v = 0.0; var gq = 0.0; var gr = 0.0; var ok = v10 >= 0.0 && v01 >= 0.0;
+    var span = 0.0;
     if (f.x + f.y <= 1.0) {
       let v00 = fieldAt(o);
       ok = ok && v00 >= 0.0;
       v = v00 * (1.0 - f.x - f.y) + v10 * f.x + v01 * f.y; gq = v10 - v00; gr = v01 - v00;
+      span = max(v00, max(v10, v01)) - min(v00, min(v10, v01));
     } else {
       let v11 = fieldAt(o + vec2i(1, 1));
       ok = ok && v11 >= 0.0;
       v = v11 * (f.x + f.y - 1.0) + v10 * (1.0 - f.y) + v01 * (1.0 - f.x); gq = v11 - v01; gr = v11 - v10;
+      span = max(v11, max(v10, v01)) - min(v11, min(v10, v01));
     }
     let step = u[3].w; let maxL = u[3].z;
     let level = round(v / step) * step;
-    if (ok && level >= step && level <= maxL + 0.5) {
+    // fade: u[43] = (newest stamp, days to the floor, floor, cliff span)
+    let ageN = max(u[43].x - level, 0.0) / u[43].y;
+    let fadeL = max(u[43].z, 1.0 - ageN * ageN);
+    if (ok && span <= u[43].w && level >= step && level <= maxL + 0.5) {
       let g = length(vec2f(gq / SQ3, -gq / 3.0 + gr * 2.0 / 3.0)) / rc;
       let d = abs(v - level) / max(g, 1e-5);
       let major = abs(level / (step * 3.0) - round(level / (step * 3.0))) < 0.01;
       let hw = select(0.375, 0.575, major);
       let al = select(0.32 + 0.04 * dark, 0.6 + 0.06 * dark, major);
-      c = over(c, text, al * cover(d, hw, dpr));
+      c = over(c, text, al * fadeL * cover(d, hw, dpr));
     }
   }
 
@@ -339,7 +350,7 @@ export async function createGpuPlate(canvas) {
     }
 
     /** Draw. p: { cssW, cssH, dpr, rc, cx, cy, R, closed, fade:[r0,r1,peak], mode, histology,
-     *  animalDisplay, maxLevel, step, brush:{q,r,size,active,ink}, cq, cr, W, side, theme, strainInks, strainAngles, ghosts } */
+     *  animalDisplay, maxLevel, isoLatest, step, brush:{q,r,size,active,ink}, cq, cr, W, side, theme, strainInks, strainAngles, ghosts } */
     function render(p) {
         if (lost || !stateTex) return false;
         const t = p.theme, set = (i, a, b = 0, c = 0, d = 0) => { U[i * 4] = a; U[i * 4 + 1] = b; U[i * 4 + 2] = c; U[i * 4 + 3] = d; };
@@ -348,6 +359,7 @@ export async function createGpuPlate(canvas) {
         set(1, p.cx, p.cy, p.R, p.closed ? 1 : 0);
         set(2, p.fade[0], p.fade[1], p.fade[2], MODES[p.mode] || 0);
         set(3, p.histology ? 1 : 0, p.animalDisplay === 'only' ? 1 : p.animalDisplay === 'off' ? 2 : 0, p.maxLevel, p.step);
+        set(43, p.isoLatest, FADE_DAYS, FADE_FLOOR, CLIFF_SPAN);
         set(4, p.brush.q, p.brush.r, p.brush.size, p.brush.active ? 1 : 0);
         col(5, p.brush.ink);
         set(6, p.cq, p.cr, p.W, p.side);

@@ -19,7 +19,7 @@ import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, stra
 import { createGpuPlate } from './gpu-plate.js';
 import { STRAIN_STYLES } from './strain-style.js';
 import { strainStyle } from './strain-style.js';
-import { ISO_LABEL } from './isochrones.js';
+import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
 
 const NUMERALS = { compartment: 'I', strain: 'II', age: 'III', health: 'IV', status: 'V', susceptibility: 'VI', histology: 'VII' };
 
@@ -36,7 +36,7 @@ export function plateTitle(mode, topology, histology, narrow) {
         case ViewMode.HEALTH: return `${n} Health of the population ${on}`;
         case ViewMode.STATUS: return `${n} Hospital beds and quarantine ${on}`;
         case ViewMode.SUSCEPTIBILITY: return `${n} Susceptibility ${on}, by prior exposure`;
-        default: return `${n} The outbreak ${on}, by day of first exposure`;
+        default: return `${n} The outbreak ${on}, by day of arrival`;
     }
 }
 
@@ -91,7 +91,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
             return;
         }
         if (tileDirty || !last || last.rc !== G.rc || last.dpr !== dpr) {
-            renderTile(s.grid, G.rc, Object.assign({ dpr, contours: s.contours, histology: s.histology }, s.tileOpts));
+            renderTile(s.grid, G.rc, Object.assign({ dpr, contours: s.contours, isoLatest: s.field ? s.field.latest : 0, histology: s.histology }, s.tileOpts));
             tileDirty = false;
         }
         last = { rc: G.rc, dpr };
@@ -155,7 +155,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         return gpu.render({
             cssW: s.vp.cssWidth, cssH: s.vp.cssHeight, dpr, rc: G.rc, cx: G.cx, cy: G.cy, R: G.R,
             closed: S.closed, fade: [G.apo * 0.92, G.Rb * 1.9, t.dark ? 0.55 : 0.5], mode: s.mode,
-            histology: s.histology, animalDisplay: o.animalDisplay, maxLevel: s.field ? s.field.maxLevel : 0, step: 8,
+            histology: s.histology, animalDisplay: o.animalDisplay, maxLevel: s.field ? s.field.maxLevel : 0, isoLatest: s.field ? s.field.latest : 0, step: 8,
             brush: { q: po ? po.q - cq : 0, r: po ? po.r - cr : 0, size: po ? po.brushSize : 0, active: !!(po && po.inside && po.mode !== 'none'), ink: paintInk(po ? po.mode : 'seed', t) },
             cq, cr, W: s.grid.W, side: s.field ? s.field.side : 0, theme: t, rampInk,
             strainInks: inks, strainAngles: angles,
@@ -240,17 +240,25 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
 
     const hit = (r) => placed.some(p => r[0] < p[2] && r[2] > p[0] && r[1] < p[3] && r[3] > p[1]);
 
+    // A level is labeled only while its line is still plain (isoFade at least
+    // LABEL_FADE), at the segments of a connected run at least LABEL_RUN cells
+    // long, so the small loops around single spillover cases carry no number.
     function drawIsoLabels(t, s, G, frame, furniture) {
         const cs = s.contours;
         if (!cs || !cs.length) return;
-        const narrow = frame.w < 600;
+        const narrow = frame.w < 600, latest = s.field ? s.field.latest : 0;
         ctx.font = font(narrow ? 11 : 12.5, true); ctx.textBaseline = 'middle';
-        for (const { level, segs } of cs) {
-            if (level % (narrow ? ISO_LABEL * 2 : ISO_LABEL)) continue;
+        for (const { level, segs, runLen } of cs) {
+            if (level % (narrow ? ISO_LABEL * 2 : ISO_LABEL) || !runLen) continue;
+            const fade = isoFade(latest - level);
+            if (fade < LABEL_FADE) continue;
             const text = 'day ' + level, w = ctx.measureText(text).width + 8;
-            const n = segs.length / 4, stepK = Math.max(1, Math.floor(n / 28));
+            const long = [];
+            for (let k = 0; k < runLen.length; k++) if (runLen[k] >= LABEL_RUN) long.push(k);
+            const stepK = Math.max(1, Math.floor(long.length / 28));
             let done = 0;
-            for (let k = Math.floor(stepK / 2); k < n && done < (narrow ? 1 : 2); k += stepK) {
+            for (let m = Math.floor(stepK / 2); m < long.length && done < (narrow ? 1 : 2); m += stepK) {
+                const k = long[m];
                 const ax = (segs[k * 4] + segs[k * 4 + 2]) / 2, ay = (segs[k * 4 + 1] + segs[k * 4 + 3]) / 2;
                 const [q, r] = pxToAxial(ax, ay, 1);
                 if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) > G.R - 4) continue;
@@ -260,7 +268,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
                 if (hit(rect) || furniture.some(f => rect[0] < f[2] && rect[2] > f[0] && rect[1] < f[3] && rect[3] > f[1])) continue;
                 placed.push([rect[0] - 18, rect[1] - 10, rect[2] + 18, rect[3] + 10]);
                 ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(rect[0], rect[1] + 1, w, 16);
-                ctx.fillStyle = t.text; ctx.textAlign = 'center';
+                ctx.fillStyle = t.rgba(t.text, fade); ctx.textAlign = 'center';
                 ctx.fillText(text, x, y + 1);
                 done++;
             }
