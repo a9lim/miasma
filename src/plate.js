@@ -15,10 +15,9 @@
 
 import { SQRT3, ViewMode } from './config.js';
 import { hexBounds, edgeGluings, cornerCones, SURFACES, wrap } from './topology.js';
-import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, strainSlotOf, paintInk, _tile } from './render.js';
+import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, strainMarkOf, paintInk, _tile } from './render.js';
 import { createGpuPlate } from './gpu-plate.js';
-import { STRAIN_STYLES } from './strain-style.js';
-import { strainStyle } from './strain-style.js';
+import { wheelParams } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
 
 const NUMERALS = { compartment: 'I', strain: 'II', age: 'III', health: 'IV', status: 'V', immunity: 'VI', histology: 'VII' };
@@ -143,22 +142,20 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     function drawGpu(s, t, G, S, dpr) {
         const { cq, cr } = hexBounds(s.grid.W, s.grid.H), o = s.tileOpts;
         if (tileDirty) {
-            gpu.uploadState(s.grid, s.mode, o, strainSlotOf);
+            gpu.uploadState(s.grid, s.mode, o, strainMarkOf);
             if (s.field && s.field.padded) gpu.uploadField(s.field.padded, s.field.side);
             tileDirty = false;
         }
         gpu.resize(canvas.width, canvas.height);
         const po = o.paintOverlay;
         const rampInk = s.mode === ViewMode.AGE ? t.inks.umber : s.mode === ViewMode.HEALTH ? t.inks.viridian : t.inks.prussian;
-        const inks = [], angles = [];
-        for (let k = 0; k < STRAIN_STYLES; k++) { const st = strainStyle(k); inks.push(st.ink); angles.push(st.angle); }
         return gpu.render({
             cssW: s.vp.cssWidth, cssH: s.vp.cssHeight, dpr, rc: G.rc, cx: G.cx, cy: G.cy, R: G.R,
             closed: S.closed, fade: [G.apo * 0.92, G.Rb * 1.9, t.dark ? 0.55 : 0.5], mode: s.mode,
             histology: s.histology, animalDisplay: o.animalDisplay, maxLevel: s.field ? s.field.maxLevel : 0, isoLatest: s.field ? s.field.latest : 0, step: 8,
             brush: { q: po ? po.q - cq : 0, r: po ? po.r - cr : 0, size: po ? po.brushSize : 0, active: !!(po && po.inside && po.mode !== 'none'), ink: paintInk(po ? po.mode : 'seed', t) },
             cq, cr, W: s.grid.W, side: s.field ? s.field.side : 0, theme: t, rampInk,
-            strainInks: inks, strainAngles: angles,
+            wheel: wheelParams(),
             ghosts: S.closed ? edgeGluings(s.topology, G.R) : null
         });
     }

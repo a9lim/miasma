@@ -16,8 +16,8 @@
 //
 // The encodings match render.js, the Canvas fallback, mark for mark.
 //
-// State texel: x compartment · y flags | status<<4 · z animal | (strain slot+1)<<3
-// · w ramp value (age, health or immunity, 0–255).
+// State texel: x compartment · y flags | status<<4 · z animal | (hatch angle code+1)<<3
+// · w ramp value (age, health or immunity, 0–255), or the strain view's hue byte.
 
 import { memoryOf, susceptibility } from './immunity.js';
 import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
@@ -59,6 +59,25 @@ fn hatchD(wp: vec2f, ang: f32, gap: f32) -> f32 {
   return abs(fract(t + 0.5) - 0.5) * gap;
 }
 fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
+// The strain hue wheel (strain-style.js): OKLCH at u[21].xy, hurried through
+// the accent's hue u[21].z by u[21].w, chroma dipping there by u[22].x over
+// u[22].y radians; returns gamma-encoded sRGB.
+fn wheel(hb: f32) -> vec3f {
+  let w = u[21]; let w2 = u[22];
+  let v = fract((hb + 0.5) / 256.0 + 0.5);
+  let h = w.z + 6.2831853 * v + w.w * sin(6.2831853 * v);
+  let dh = abs(atan2(sin(h - w.z), cos(h - w.z)));
+  let C = w.y * (1.0 - w2.x * exp(-(dh / w2.y) * (dh / w2.y)));
+  let ca = C * cos(h); let cb = C * sin(h); let L = w.x;
+  let l_ = L + 0.3963377774 * ca + 0.2158037573 * cb;
+  let m_ = L - 0.1055613458 * ca - 0.0638541728 * cb;
+  let s_ = L - 0.0894841775 * ca - 1.2914855480 * cb;
+  let l = l_ * l_ * l_; let m = m_ * m_ * m_; let s = s_ * s_ * s_;
+  let lin = clamp(vec3f(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                       -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                       -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(lin, vec3f(1.0 / 2.4)) - 0.055, 12.92 * lin, lin <= vec3f(0.0031308));
+}
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let dpr = u[0].z; let rc = u[0].w; let R = u[1].z;
@@ -139,8 +158,8 @@ fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
         let bin = floor(min(ramp, 0.999) * 8.0);
         c = over(c, u[15].xyz, (0.08 + 0.1 * bin) * fillM);
       } else if (carrierHatch) {
-        let ink = u[21 + slot].xyz;
-        let ang = u[29 + slot / 4][slot % 4];
+        let ink = wheel(f32(s.w));
+        let ang = f32(slot) / 31.0 * 3.1415927;
         c = over(c, ink, 0.14 * fillM);
         c = over(c, ink, fillM * cover(hatchD(wp, ang, max(2.4, rc * 0.78)), max(0.4, rc * 0.12), dpr));
       } else if (comp == 0) {
@@ -309,7 +328,7 @@ export async function createGpuPlate(canvas) {
     }
 
     /** Pack the grid into the state texture. */
-    function uploadState(grid, mode, opts, slotOf) {
+    function uploadState(grid, mode, opts, markOf) {
         let ageMax = opts.ageMax || 5000;
         const im = opts.immunity, mem = im ? memoryOf(grid) : null;
         const { W, H } = grid;
@@ -325,9 +344,10 @@ export async function createGpuPlate(canvas) {
             d[o] = c;
             d[o + 1] = (flags[i] & 15) | ((status[i] & 15) << 4);
             let z = an ? an[i] & 7 : 0;
-            if (mode === 'strain' && (c === 1 || c === 2 || c === 7)) {
-                const sl = slotOf(grid, i);
-                if (sl >= 0) z |= (sl + 1) << 3;
+            if (mode === 'strain') {
+                const mk = c === 1 || c === 2 || c === 7 ? markOf(grid, i, opts.strains) : -1;
+                if (mk >= 0) { z |= (mk & 31) << 3; d[o + 3] = mk >> 8; }
+                else d[o + 3] = 0;
             }
             d[o + 2] = z;
             if (mode === 'age') d[o + 3] = Math.min(255, (grid.age[i] / ageMax) * 255) | 0;
@@ -349,7 +369,7 @@ export async function createGpuPlate(canvas) {
     }
 
     /** Draw. p: { cssW, cssH, dpr, rc, cx, cy, R, closed, fade:[r0,r1,peak], mode, histology,
-     *  animalDisplay, maxLevel, isoLatest, step, brush:{q,r,size,active,ink}, cq, cr, W, side, theme, strainInks, strainAngles, ghosts } */
+     *  animalDisplay, maxLevel, isoLatest, step, brush:{q,r,size,active,ink}, cq, cr, W, side, theme, wheel, ghosts } */
     function render(p) {
         if (lost || !stateTex) return false;
         const t = p.theme, set = (i, a, b = 0, c = 0, d = 0) => { U[i * 4] = a; U[i * 4 + 1] = b; U[i * 4 + 2] = c; U[i * 4 + 3] = d; };
@@ -366,8 +386,9 @@ export async function createGpuPlate(canvas) {
         col(11, t.hatch); col(12, t.zombie); col(13, t.maternal); col(14, t.cordon);
         col(15, p.rampInk || t.inks.umber); col(16, t.inks.madder); col(17, t.inks.violet); col(18, t.inks.indigo); col(19, t.inks.umber);
         set(20, t.dark ? 1 : 0, t.dark ? 0.36 : 0.3, t.dark ? 0.62 : 0.55, t.dark ? 0.6 : 0.55);
-        for (let k = 0; k < 8; k++) col(21 + k, p.strainInks[k]);
-        for (let k = 0; k < 8; k++) U[29 * 4 + k] = p.strainAngles[k] * Math.PI / 180;
+        const w = p.wheel;
+        set(21, w.L, w.C, w.accentHue * Math.PI / 180, w.hurry);
+        set(22, w.dip, w.dipWidth * Math.PI / 180, 0, 0);
         for (let e = 0; e < 6; e++) {
             const g = p.ghosts ? p.ghosts[e] : null;
             if (!g) { set(31 + e, 1, 0, 0, 1); set(37 + e, 1e6, 1e6, 0, 0); continue; }

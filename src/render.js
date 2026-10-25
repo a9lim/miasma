@@ -26,7 +26,7 @@
 import { memoryOf, susceptibility } from './immunity.js';
 import { Compartment, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.js';
 import { hexBounds } from './topology.js';
-import { strainSlot, strainStyle, STRAIN_STYLES } from './strain-style.js';
+import { ANGLE_CODES, angleCode, hueByte, hueColor } from './strain-style.js';
 import { drawHistology } from './histology.js';
 import { ISO_LABEL, isoFade } from './isochrones.js';
 
@@ -173,6 +173,24 @@ function hatch(c, angle, gap, w, h) {
     c.stroke();
 }
 
+// Hatch lines at `angle` (degrees) across the box (x0, y0)–(x1, y1), spaced
+// `gap` and anchored at the origin, so every group shares one phase.
+function hatchBox(c, angle, gap, x0, y0, x1, y1) {
+    const a = angle * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a), nx = -uy, ny = ux;
+    let smin = Infinity, smax = -Infinity, tmin = Infinity, tmax = -Infinity;
+    for (const x of [x0, x1]) for (const y of [y0, y1]) {
+        const s = x * nx + y * ny, t = x * ux + y * uy;
+        if (s < smin) smin = s; if (s > smax) smax = s;
+        if (t < tmin) tmin = t; if (t > tmax) tmax = t;
+    }
+    c.beginPath();
+    for (let s = Math.ceil(smin / gap) * gap; s <= smax; s += gap) {
+        c.moveTo(nx * s + ux * tmin, ny * s + uy * tmin);
+        c.lineTo(nx * s + ux * tmax, ny * s + uy * tmax);
+    }
+    c.stroke();
+}
+
 function fillCells(c, cells, fill, rr) {
     if (!cells.length) return;
     c.fillStyle = fill;
@@ -215,7 +233,10 @@ function drawAtlas(c, grid, T, rc, t, opts) {
     const comp = grid.compartment, flags = grid.flags, status = grid.status, rr = rc * 1.005;
     const human = opts.animalDisplay !== 'only';
     const S = [], E = [], I = [], R = [], D = [], Dc = [], V = [], M = [], Z = [], lat = [], car = [], H = [], Q = [];
-    const strains = mode === ViewMode.STRAIN ? Array.from({ length: STRAIN_STYLES }, () => []) : null;
+    // Strain view: carriers grouped by their dominant strain's mark, binned to
+    // ANGLE_CODES hatch angles × 32 hues (strain-style.js).
+    const strains = mode === ViewMode.STRAIN && opts.strains ? new Map() : null;
+    const reg = opts.strains;
     const ramp = mode === ViewMode.AGE || mode === ViewMode.HEALTH || mode === ViewMode.IMMUNITY ? [] : null;
     for (let k = 0; k < act.length; k++) {
         const i = act[k], x = comp[i];
@@ -224,7 +245,13 @@ function drawAtlas(c, grid, T, rc, t, opts) {
         if (ramp && x !== Compartment.D) { ramp.push(i); continue; }
         if (strains && (x === Compartment.E || x === Compartment.I || x === Compartment.Z)) {
             const sid = dominantStrain(grid, i);
-            if (sid !== 0xFFFF) { strains[strainSlot(sid)].push(i); continue; }
+            if (sid !== 0xFFFF && sid < reg.ag_x.length) {
+                const key = angleCode(reg.ag_x[sid]) * 32 + (hueByte(reg.ag_y[sid]) >> 3);
+                let g = strains.get(key);
+                if (!g) strains.set(key, g = []);
+                g.push(i);
+                continue;
+            }
         }
         switch (x) {
             case Compartment.S: S.push(i); break;
@@ -277,14 +304,17 @@ function drawAtlas(c, grid, T, rc, t, opts) {
             c.restore();
         }
         if (strains) {
-            for (let s = 0; s < STRAIN_STYLES; s++) {
-                const cells = strains[s];
-                if (!cells.length) continue;
-                const st = strainStyle(s);
-                fillCells(c, cells, t.rgba(st.ink, 0.14), rr);
+            for (const [key, cells] of strains) {
+                const angle = ((key >> 5) / ANGLE_CODES) * 180, ink = hueColor((key & 31) * 8 + 4);
+                let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+                for (const i of cells) {
+                    const x = T.px[i], y = T.py[i];
+                    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+                }
+                fillCells(c, cells, t.rgba(ink, 0.14), rr);
                 c.save(); clipCells(c, cells, rr);
-                c.strokeStyle = st.ink; c.lineWidth = Math.max(0.8, rc * 0.24);
-                hatch(c, st.angle, Math.max(2.4, rc * 0.78), T.w, T.h);
+                c.strokeStyle = ink; c.lineWidth = Math.max(0.8, rc * 0.24);
+                hatchBox(c, angle, Math.max(2.4, rc * 0.78), x0 - rc, y0 - rc, x1 + rc, y1 + rc);
                 c.restore();
             }
         }
@@ -340,10 +370,14 @@ function crosses(c, cells, rc, color, lw) {
     c.lineCap = 'butt';
 }
 
-/** Style slot (0..7) of a cell's dominant active strain, or -1. */
-export function strainSlotOf(grid, i) {
+/**
+ * The GPU texel's mark of a cell's dominant active strain: (angle code + 1)
+ * | hue byte << 8, or -1 when it carries none.
+ */
+export function strainMarkOf(grid, i, reg) {
     const id = dominantStrain(grid, i);
-    return id === 0xFFFF ? -1 : strainSlot(id);
+    if (id === 0xFFFF || !reg || id >= reg.ag_x.length) return -1;
+    return (angleCode(reg.ag_x[id]) + 1) | (hueByte(reg.ag_y[id]) << 8);
 }
 
 /** The ink of a paint brush's footprint. */

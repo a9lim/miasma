@@ -25,7 +25,9 @@ import {
 } from './strains.js';
 import { STRAIN_GENOME_LAYOUT, buildSliderRow } from './params.js';
 import { Compartment } from './config.js';
-import { strainStyle, strainInkVar } from './strain-style.js';
+import { strainStyle } from './strain-style.js';
+import { pickAntigenic, renderAntigenicMap } from './antigenic-map.js';
+import { agDist } from './immunity.js';
 
 // Top-K list cap. Anything beyond this gets surfaced via the "+N hidden" hint.
 const MAX_ROWS = 8;
@@ -138,9 +140,44 @@ function buildPanelSkeleton(panelEl) {
     // Wipe any placeholder content (the Phase-1 .panel-hint).
     while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
 
-    // Phase D: force-directed strain forest. Sits above the rankings list
-    // so users see the lineage shape first, then the dominant strains.
-    // Click hit-test routes through selectStrain → same flow as a row click.
+    // Fig. 3, the antigenic map, then Fig. 4, the phylogeny, above the
+    // rankings. Clicks on either route through selectStrain, like a row.
+    const figure = (cls, label) => {
+        const f = document.createElement('figure');
+        f.className = 'strain-figure';
+        const cap = document.createElement('figcaption');
+        cap.className = 'caption strain-caption';
+        const num = document.createElement('span');
+        num.className = 'caption-n';
+        num.textContent = label;
+        const text = document.createElement('span');
+        cap.append(num, ' ', text);
+        return { f, cap, text };
+    };
+    const agFig = figure('antigenic', 'Fig. 3.');
+    const agMap = document.createElement('canvas');
+    agMap.className = 'antigenic-map-canvas';
+    agMap.setAttribute('aria-label', 'Antigenic map of the strains on a torus');
+    agMap.addEventListener('click', (ev) => {
+        const rect = agMap.getBoundingClientRect();
+        const id = pickAntigenic(ev.clientX - rect.left, ev.clientY - rect.top);
+        if (id !== -1) selectStrain(panelEl, id);
+    });
+    const vaxRow = document.createElement('div');
+    vaxRow.className = 'vax-row';
+    const vaxBtn = document.createElement('button');
+    vaxBtn.type = 'button';
+    vaxBtn.className = 'tool-btn vax-match-btn';
+    vaxBtn.addEventListener('click', () => {
+        const cb = panelEl._lineageMatchVaccine;
+        if (typeof cb === 'function') cb(panelEl._lineageVaxTarget);
+    });
+    vaxRow.appendChild(vaxBtn);
+    agFig.f.append(agMap, agFig.cap, vaxRow);
+    panelEl.appendChild(agFig.f);
+
+    const phyFig = figure('phylogeny', 'Fig. 4.');
+    phyFig.text.textContent = 'Each living strain and its ancestors as branches from the day they emerged, joined to their parent on that day; a dashed joint is a recombinant\'s second parent, and a branch\'s weight is its prevalence now.';
     const forest = document.createElement('canvas');
     forest.className = 'strain-forest-canvas';
     forest.dataset.role = 'lineage-phylogeny';
@@ -152,7 +189,8 @@ function buildPanelSkeleton(panelEl) {
         const id = pickPhylo(px, py);
         if (id !== -1) selectStrain(panelEl, id);
     });
-    panelEl.appendChild(forest);
+    phyFig.f.append(forest, phyFig.cap);
+    panelEl.appendChild(phyFig.f);
 
     // Header row: title + total-count caption. Mirrors the .stat-row pattern
     // but uses a different role tag so it doesn't get mistaken for a compartment.
@@ -202,6 +240,11 @@ function buildPanelSkeleton(panelEl) {
     // bar widths instead of tearing the DOM down every tick.
     panelEl._lineageRefs = {
         forestEl: forest,
+        agMapEl:  agMap,
+        agCapEl:  agFig.text,
+        vaxBtn,
+        lastMapSignature: '',
+        lastMapDraw: 0,
         totalEl:  headerValue,
         listEl:   list,
         hintEl:   hint,
@@ -243,7 +286,9 @@ const HEADER_FIELDS = [
     { key: 'type',      label: 'Type'      },
     { key: 'parent',    label: 'Parent'    },
     { key: 'parent2',   label: 'Parent 2'  },
-    { key: 'birthTick', label: 'Born tick' }
+    { key: 'birthTick', label: 'Born tick' },
+    { key: 'antigen',   label: 'Antigen'   },
+    { key: 'gen',       label: 'Generation' }
 ];
 
 // Build a per-strain "target" object that buildSliderRow can read/write
@@ -404,6 +449,8 @@ function updateDetail(detailEl, registry, strainId) {
     }
 
     set('birthTick', String(s.birthTick));
+    set('antigen', `${s.agX.toFixed(2)}, ${s.agY.toFixed(2)} · ${agDist(0, 0, s.agX, s.agY).toFixed(2)} from α`);
+    set('gen', String(s.gen));
 
     // Pull every genome-editor slider value from the registry. Cheap text-
     // equality guards skip no-op writes — when the same strain is updated
@@ -501,7 +548,7 @@ function renderPhylogeny(canvas, registry, prevalence, selectedId, tick) {
         c.fillText(`${_phylo.hidden} rarer living ${_phylo.hidden === 1 ? 'strain' : 'strains'} not drawn`, x0, ay + 19);
     }
     for (const id of rows) {
-        const st = strainStyle(id), y = yOf.get(id);
+        const st = strainStyle(registry, id), y = yOf.get(id);
         const born = registry.birthTick[id] | 0;
         const dead = !!registry.extinct[id];
         const end = dead ? (registry.extinctTick[id] | 0) : now;
@@ -589,16 +636,22 @@ function clearActiveRow(listEl) {
 // strain id appears in the top-N for the first time. Returned record is
 // stashed in the row pool keyed by id; subsequent renders mutate text /
 // width / class on the same nodes without recreating them.
+// A row's swatch and bar take the strain's mark (strain-style.js) for the
+// current theme; repainted when the id is reused or the theme changes.
+function paintRow(rec, registry, id) {
+    const st = strainStyle(registry, id);
+    rec.row.style.setProperty('--strain-color', st.ink);
+    rec.swatch.style.background = `repeating-linear-gradient(${st.angle.toFixed(1)}deg, ${st.ink} 0 1px, transparent 1px 3px)`;
+    rec.theme = document.documentElement.dataset.theme;
+}
+
 function buildRow(id, name, panelEl, onClick) {
     const el = document.createElement('div');
     el.className = 'strain-row';
     el.dataset.strainId = String(id);
-    el.style.setProperty('--strain-color', `var(${strainInkVar(id)})`);
 
     const swatch = document.createElement('span');
     swatch.className = 'strain-swatch';
-    const st = strainStyle(id);
-    swatch.style.background = `repeating-linear-gradient(${st.angle}deg, var(${strainInkVar(id)}) 0 1px, transparent 1px 3px)`;
     el.appendChild(swatch);
 
     const nameEl = document.createElement('span');
@@ -634,7 +687,7 @@ function buildRow(id, name, panelEl, onClick) {
         if (typeof onClick === 'function') onClick(rid);
     });
 
-    return { row: el, name: nameEl, prev, fill };
+    return { row: el, swatch, name: nameEl, prev, fill, theme: null };
 }
 
 /**
@@ -652,8 +705,10 @@ function buildRow(id, name, panelEl, onClick) {
  * @param {object} registry — for detail-block parent lookups
  * @param {(strainId:number) => void} [onClick]
  * @param {number} [tick] — today, the right edge of the phylogeny's time axis
+ * @param {{vax:{x:number,y:number}, onMatchVaccine:(id:number)=>void}} [extra]
+ *   — the vaccine's antigen, and what "match the vaccine" does
  */
-export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) {
+export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick, extra) {
     if (!panelEl) return;
     if (panelEl.dataset.lineageReady !== '1') {
         buildPanelSkeleton(panelEl);
@@ -715,9 +770,13 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) 
         if (!rec) {
             rec = buildRow(row.id, row.name, panelEl, onClick);
             rowPool.set(row.id, rec);
-        } else if (rec.row.firstChild && rec.name.textContent !== row.name) {
-            // Names are stable after registration, but be safe across resets.
+            paintRow(rec, registry, row.id);
+        } else if (rec.name.textContent !== row.name) {
+            // A reclaimed id reused by a new strain (names follow births).
             rec.name.textContent = row.name;
+            paintRow(rec, registry, row.id);
+        } else if (rec.theme !== document.documentElement.dataset.theme) {
+            paintRow(rec, registry, row.id);
         }
 
         const last = lastVals.get(row.id);
@@ -798,6 +857,28 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) 
         updateDetail(detailEl, registry, activeId);
     } else if (activeId !== null) {
         detailEl.style.display = 'none';
+    }
+
+    // ── Antigenic map ──
+    const vax = extra && extra.vax;
+    panelEl._lineageMatchVaccine = extra && extra.onMatchVaccine;
+    if (registry && refs.agMapEl) {
+        const target = activeId !== null && getStrain(registry, activeId) && !isExtinct(registry, activeId)
+            ? activeId : (prevalence.length ? prevalence[0].id : 0);
+        panelEl._lineageVaxTarget = target;
+        const label = 'Match the vaccine to ' + registry.names[target];
+        if (refs.vaxBtn.textContent !== label) refs.vaxBtn.textContent = label;
+        const now = performance.now();
+        const signature = bornCount(registry) + '|' + countLiving(registry) + '|' + activeId + '|' + (vax ? vax.x + ',' + vax.y : '') + '|' + document.documentElement.dataset.theme;
+        if (now - refs.lastMapDraw >= 250 || refs.lastMapSignature !== signature) {
+            const m = renderAntigenicMap(refs.agMapEl, registry, prevalence, activeId, vax);
+            const where = `The dominant strain, ${m.name}, sits ${m.fromA.toFixed(1)} units from α` +
+                (vax ? ` and ${m.fromV.toFixed(1)} from the vaccine.` : '.');
+            const text = 'Every strain at its antigenic position on a torus 8 units around, whose opposite edges are the same place. On the plate a strain is hatched at the angle and in the colour of its place here. Hexagons are living strains, sized by prevalence; dots are their ancestors; the line is the dominant strain\'s descent; the cross is the vaccine, ringed where its protection falls to 1/e. ' + where;
+            if (refs.agCapEl.textContent !== text) refs.agCapEl.textContent = text;
+            refs.lastMapSignature = signature;
+            refs.lastMapDraw = now;
+        }
     }
 
     // ── Phylogeny ──

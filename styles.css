@@ -516,6 +516,11 @@ body.sim-body {
 .strain-prev { text-align: right; font-variant-numeric: lining-nums tabular-nums; color: var(--text); }
 .strain-bar { grid-column: 2 / 4; height: 1px; background: var(--border); position: relative; }
 .strain-bar-fill { position: absolute; left: 0; top: -0.5px; height: 2px; background: var(--strain-color, currentColor); }
+.strain-figure { margin: 0 0 0.9rem; }
+.strain-caption { font-size: var(--font-sm); margin-top: 0.3rem; }
+.antigenic-map-canvas { display: block; width: 100%; height: 300px; touch-action: pan-y; cursor: pointer; }
+.vax-row { margin-top: 0.4rem; }
+.vax-match-btn { font-size: var(--font-sm); }
 .strain-forest-canvas { display: block; width: 100%; height: 240px; margin: 0.4rem 0 0.2rem; touch-action: pan-y; }
 .strain-detail { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }
 

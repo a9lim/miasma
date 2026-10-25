@@ -1,29 +1,107 @@
-// strain-style.js — how a strain is drawn: an ink and a hatch angle.
+// strain-style.js — how a strain is drawn: hatch angle and hue from its antigen.
 //
-// Pattern before hue: on the plate's strain view every carrier is hatched,
-// and strains differ by the angle of the hatching as well as its ink, so
-// four co-circulating strains read as four directions even in grayscale.
-// The phylogeny and the strain list use the same pair. Styles cycle by
-// strain id, so a strain keeps its style for life.
+// A strain's antigenic position (ag_x, ag_y) on the torus of immunity.js is
+// drawn directly: ag_x turns the hatching through 180°, ag_y walks the hue
+// once around a wheel. Both axes are periodic, like the torus, so
+// antigenically close strains look alike everywhere, drift reads as a slow
+// turn of the hatching and a drift of colour, and a jump as a new colour.
+// Pattern before hue: the angle alone separates strains in grayscale.
+//
+// The wheel is OKLCH at one lightness and chroma per theme, fitted like the
+// inks so every hue clears 4.5:1 on the canvas and the panel (light L 0.525,
+// C 0.08; dark L 0.62, C 0.10). The accent is the one red: α sits opposite
+// it, the wheel hurries through the accent's hue, and its chroma dips there,
+// so no strain reads as the disease. gpu-plate.js computes the same wheel in
+// WGSL from wheelParams().
 
-const INKS   = ['indigo', 'verdigris', 'ochre', 'mulberry', 'prussian', 'sienna', 'viridian', 'violet'];
-const ANGLES = [45, -45, 0, 90, 22.5, -67.5, 67.5, -22.5];
+import { ANTIGENIC_SIZE } from './config.js';
 
-export const STRAIN_STYLES = INKS.length;
+const WHEEL = {
+    light: { L: 0.525, C: 0.08, accentHue: 24.9 },   // accentHue: OKLCH hue of the theme's accent
+    dark:  { L: 0.62,  C: 0.10, accentHue: 19.9 }
+};
+const HURRY = 0.35;        // the wheel turns (1 ± HURRY)× as fast; fastest through the accent
+const DIP = 0.5;           // chroma × (1 − DIP·exp(−(Δh / DIP_WIDTH)²)) near the accent's hue
+const DIP_WIDTH = 30;
+export const ANGLE_CODES = 31;   // hatch angles the GPU texel carries (5 bits, 0 = none)
 
-/** Style slot of a strain id (0..7). */
-export function strainSlot(id) {
-    return id % INKS.length;
+const theme = () => (typeof _themePalette === 'function' && _themePalette().dark ? 'dark' : 'light');
+
+/** The wheel for the current theme: { L, C, accentHue, hurry, dip, dipWidth }. */
+export function wheelParams() {
+    return Object.assign({ hurry: HURRY, dip: DIP, dipWidth: DIP_WIDTH }, WHEEL[theme()]);
 }
 
-/** { ink: CSS color for the current theme, inkName, angle (degrees) } */
-export function strainStyle(id) {
-    const k = strainSlot(id);
-    const inks = _themePalette().inks;
-    return { ink: inks[INKS[k]], inkName: INKS[k], angle: ANGLES[k] };
+/** Hatch angle in degrees, [0, 180), from the antigen's x. */
+export function markAngle(agx) {
+    return (agx / ANTIGENIC_SIZE) * 180;
 }
 
-/** The CSS variable name of a strain's ink, for DOM swatches. */
-export function strainInkVar(id) {
-    return '--ink-' + INKS[strainSlot(id)];
+/** Hatch angle code 0..ANGLE_CODES−1 for the GPU texel. */
+export function angleCode(agx) {
+    return Math.round((agx / ANTIGENIC_SIZE) * ANGLE_CODES) % ANGLE_CODES;
+}
+
+/** Hue byte 0..255 from the antigen's y. */
+export function hueByte(agy) {
+    return Math.floor((agy / ANTIGENIC_SIZE) * 256) & 255;
+}
+
+// OKLCH → sRGB (0..1, gamma-encoded), the reference conversion.
+function oklch(L, C, hDeg) {
+    const h = hDeg * Math.PI / 180, a = C * Math.cos(h), b = C * Math.sin(h);
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const lin = [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    ];
+    return lin.map(c => {
+        const v = Math.min(1, Math.max(0, c));
+        return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+    });
+}
+
+/** OKLCH hue and chroma of hue byte `hb` on wheel `w`. */
+function wheelAt(hb, w) {
+    const v = ((hb + 0.5) / 256 + 0.5) % 1;   // α (ag_y 0) sits opposite the accent
+    const h = w.accentHue + 360 * (v + w.hurry * Math.sin(2 * Math.PI * v) / (2 * Math.PI));
+    const dh = Math.abs(((h - w.accentHue) % 360 + 540) % 360 - 180);
+    return { h, C: w.C * (1 - w.dip * Math.exp(-(dh / w.dipWidth) * (dh / w.dipWidth))) };
+}
+
+const _lut = { light: null, dark: null };
+function lut() {
+    const t = theme();
+    if (!_lut[t]) {
+        const w = wheelParams();
+        _lut[t] = Array.from({ length: 256 }, (_, hb) => {
+            const { h, C } = wheelAt(hb, w);
+            return '#' + oklch(w.L, C, h).map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+        });
+    }
+    return _lut[t];
+}
+
+/** Colour (#rrggbb, current theme) of hue byte `hb`. */
+export function hueColor(hb) {
+    return lut()[hb & 255];
+}
+
+/** Colour (#rrggbb, current theme) of an antigen's y. */
+export function markColor(agy) {
+    return lut()[hueByte(agy)];
+}
+
+/** { angle (degrees), ink (#rrggbb) } of an antigenic position. */
+export function markAt(agx, agy) {
+    return { angle: markAngle(agx), ink: markColor(agy) };
+}
+
+/** { angle, ink } of strain `id` in registry `reg`. */
+export function strainStyle(reg, id) {
+    return markAt(reg.ag_x[id] || 0, reg.ag_y[id] || 0);
 }

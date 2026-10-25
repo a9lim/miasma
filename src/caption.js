@@ -59,7 +59,7 @@ export function plateCaption(sim, s, reff, strains, paint, histology, narrow) {
 }
 
 /** Rows of the Reference cartouche for the current view. */
-export function plateLegend(sim, s, toggles, histology, topStrains) {
+export function plateLegend(sim, s, toggles, histology, topStrains, reg) {
     const S = SURFACES[sim.topology], edges = [];
     if (S.closed) edges.push({ kind: 'G', label: 'Glued edge' });
     else edges.push({ kind: 'shore', label: 'Shore' });
@@ -69,7 +69,7 @@ export function plateLegend(sim, s, toggles, histology, topStrains) {
     switch (sim.viewMode) {
         case ViewMode.STRAIN: {
             for (const p of (topStrains || []).slice(0, 5)) {
-                const st = strainStyle(p.id);
+                const st = strainStyle(reg, p.id);
                 rows.push({ kind: 'H#', ink: st.ink, angle: st.angle, label: `Strain ${p.name}, ${p.fraction < 0.01 ? '<1' : Math.round(p.fraction * 100)}%` });
             }
             if (!rows.length) rows.push({ kind: 'S', label: 'No carriers' });

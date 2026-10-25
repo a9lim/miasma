@@ -169,7 +169,17 @@ export default function init(dom) {
         renderStrainPanel($.strainPanel, prevalence, strains, (id) => {
             sim.selectedStrain = id;
             if (sim.viewMode === ViewMode.IMMUNITY) markTile();
-        }, sim.tick);
+        }, sim.tick, {
+            vax: { x: params.vax_ag_x || 0, y: params.vax_ag_y || 0 },
+            onMatchVaccine: (id) => {
+                if (id == null || !getStrain(strains, id)) return;
+                params.vax_ag_x = strains.ag_x[id];
+                params.vax_ag_y = strains.ag_y[id];
+                strainsDirty = true;
+                requestFrame();
+                if (typeof showToast === 'function') showToast('Vaccine matched to ' + strains.names[id]);
+            }
+        });
     }
 
     const setCaption = window._colophon ? window._colophon.caption($.caption, 250) : () => {};
@@ -190,13 +200,14 @@ export default function init(dom) {
             dpr: canvas.width / Math.max(1, vp.cssWidth),
             contours: iso.contours, field: iso, histology: histology(),
             legend: plateLegend(sim, stats, toggles, histology(),
-                sim.viewMode === ViewMode.STRAIN ? computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains) : null),
+                sim.viewMode === ViewMode.STRAIN ? computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains) : null, strains),
             scaleUnit: histology() ? { per: 12, name: 'µm' } : null,
             tileOpts: {
                 mode: sim.viewMode,
                 animalDisplay: toggles.animalDisplay || 'dots',
                 ageMax: params.mortality_max_age || 5000,
                 immunity: sim.immunity,
+                strains,
                 paintOverlay: paintController.getHoverFootprint()
             }
         });
