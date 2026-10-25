@@ -34,8 +34,8 @@ export function initTimeseries(panelEl, canvasEl) {
         canvasEl.height = Math.round(h * dpr);
     }
 
-    function push(stats, counts) {
-        const t = stats.tick || 0;
+    function push(tick, counts) {
+        const t = tick || 0;
         lastTick = t;
         if (!counts || t <= 0) return;
         const k = Math.floor((t - 1) / ROSE_PERIOD);

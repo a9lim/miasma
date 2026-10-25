@@ -28,6 +28,7 @@ sessions, and parallel lanes fit a whole version in one.
 | 2026-10-24 | **The opening preset is Threshold,** calibrated to the ragged regime (§2.3). |
 | 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance, so drift never runs off the map and can recycle old antigens. **Strain marks encode the position directly:** one axis is hatch angle (0–180°), the other hue (0–360°), on an OKLCH wheel fitted like the inks and squeezed near the accent (§2.2). |
 | 2026-10-24 | **Isochrones fade** (a9's call): a cell's arrival is re-stamped when a new wave reaches it, contours fade with their age measured against the newest arrival, and contours never cross the cliff between waves (§2.2). |
+| 2026-10-25 | **The world's size is a setting** (Settings → World, `?r=`): 10,621 to 96,661 cells. The default stays 10,621, the size the presets and the opening were calibrated at, pending a9's call. |
 
 ### Open
 
@@ -374,8 +375,11 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 
 ## 6. Gotchas
 
-- A new per-cell field needs a scratch buffer, the copy-in and the swap
-  (`dynamics-scratch.js`). The memory arrays are per-cell fields.
+- A new per-cell field that a neighbour reads needs a scratch buffer, the copy-in and
+  the swap (`dynamics-scratch.js`); one that only its own cell reads (age, health, the
+  memory arrays, the animal's age) is written in place, after its last read in the tick.
+- A pass over every cell costs about 1 ms per 100,000 cells at full speed; the tick and
+  the frame visit only the cells that can act where they can (`AGENTS.md`, Performance).
 - Paint snapshots per-cell state for undo (`captureCellState`). Anything per-cell that
   paint can change belongs in it.
 - The GPU state texel is full: `z` packs the animal and `(strain slot + 1) << 3`, and `w`

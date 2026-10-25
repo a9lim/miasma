@@ -15,6 +15,7 @@
 // Nuclear size and density carry the state, so the slide reads in grayscale.
 
 import { Compartment, Flag } from './config.js';
+import { batched } from './render.js';
 
 function hash(i) {
     let x = (i ^ 0x9e3779b9) >>> 0;
@@ -40,9 +41,7 @@ export function drawHistology(c, grid, T, rc, t, opts) {
     const cell = (cells, fill, rr) => {
         if (!cells.length) return;
         c.fillStyle = fill;
-        c.beginPath();
-        for (const i of cells) hexAt(c, T.px[i], T.py[i], rr);
-        c.fill();
+        batched(c, cells.length, (k) => hexAt(c, T.px[cells[k]], T.py[cells[k]], rr), () => c.fill());
     };
     // cytoplasm; the paper between cells reads as the membranes
     const rr = rc * (rc > 3 ? 0.9 : 0.97);
@@ -52,15 +51,13 @@ export function drawHistology(c, grid, T, rc, t, opts) {
     const nuclei = (cells, color, size, jitter) => {
         if (!cells.length) return;
         c.fillStyle = color;
-        c.beginPath();
-        for (const i of cells) {
-            const h = hash(i), h2 = hash(i + 7919);
+        batched(c, cells.length, (k) => {
+            const i = cells[k], h = hash(i), h2 = hash(i + 7919);
             const x = T.px[i] + (h - 0.5) * jitter * rc, y = T.py[i] + (h2 - 0.5) * jitter * rc;
             const rx = size * rc * (0.85 + 0.3 * h2), ry = size * rc * (0.85 + 0.3 * h);
             c.moveTo(x + rx, y);
             c.ellipse(x, y, rx, ry, h * Math.PI, 0, Math.PI * 2);
-        }
-        c.fill();
+        }, () => c.fill());
     };
     nuclei(normal, t.rgba(haem, t.dark ? 0.82 : 0.72), 0.3, 0.25);
     nuclei(latent, t.rgba(haem, t.dark ? 0.86 : 0.78), 0.34, 0.25);
@@ -70,27 +67,23 @@ export function drawHistology(c, grid, T, rc, t, opts) {
     const dots = (cells, size) => {
         if (!cells.length) return;
         c.fillStyle = t.accent;
-        c.beginPath();
-        for (const i of cells) {
-            const x = T.px[i], y = T.py[i], s = Math.max(0.8, size * rc);
+        batched(c, cells.length, (k) => {
+            const x = T.px[cells[k]], y = T.py[cells[k]], s = Math.max(0.8, size * rc);
             c.moveTo(x + s, y); c.arc(x, y, s, 0, Math.PI * 2);
-        }
-        c.fill();
+        }, () => c.fill());
     };
     dots(latent, 0.1);
     dots(infected, 0.2);
     // karyorrhexis: the necrotic nucleus as dust
     c.fillStyle = t.rgba(haem, 0.6);
-    c.beginPath();
     const d = Math.max(0.7, rc * 0.12);
-    for (const i of necrotic) {
-        const h = hash(i);
+    batched(c, necrotic.length, (n) => {
+        const i = necrotic[n], h = hash(i);
         for (let k = 0; k < 3; k++) {
             const a = (h + k / 3) * Math.PI * 2;
             c.rect(T.px[i] + Math.cos(a) * rc * 0.32 - d / 2, T.py[i] + Math.sin(a) * rc * 0.32 - d / 2, d, d);
         }
-    }
-    c.fill();
+    }, () => c.fill());
 }
 
 function hexAt(c, x, y, rr) {

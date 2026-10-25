@@ -80,19 +80,22 @@ the parent site by absolute path. From a checkout of
     npm install && npm run build
     python3 -m http.server --directory dist 8000   # http://localhost:8000/miasma/
 
-Add `?seed=<any text>` to the URL for a reproducible run.
+Add `?seed=<any text>` to the URL for a reproducible run, and `?r=<radius>` for a
+world of that radius (Settings → World offers four sizes).
 
 ## How it's built
 
 Vanilla JavaScript modules with no dependencies; the lattice draws in WebGPU with a
-Canvas 2D fallback. Cell state is a
-set of typed arrays over a 120×120 axial grid masked to a hexagon of 10,621 cells. Each
-tick computes the next state into scratch buffers and swaps them in, so every cell
-updates simultaneously. `src/dynamics.js` holds the per-tick model, `src/topology.js`
-the surface identifications, `src/immunity.js` antigenic distance and immune memory,
-and `src/strains.js` the strain registry; `node src/topology.test.mjs` and
-`node src/immunity.test.mjs` run the tests. [AGENTS.md](AGENTS.md) has the
-detailed map.
+Canvas 2D fallback, and the isochrones build in a Web Worker. Cell state is a set of
+typed arrays over an axial grid masked to a regular hexagon: 10,621 cells by default,
+up to 96,661. Each tick computes the next state of what neighbours read into scratch
+buffers and swaps them in, so every cell updates simultaneously; the tick visits only
+the cells that can act where it can, and draws rare per-cell events by skipping to the
+next one. `src/dynamics.js` holds the per-tick model, `src/topology.js` the surface
+identifications, `src/immunity.js` antigenic distance and immune memory, and
+`src/strains.js` the strain registry; `node src/topology.test.mjs` and
+`node src/immunity.test.mjs` run the tests, and `node tools/bench.mjs` times the tick.
+[AGENTS.md](AGENTS.md) has the detailed map.
 
 ## License
 

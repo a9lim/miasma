@@ -7,6 +7,7 @@
 import { Animal, Compartment } from './config.js';
 import { EMPTY_STRAIN } from './strains.js';
 import { susceptibility } from './immunity.js';
+import { nextSuccess } from './prng.js';
 
 const ZERO_COUNTS = Object.freeze({
     spillovers: 0,
@@ -21,10 +22,11 @@ const ZERO_COUNTS = Object.freeze({
 
 export function runAnimalDynamics(ctx) {
     const animal = ctx.animal;
-    if (!animal) return ZERO_COUNTS;
+    // No animal anywhere: nothing below can happen (births need living neighbours).
+    if (!animal || !ctx.present) return ZERO_COUNTS;
 
     const {
-        active,
+        act,
         activeCount,
         animal_age,
         animal_strain,
@@ -33,10 +35,12 @@ export function runAnimalDynamics(ctx) {
         mem,
         next,
         nextAnimal,
-        nextAnimalAge,
         nextAnimalStrain,
         nextStrainIds,
         nextStrainLoads,
+        animalNb,
+        nearAnimal,
+        stamp,
         nbrIdx,
         params,
         rng,
@@ -93,47 +97,52 @@ export function runAnimalDynamics(ctx) {
     const aMortDelta = aMortMax - aMortBase;
     const aSafeMaxAge = animal_max_age > 0 ? animal_max_age : 1;
 
-    // 10a — Aging.
+    // 10a — Aging runs last, in place (below), after 10d's read of the age.
+
+    // A sweep over the animals: each cell's count of living animal neighbours
+    // for 10b (scattered from the living animals, which are far fewer than
+    // the empty cells that would otherwise each count theirs), and a stamp on
+    // every neighbour of an infectious animal, so 10c's susceptible animals
+    // look for a source only where there is one.
+    const animalBirthsOn = aBirthRate > 0 && aBirthThresh > 0;
+    if (animalBirthsOn) animalNb.fill(0);
     for (let ak = 0; ak < activeCount; ak++) {
-        const i = active ? active[ak] : ak;
-        if (animal[i] === Animal.VOID) {
-            nextAnimalAge[i] = 0;
-        } else {
-            const aa = animal_age ? animal_age[i] : 0;
-            nextAnimalAge[i] = aa < uint16Max ? aa + 1 : uint16Max;
+        const i = act[ak];
+        const a = animal[i];
+        if (a === Animal.VOID || a === Animal.D) continue;
+        const nbase = i * 6;
+        if (animalBirthsOn) {
+            for (let d = 0; d < 6; d++) {
+                const ni = nbrIdx[nbase + d];
+                if (ni >= 0) animalNb[ni]++;
+            }
+        }
+        if (a === Animal.I) {
+            for (let d = 0; d < 6; d++) {
+                const ni = nbrIdx[nbase + d];
+                if (ni >= 0) nearAnimal[ni] = stamp;
+            }
         }
     }
 
-    // 10b — Births.
-    if (aBirthRate > 0 && aBirthThresh > 0) {
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
-            if (animal[i] !== Animal.VOID) continue;
-            const nbase = i * 6;
-            let count = 0;
-            for (let d = 0; d < 6; d++) {
-                const ni = nbrIdx[nbase + d];
-                if (ni < 0) continue;
-                const na = animal[ni];
-                if (na !== Animal.VOID && na !== Animal.D) count++;
-            }
-            if (count >= aBirthThresh) {
+    // 10b — Births (a VOID cell with ≥ animal_birth_threshold living animal
+    // neighbours), in the same pass as
+    // 10c — SIR transitions + bidirectional spillover.
+    for (let ak = 0; ak < activeCount; ak++) {
+        const i = act[ak];
+        const a = animal[i];
+        if (a === Animal.VOID) {
+            const count = animalBirthsOn ? animalNb[i] : 0;
+            if (count >= aBirthThresh && count > 0) {
                 const pBirth = 1 - Math.pow(1 - aBirthRate, count);
                 if (rng() < pBirth) {
                     nextAnimal[i] = Animal.S;
-                    nextAnimalAge[i] = 0;
                     nextAnimalStrain[i] = EMPTY_STRAIN;
                     animalBirths++;
                 }
             }
+            continue;
         }
-    }
-
-    // 10c — SIR transitions + bidirectional spillover.
-    for (let ak = 0; ak < activeCount; ak++) {
-        const i = active ? active[ak] : ak;
-        const a = animal[i];
-        if (a === Animal.VOID) continue;
 
         if (a === Animal.S) {
             let infected = false;
@@ -152,23 +161,30 @@ export function runAnimalDynamics(ctx) {
                     infected = true;
                 }
             }
-            if (!infected) {
+            if (!infected && nearAnimal[i] === stamp) {
                 const nbase = i * 6;
                 let pNot = 1;
                 let kInf = 0;
-                let chosenSid = EMPTY_STRAIN;
                 for (let d = 0; d < 6; d++) {
                     const ni = nbrIdx[nbase + d];
                     if (ni < 0) continue;
                     if (animal[ni] !== Animal.I) continue;
-                    const nsid = animal_strain ? animal_strain[ni] : EMPTY_STRAIN;
-                    const nb = animalBetaOf(nsid);
+                    const nb = animalBetaOf(animal_strain ? animal_strain[ni] : EMPTY_STRAIN);
                     if (nb <= 0) continue;
                     pNot *= (1 - nb);
                     kInf++;
-                    if (rng() * kInf < 1) chosenSid = nsid;
                 }
                 if (kInf > 0 && rng() < (1 - pNot)) {
+                    // The strain comes from one of the transmitting
+                    // neighbours, uniformly.
+                    let pick = (rng() * kInf) | 0, chosenSid = EMPTY_STRAIN;
+                    for (let d = 0; d < 6; d++) {
+                        const ni = nbrIdx[nbase + d];
+                        if (ni < 0 || animal[ni] !== Animal.I) continue;
+                        const nsid = animal_strain ? animal_strain[ni] : EMPTY_STRAIN;
+                        if (animalBetaOf(nsid) <= 0) continue;
+                        if (pick-- === 0) { chosenSid = nsid; break; }
+                    }
                     nextAnimal[i] = Animal.I;
                     nextAnimalStrain[i] = chosenSid;
                     animalSToI++;
@@ -219,29 +235,41 @@ export function runAnimalDynamics(ctx) {
         } else if (a === Animal.D) {
             if (adisp > 0 && rng() < adisp) {
                 nextAnimal[i] = Animal.VOID;
-                nextAnimalAge[i] = 0;
                 nextAnimalStrain[i] = EMPTY_STRAIN;
                 animalDisposed++;
             }
         }
     }
 
-    // 10d — Age-driven natural mortality.
-    if (aMortBase > 0 || aMortDelta > 0) {
-        for (let ak = 0; ak < activeCount; ak++) {
-            const i = active ? active[ak] : ak;
+    // 10d — Age-driven natural mortality, rolled by skipping: candidates at
+    // the highest rate any age has, each kept with its own rate over that one.
+    const aMortP = Math.min(1, Math.max(aMortBase, aMortBase + aMortDelta));
+    if (aMortP > 0) {
+        const lq = Math.log1p(-aMortP);
+        for (let ak = nextSuccess(-1, lq, rng); ak < activeCount; ak = nextSuccess(ak, lq, rng)) {
+            const i = act[ak];
             const a = animal[i];
             if (a !== Animal.S && a !== Animal.I && a !== Animal.R) continue;
             const aa = animal_age ? animal_age[i] : 0;
             const aNorm = aa < aSafeMaxAge ? aa / aSafeMaxAge : 1;
-            const pDie = aMortBase + aMortDelta * aNorm;
-            if (pDie > 0 && rng() < pDie) {
+            const pDie = Math.min(1, aMortBase + aMortDelta * aNorm);
+            if (pDie > 0 && rng() * aMortP < pDie) {
                 if (nextAnimal[i] !== Animal.D && nextAnimal[i] !== Animal.VOID) {
                     nextAnimal[i] = Animal.D;
                     nextAnimalStrain[i] = EMPTY_STRAIN;
                     animalAgeOut++;
                 }
             }
+        }
+    }
+
+    // 10a — Aging, in place: an animal present at the start of the tick and
+    // still present ages by 1; a newborn or a disposed carcass is age 0.
+    if (animal_age) {
+        for (let ak = 0; ak < activeCount; ak++) {
+            const i = act[ak];
+            if (animal[i] === Animal.VOID || nextAnimal[i] === Animal.VOID) animal_age[i] = 0;
+            else if (animal_age[i] < uint16Max) animal_age[i]++;
         }
     }
 

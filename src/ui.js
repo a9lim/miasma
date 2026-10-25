@@ -6,7 +6,7 @@
 // same tables the plate uses. Settings holds presets, the map view, the
 // toggles and the advanced parameters; the transport row's eye jumps there.
 
-import { topoFromString, topoToString, ViewMode } from './config.js';
+import { topoFromString, topoToString, ViewMode, WORLD_RADII, worldCells } from './config.js';
 import { SURFACES, cornerCones } from './topology.js';
 import { buildSettingsPanel, syncSliders } from './params.js';
 import { buildTogglesPanel, syncToggles } from './toggles.js';
@@ -129,10 +129,37 @@ export function setupUI($, sim, hooks) {
         while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
         const section = (cls) => { const d = document.createElement('div'); d.className = 'settings-section ' + cls; panelEl.appendChild(d); return d; };
         if (mapControlsEl) panelEl.appendChild(mapControlsEl);
+        buildWorldPicker(section('settings-world'));
         togglesEl = section('settings-toggles');
         paramsEl = section('settings-params');
         if (hooks.toggles) buildTogglesPanel(togglesEl, hooks.toggles, (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); });
         if (hooks.params) buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
+    }
+
+    // ── World size: cells in the world; a new size starts the run again ──
+    function buildWorldPicker(el) {
+        const head = document.createElement('div');
+        head.className = 'toggles-section-header';
+        head.textContent = 'World';
+        const group = document.createElement('div');
+        group.className = 'mode-toggles inline-mode-toggles';
+        group.setAttribute('role', 'group');
+        group.setAttribute('aria-label', 'World size, in cells');
+        for (const R of WORLD_RADII) {
+            const b = document.createElement('button');
+            b.className = 'mode-btn' + (R === sim.R ? ' active' : '');
+            b.dataset.world = String(R);
+            b.textContent = worldCells(R).toLocaleString('en-US');
+            b.title = worldCells(R).toLocaleString('en-US') + ' cells, ' + R + ' from the centre to an edge';
+            group.appendChild(b);
+        }
+        const hint = document.createElement('p');
+        hint.className = 'panel-hint';
+        hint.textContent = 'Cells in the world. A new size starts the run again; zoom in to read a large one.';
+        el.append(head, group, hint);
+        window._forms.bindModeGroup(group, 'world', (val) => {
+            if (hooks.onWorldChange) hooks.onWorldChange(parseInt(val, 10));
+        });
     }
 
     // The transport eye opens Settings at the map view.
@@ -168,7 +195,7 @@ export function setupUI($, sim, hooks) {
             ],
             shortcuts: sim._shortcuts || [],
             repo: 'https://github.com/a9lim/a9lim.github.io',
-            lastUpdated: '2026-10-24'
+            lastUpdated: '2026-10-25'
         });
     }
 

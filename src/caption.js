@@ -9,7 +9,8 @@ import { ISO_STEP } from './isochrones.js';
 import { getPreset } from './presets.js';
 import { agDist } from './immunity.js';
 
-const fmt = (n) => Math.round(n).toLocaleString('en-US');
+const NUMBER = new Intl.NumberFormat('en-US');
+const fmt = (n) => NUMBER.format(Math.round(n));
 
 // One sentence per surface on what its edges do.
 const SURFACE_NOTE = {

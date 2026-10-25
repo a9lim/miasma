@@ -304,7 +304,9 @@ export async function createGpuPlate(canvas) {
         if (!stateTex || stateTex.width !== W || stateTex.height !== H) {
             if (stateTex) stateTex.destroy();
             stateTex = device.createTexture({ size: [W, H], format: 'rgba8uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+            // cells outside the world stay EMPTY; uploadState rewrites only the world's
             stateData = new Uint8Array(W * H * 4);
+            for (let i = 0; i < W * H; i++) stateData[i * 4] = 8;
             bind = null;
         }
         if (!fieldTex || fieldSide !== side) {
@@ -335,24 +337,22 @@ export async function createGpuPlate(canvas) {
         ensureTextures(W, H, fieldSide || 3);
         const d = stateData, comp = grid.compartment, flags = grid.flags, status = grid.status, an = grid.animal;
         const act = grid.activeIndices;
-        d.fill(0);
-        for (let i = 0; i < W * H; i++) d[i * 4] = 8;
         // age reads relative to the oldest living cell, so the ramp spans the population
         if (mode === 'age') { ageMax = 1; for (let k = 0; k < act.length; k++) { const i = act[k]; if (comp[i] !== 8 && comp[i] !== 4 && grid.age[i] > ageMax) ageMax = grid.age[i]; } }
+        const strain = mode === 'strain', age = mode === 'age', health = mode === 'health', immunity = mode === 'immunity' && im;
         for (let k = 0; k < act.length; k++) {
             const i = act[k], o = i * 4, c = comp[i];
             d[o] = c;
             d[o + 1] = (flags[i] & 15) | ((status[i] & 15) << 4);
-            let z = an ? an[i] & 7 : 0;
-            if (mode === 'strain') {
+            let z = an ? an[i] & 7 : 0, w = 0;
+            if (strain) {
                 const mk = c === 1 || c === 2 || c === 7 ? markOf(grid, i, opts.strains) : -1;
-                if (mk >= 0) { z |= (mk & 31) << 3; d[o + 3] = mk >> 8; }
-                else d[o + 3] = 0;
-            }
+                if (mk >= 0) { z |= (mk & 31) << 3; w = mk >> 8; }
+            } else if (age) w = Math.min(255, (grid.age[i] / ageMax) * 255) | 0;
+            else if (health) w = Math.max(0, Math.min(255, grid.health[i] * 255)) | 0;
+            else if (immunity) w = Math.round(255 * (1 - susceptibility(mem, i, im.ax, im.ay, im.cInf, im.cVax)));
             d[o + 2] = z;
-            if (mode === 'age') d[o + 3] = Math.min(255, (grid.age[i] / ageMax) * 255) | 0;
-            else if (mode === 'health') d[o + 3] = Math.max(0, Math.min(255, grid.health[i] * 255)) | 0;
-            else if (mode === 'immunity' && im) d[o + 3] = Math.round(255 * (1 - susceptibility(mem, i, im.ax, im.ay, im.cInf, im.cVax)));
+            d[o + 3] = w;
         }
         device.queue.writeTexture({ texture: stateTex }, d, { bytesPerRow: W * 4 }, [W, H]);
     }

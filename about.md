@@ -2,7 +2,7 @@
 name: Miasma
 title: Miasma — Spatial Epidemic Simulator
 description: Run six spatial epidemic experiments, from the outbreak threshold and herd immunity to antigenic drift and spillover, on four glued hex-grid surfaces drawn as an epidemiological atlas, and paint your own interventions.
-updated: 2026-10-24
+updated: 2026-10-25
 ---
 
 # Miasma
@@ -23,7 +23,7 @@ You can pick one of six experiments, each with one knob and a number measured li
 
 Interventions are a paint brush. Pick vaccinate, quarantine, sanitize, or cull, drag across the grid, watch the wavefront react. You can undo paint strokes until the simulation advances; once time moves, the undo stack is cleared so intervention history never rewinds the disease state. There's also a rollout slider for auto-vaccinate: turn it on and a campaign runs in the background, converting susceptible, exposed, recovered, and maternal-immune cells to vaccinated at a configurable rate per tick. The "did we roll out fast enough" question is the one you actually want to be able to feel, and that's what the slider is for. Nightingale's rose sits at the top of the Counts tab and counts exposures, recoveries, deaths, and new zombies or transformed cells in ten-day wedges, with the animal-reservoir census listed below the human compartment readouts. The Strains tab opens on an antigenic map, every strain at its place on an antigenic torus, which is also the key to how the plate hatches strains: angle and colour are position. Below it are a clickable time-scaled phylogeny showing point mutations and recombination events, the top eight strains by prevalence, a button that matches the vaccine to the selected strain, and a per-strain genome editor that includes the reservoir β/γ/μ alongside the human SEIR rates.
 
-The canvas zooms and pans. Wheel zooms toward the cursor, two-finger pinch on touch devices, plus dedicated +/−/reset buttons and a percentage readout — useful for inspecting the texture of a wavefront when the fit-to-canvas view makes individual hexes too small to read comfortably.
+The canvas zooms and pans. Wheel zooms toward the cursor, two-finger pinch on touch devices, plus dedicated +/−/reset buttons and a percentage readout — useful for inspecting the texture of a wavefront when the fit-to-canvas view makes individual hexes too small to read comfortably. The World setting sizes the hexagon: 10,621 cells by default, or 24,031, 42,841 or 96,661, each restarting the run on the larger lattice. A bigger world gives a wave more room before it meets a glued edge and sharpens the lattice thresholds, at the cost of cells too small to read until you zoom in, which a larger world lets you do further.
 
 Three intents, really. The textbook SEIR view is for learning: see Kermack-McKendrick come to life, see why reproduction number matters, see what flattening the curve actually looks like as a spatial process. The dual-reading Z view is for seeing one state machine become two different stories: the same compartment runs a zombie pandemic and an oncoviral tumor growth depending on which preset or parameters turn Z on. The Sandbox is for play: turn on zombies, ramp up the mutation rate, give the rats Ebola, see what happens.
 

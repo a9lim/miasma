@@ -128,6 +128,61 @@ export function computeViewport(canvas, grid, frame) {
 // ─── The tile ───────────────────────────────────────────────────────────────
 const tile = { c: null, x: null, w: 0, h: 0, dpr: 1, rc: 0, grid: null, px: null, py: null, mask: null };
 
+// Chrome builds a canvas path in time quadratic in its length: ten thousand
+// hexes in one path take a quarter of a second, a hundred thousand twenty.
+// Long runs of marks are therefore drawn BATCH to a path; marks that touch
+// overlap by a hair, so a batch's seam does not show.
+const BATCH = 400;
+
+/** `n` marks, `emit(k)` adding mark k to the path and `paint()` filling or stroking it, BATCH per path. */
+export function batched(c, n, emit, paint) {
+    for (let s = 0; s < n; s += BATCH) {
+        c.beginPath();
+        const e = Math.min(n, s + BATCH);
+        for (let k = s; k < e; k++) emit(k);
+        paint();
+    }
+}
+
+// Pointy-top corners, clockwise from the top, as (x in √3/2 units, y in halves),
+// and the axial neighbour across the edge from corner e to corner e + 1.
+const CORNER_X = [0, 1, 1, 0, -1, -1], CORNER_Y = [-2, -1, 1, 2, 1, -1];
+const ACROSS = [[1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1]];
+
+/**
+ * The world's outline at cell radius rc, around its centre: the outer edges
+ * of the rim's cells chained into one polygon, pushed out by a hair so the
+ * faded copies abut it without a seam.
+ */
+function worldOutline(R, rc) {
+    const inside = (q, r) => Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= R;
+    const key = (X, Y) => (X + 4 * R + 8) * 65536 + (Y + 6 * R + 8);
+    const next = new Map();
+    let start = null;
+    for (let r = -R; r <= R; r++) {
+        for (let q = -R; q <= R; q++) {
+            if (!inside(q, r) || Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) < R) continue;
+            for (let e = 0; e < 6; e++) {
+                if (inside(q + ACROSS[e][0], r + ACROSS[e][1])) continue;
+                const f = (e + 1) % 6;
+                const a = [2 * q + r + CORNER_X[e], 3 * r + CORNER_Y[e]], b = [2 * q + r + CORNER_X[f], 3 * r + CORNER_Y[f]];
+                next.set(key(a[0], a[1]), b);
+                if (!start) start = a;
+            }
+        }
+    }
+    const s = rc * (1 + 0.02 / (R + 0.5)), path = new Path2D();
+    let v = start;
+    for (let n = 0; n <= next.size; n++) {
+        const x = v[0] * 0.8660254 * s, y = v[1] * 0.5 * s;
+        if (n === 0) path.moveTo(x, y); else path.lineTo(x, y);
+        v = next.get(key(v[0], v[1]));
+        if (!v || (v[0] === start[0] && v[1] === start[1])) break;
+    }
+    path.closePath();
+    return path;
+}
+
 function ensureTile(grid, rc, dpr) {
     const { R } = hexBounds(grid.W, grid.H);
     const Rb = SQRT3 * rc * (R + 0.5), apo = 1.5 * rc * (R + 0.5);
@@ -143,13 +198,12 @@ function ensureTile(grid, rc, dpr) {
         const act = grid.activeIndices, { cq, cr } = hexBounds(grid.W, grid.H);
         tile.px = new Float32Array(grid.W * grid.H);
         tile.py = new Float32Array(grid.W * grid.H);
-        tile.mask = new Path2D();
         for (let k = 0; k < act.length; k++) {
             const i = act[k], r = (i / grid.W) | 0, q = i - r * grid.W;
             const [x, y] = axialToPx(q - cq, r - cr, rc);
             tile.px[i] = x; tile.py[i] = y;
-            hexPath(tile.mask, x, y, rc * 1.02);
         }
+        tile.mask = worldOutline(hexBounds(grid.W, grid.H).R, rc);
     }
     return tile;
 }
@@ -159,18 +213,6 @@ export function hexPath(p, x, y, rr) {
     const h = rr * 0.8660254;
     p.moveTo(x, y - rr); p.lineTo(x + h, y - rr / 2); p.lineTo(x + h, y + rr / 2);
     p.lineTo(x, y + rr); p.lineTo(x - h, y + rr / 2); p.lineTo(x - h, y - rr / 2); p.closePath();
-}
-
-// Parallel lines at `angle` (degrees) every `gap` px across the tile, through
-// whatever clip is current.
-function hatch(c, angle, gap, w, h) {
-    const a = angle * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a), L = Math.hypot(w, h) / 2 + gap;
-    c.beginPath();
-    for (let s = -L; s <= L; s += gap) {
-        const ox = -uy * s, oy = ux * s;
-        c.moveTo(ox - ux * L, oy - uy * L); c.lineTo(ox + ux * L, oy + uy * L);
-    }
-    c.stroke();
 }
 
 // Hatch lines at `angle` (degrees) across the box (x0, y0)–(x1, y1), spaced
@@ -194,15 +236,28 @@ function hatchBox(c, angle, gap, x0, y0, x1, y1) {
 function fillCells(c, cells, fill, rr) {
     if (!cells.length) return;
     c.fillStyle = fill;
-    c.beginPath();
-    for (let k = 0; k < cells.length; k++) hexPath(c, tile.px[cells[k]], tile.py[cells[k]], rr);
-    c.fill();
+    batched(c, cells.length, (k) => hexPath(c, tile.px[cells[k]], tile.py[cells[k]], rr), () => c.fill());
 }
 
-function clipCells(c, cells, rr) {
-    c.beginPath();
-    for (let k = 0; k < cells.length; k++) hexPath(c, tile.px[cells[k]], tile.py[cells[k]], rr);
-    c.clip();
+// Hatching at each of `angles` (degrees) through the cells, a batch at a time:
+// each batch clips to its cells and hatches its own bounds, on lines anchored
+// at the origin, so the batches share one phase.
+function hatchCells(c, cells, rr, angles, gap, color, lw) {
+    c.strokeStyle = color; c.lineWidth = lw;
+    for (let s = 0; s < cells.length; s += BATCH) {
+        const e = Math.min(cells.length, s + BATCH);
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        c.save();
+        c.beginPath();
+        for (let k = s; k < e; k++) {
+            const x = tile.px[cells[k]], y = tile.py[cells[k]];
+            hexPath(c, x, y, rr);
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+        c.clip();
+        for (const a of angles) hatchBox(c, a, gap, x0 - rr, y0 - rr, x1 + rr, y1 + rr);
+        c.restore();
+    }
 }
 
 const PAINT_INK = { seed: 'accent', vaccinate: 'prussian', quarantine: 'indigo', sanitize: 'verdigris', cull: 'text' };
@@ -270,9 +325,7 @@ function drawAtlas(c, grid, T, rc, t, opts) {
         // susceptible: one graphite dot per cell
         const ds = Math.max(0.9, rc * 0.34);
         c.fillStyle = quiet ? t.rgba(t.muted, 0.3) : t.dot;
-        c.beginPath();
-        for (const i of S) c.rect(T.px[i] - ds / 2, T.py[i] - ds / 2, ds, ds);
-        c.fill();
+        batched(c, S.length, (k) => c.rect(T.px[S[k]] - ds / 2, T.py[S[k]] - ds / 2, ds, ds), () => c.fill());
         fillCells(c, E, quiet ? t.rgba(t.accent, 0.12) : t.exposed, rr);
         fillCells(c, I, quiet ? t.rgba(t.accent, 0.3) : t.infectious, rr);
         if (R.length) {
@@ -280,78 +333,50 @@ function drawAtlas(c, grid, T, rc, t, opts) {
             // hexes with a pattern costs Canvas ~20 ms, rects under 1 ms
             const ds = Math.max(0.9, 1.05 / T.dpr);
             c.fillStyle = t.stipple;
-            c.beginPath();
-            for (const i of R) {
+            batched(c, R.length, (n) => {
+                const i = R[n];
                 for (let k = 0; k < 3; k++) {
                     const hx = cellHash(i * 3 + k) - 0.5, hy = cellHash(i * 3 + k + 101) - 0.5;
                     c.rect(T.px[i] + hx * rc * 1.15 - ds / 2, T.py[i] + hy * rc * 1.15 - ds / 2, ds, ds);
                 }
-            }
-            c.fill();
+            }, () => c.fill());
         }
-        if (V.length) {
-            c.save(); clipCells(c, V, rr);
-            c.strokeStyle = t.hatch; c.lineWidth = Math.max(0.7, rc * 0.2);
-            hatch(c, -45, Math.max(2.4, rc * 0.82), T.w, T.h);
-            c.restore();
-        }
+        if (V.length) hatchCells(c, V, rr, [-45], Math.max(2.4, rc * 0.82), t.hatch, Math.max(0.7, rc * 0.2));
         if (Z.length) {
             fillCells(c, Z, t.rgba(t.zombie, 0.22), rr);
-            c.save(); clipCells(c, Z, rr);
-            c.strokeStyle = t.zombie; c.lineWidth = Math.max(0.7, rc * 0.18);
-            const g = Math.max(2.4, rc * 0.8);
-            hatch(c, 45, g, T.w, T.h); hatch(c, -45, g, T.w, T.h);
-            c.restore();
+            hatchCells(c, Z, rr, [45, -45], Math.max(2.4, rc * 0.8), t.zombie, Math.max(0.7, rc * 0.18));
         }
         if (strains) {
             for (const [key, cells] of strains) {
                 const angle = ((key >> 5) / ANGLE_CODES) * 180, ink = hueColor((key & 31) * 8 + 4);
-                let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-                for (const i of cells) {
-                    const x = T.px[i], y = T.py[i];
-                    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-                }
                 fillCells(c, cells, t.rgba(ink, 0.14), rr);
-                c.save(); clipCells(c, cells, rr);
-                c.strokeStyle = ink; c.lineWidth = Math.max(0.8, rc * 0.24);
-                hatchBox(c, angle, Math.max(2.4, rc * 0.78), x0 - rc, y0 - rc, x1 + rc, y1 + rc);
-                c.restore();
+                hatchCells(c, cells, rr, [angle], Math.max(2.4, rc * 0.78), ink, Math.max(0.8, rc * 0.24));
             }
         }
         if (M.length) {
             c.strokeStyle = t.maternal; c.lineWidth = Math.max(0.7, rc * 0.18);
-            c.beginPath();
             const mr = rc * 0.42;
-            for (const i of M) { c.moveTo(T.px[i] + mr, T.py[i]); c.arc(T.px[i], T.py[i], mr, 0, Math.PI * 2); }
-            c.stroke();
+            batched(c, M.length, (k) => { const i = M[k]; c.moveTo(T.px[i] + mr, T.py[i]); c.arc(T.px[i], T.py[i], mr, 0, Math.PI * 2); }, () => c.stroke());
         }
         crosses(c, D, rc, t.cross, Math.max(0.75, rc * 0.2));
         crosses(c, Dc, rc, t.accent, Math.max(0.85, rc * 0.24));
         if (mode === ViewMode.COMPARTMENT) {
             const dd = Math.max(0.9, rc * 0.36);
             c.fillStyle = t.text;
-            c.beginPath();
-            for (const i of lat) c.rect(T.px[i] - dd / 2, T.py[i] - dd / 2, dd, dd);
-            c.fill();
+            batched(c, lat.length, (k) => c.rect(T.px[lat[k]] - dd / 2, T.py[lat[k]] - dd / 2, dd, dd), () => c.fill());
             c.fillStyle = t.accent;
-            c.beginPath();
-            for (const i of car) c.rect(T.px[i] - dd / 2, T.py[i] - dd / 2, dd, dd);
-            c.fill();
+            batched(c, car.length, (k) => c.rect(T.px[car[k]] - dd / 2, T.py[car[k]] - dd / 2, dd, dd), () => c.fill());
         }
     }
     if (mode === ViewMode.COMPARTMENT || mode === ViewMode.STATUS) {
         if (Q.length) {
             c.strokeStyle = t.cordon; c.lineWidth = Math.max(0.8, rc * (quiet ? 0.3 : 0.22));
-            c.beginPath();
-            for (const i of Q) hexPath(c, T.px[i], T.py[i], rc * 0.78);
-            c.stroke();
+            batched(c, Q.length, (k) => hexPath(c, T.px[Q[k]], T.py[Q[k]], rc * 0.78), () => c.stroke());
         }
         if (H.length) {
             const a = rc * 0.4;
             c.strokeStyle = quiet ? t.text : t.cross; c.lineWidth = Math.max(0.8, rc * (quiet ? 0.3 : 0.2));
-            c.beginPath();
-            for (const i of H) { const x = T.px[i], y = T.py[i]; c.moveTo(x - a, y); c.lineTo(x + a, y); c.moveTo(x, y - a); c.lineTo(x, y + a); }
-            c.stroke();
+            batched(c, H.length, (k) => { const x = T.px[H[k]], y = T.py[H[k]]; c.moveTo(x - a, y); c.lineTo(x + a, y); c.moveTo(x, y - a); c.lineTo(x, y + a); }, () => c.stroke());
         }
     }
     if (opts.animalDisplay !== 'off' && grid.animal && rc >= 2) drawAnimals(c, grid, T, rc, t, !human);
@@ -361,12 +386,10 @@ function crosses(c, cells, rc, color, lw) {
     if (!cells.length) return;
     const a = rc * 0.4;
     c.strokeStyle = color; c.lineWidth = lw; c.lineCap = 'round';
-    c.beginPath();
-    for (const i of cells) {
-        const x = tile.px[i], y = tile.py[i];
+    batched(c, cells.length, (k) => {
+        const x = tile.px[cells[k]], y = tile.py[cells[k]];
         c.moveTo(x - a, y - a); c.lineTo(x + a, y + a); c.moveTo(x + a, y - a); c.lineTo(x - a, y + a);
-    }
-    c.stroke();
+    }, () => c.stroke());
     c.lineCap = 'butt';
 }
 
@@ -425,13 +448,12 @@ function drawAnimals(c, grid, T, rc, t, only) {
     for (let a = 1; a <= 4; a++) {
         if (!groups[a].length) continue;
         c.fillStyle = fills[a];
-        c.beginPath();
         // a small triangle: the reservoir's mark, distinct from the human square dot
-        for (const i of groups[a]) {
-            const x = T.px[i] + ox, y = T.py[i] + oy;
+        const g = groups[a];
+        batched(c, g.length, (k) => {
+            const x = T.px[g[k]] + ox, y = T.py[g[k]] + oy;
             c.moveTo(x, y - s); c.lineTo(x + s, y + s * 0.8); c.lineTo(x - s, y + s * 0.8); c.closePath();
-        }
-        c.fill();
+        }, () => c.fill());
     }
 }
 
@@ -444,9 +466,7 @@ function drawContours(c, rc, t, contours, latest) {
         const major = level % ISO_LABEL === 0;
         c.strokeStyle = t.rgba(t.text, (major ? t.isoMajorA : t.isoA) * isoFade(latest - level));
         c.lineWidth = major ? 1.15 : 0.75;
-        c.beginPath();
-        for (let k = 0; k < segs.length; k += 4) { c.moveTo(segs[k] * rc, segs[k + 1] * rc); c.lineTo(segs[k + 2] * rc, segs[k + 3] * rc); }
-        c.stroke();
+        batched(c, segs.length / 4, (n) => { const k = 4 * n; c.moveTo(segs[k] * rc, segs[k + 1] * rc); c.lineTo(segs[k + 2] * rc, segs[k + 3] * rc); }, () => c.stroke());
     }
     c.lineCap = 'butt';
 }

@@ -20,7 +20,7 @@
 import { Grid } from './src/grid.js';
 import { computeViewport } from './src/render.js';
 import { createPlate } from './src/plate.js';
-import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString } from './src/config.js';
+import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
 import { initializeGrid, initializeAnimals } from './src/initialization.js';
@@ -73,7 +73,7 @@ export default function init(dom) {
     const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const sim = {
-        grid: new Grid(DEFAULTS.W, DEFAULTS.H),
+        grid: null,
         topology: DEFAULTS.topology,
         viewMode: DEFAULTS.viewMode,
         playing: false,
@@ -87,6 +87,9 @@ export default function init(dom) {
     const qs = new URLSearchParams(window.location.search);
     if (qs.has('mi')) sim.topology = topoFromString(qs.get('mi'));
     if (qs.has('view') && Object.values(ViewMode).includes(qs.get('view'))) sim.viewMode = qs.get('view');
+    // ?r=<radius> opens on a world of that radius (Settings offers WORLD_RADII).
+    setWorldRadius(qs.has('r') ? parseInt(qs.get('r'), 10) : DEFAULTS.R);
+    sim.grid = new Grid(sim.W, sim.H);
 
     initializeGrid(sim.grid);
     const params = makeParams();
@@ -95,7 +98,8 @@ export default function init(dom) {
     const rng = makeRngFromLocation(window.location);
     initializeAnimals(sim.grid, params, rng);
     const history = createTransitionHistory(HISTORY_CAP);
-    const iso = createIsochrones();
+    // the isochrones build in a worker; a result redraws the plate
+    const iso = createIsochrones({ worker: true, onBuilt: () => markTile() });
 
     const canvas = $.canvas;
     if (!canvas) { console.error('miasma: #sim-canvas not found'); return; }
@@ -127,26 +131,51 @@ export default function init(dom) {
     };
 
     let ts = null;
-    let cachedStats = null;
+    let cachedStats = null, cachedPrev = null;
     let lastCounts = null;
+    // The census and the strain prevalence, each an O(cells) sweep. A paint
+    // stroke or a new world drops them; a tick only marks them stale, and
+    // while the clock runs a stale one is recounted at most every PANEL_MS.
+    let statsStale = false, prevStale = false, statsAt = 0, prevAt = 0;
+    const fresh = (stale, at) => !stale || (sim.playing && performance.now() - at < PANEL_MS);
+    function stats() {
+        if (!cachedStats || !fresh(statsStale, statsAt)) {
+            cachedStats = computeStats(sim.grid); statsStale = false; statsAt = performance.now();
+        }
+        return cachedStats;
+    }
+    function prevalence() {
+        if (!cachedPrev || !fresh(prevStale, prevAt)) {
+            cachedPrev = computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains); prevStale = false; prevAt = performance.now();
+        }
+        return cachedPrev;
+    }
 
     function updateStats() {
         if (!$.statsPanel) return;
-        const stats = cachedStats || computeStats(sim.grid);
         const reff = computeReff(history, params);
         const capacity = Math.floor((params.h_capacity_frac || 0) * sim.grid.activeIndices.length);
-        renderStatsPanel($.statsPanel, stats, reff, capacity);
+        renderStatsPanel($.statsPanel, stats(), reff, capacity);
     }
 
     let renderDirty = true, tileDirty = true, statsDirty = true, tsDirty = true, strainsDirty = true;
     let lastFrameTime = performance.now();
     let accumulator = 0;
 
-    function markTile() { tileDirty = true; renderDirty = true; requestFrame(); }
+    function markTile() { tileDirty = true; renderDirty = true; legendDirty = true; requestFrame(); }
+
+    // While the clock runs the plate redraws every frame something changed,
+    // but the text around it need not: the Counts, Strains and rose panels
+    // redraw at most every PANEL_MS, and the caption and the cartouche's rows
+    // every CAPTION_MS (the caption setter's own interval). Paused, they
+    // catch up at once.
+    const PANEL_MS = 100, CAPTION_MS = 250;
+    let lastPanels = -Infinity, lastCaptionAt = -Infinity, lastLegendAt = -Infinity;
+    let captionStale = false, legend = null, legendDirty = true;
 
     function invalidateDerived(opts) {
         opts = opts || {};
-        if (opts.gridMutated) { cachedStats = null; iso.record(sim.grid, sim.tick); }
+        if (opts.gridMutated) { cachedStats = cachedPrev = null; iso.record(sim.grid, sim.tick); }
         if (opts.render !== false) { renderDirty = true; tileDirty = true; }
         if (opts.stats !== false) statsDirty = true;
         if (opts.timeseries) tsDirty = true;
@@ -159,18 +188,16 @@ export default function init(dom) {
         const counts = tick(sim.grid, params, toggles, sim.topology, rng, strains, sim.tick + 1);
         sim.tick++;
         lastCounts = counts;
-        cachedStats = computeStats(sim.grid);
-        history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, cachedStats.Z);
-        cachedStats.tick = sim.tick;
-        if (ts) ts.push(cachedStats, counts);
+        statsStale = prevStale = true;
+        history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, counts.zPop);
+        if (ts) ts.push(sim.tick, counts);
         iso.record(sim.grid, sim.tick);
         renderDirty = tileDirty = statsDirty = tsDirty = strainsDirty = true;
     }
 
     function updateStrainPanel() {
         if (!$.strainPanel || !$.strainPanel.classList.contains('active')) return;
-        const prevalence = computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains);
-        renderStrainPanel($.strainPanel, prevalence, strains, (id) => {
+        renderStrainPanel($.strainPanel, prevalence(), strains, (id) => {
             sim.selectedStrain = id;
             if (sim.viewMode === ViewMode.IMMUNITY) markTile();
         }, sim.tick, {
@@ -193,18 +220,23 @@ export default function init(dom) {
     function drawPlate() {
         const vp = getEffectiveViewport();
         if (tileDirty) {
-            iso.build(sim.grid, sim.topology, sim.tick);
+            // WebGPU draws the isolines from the field; the Canvas fallback needs every segment.
+            iso.build(sim.grid, sim.topology, sim.tick, 4, !plate.gpu);
             plate.markTile();
             tileDirty = false;
         }
-        const stats = cachedStats || computeStats(sim.grid);
+        const now = performance.now();
+        if (legendDirty || !legend || now - lastLegendAt >= CAPTION_MS) {
+            legend = plateLegend(sim, stats(), toggles, histology(),
+                sim.viewMode === ViewMode.STRAIN ? prevalence() : null, strains);
+            lastLegendAt = now; legendDirty = false;
+        }
         sim.immunity = sim.viewMode === ViewMode.IMMUNITY ? immunityTarget() : null;
         plate.draw({
             grid: sim.grid, vp, topology: sim.topology, mode: sim.viewMode,
             dpr: canvas.width / Math.max(1, vp.cssWidth),
             contours: iso.contours, field: iso, histology: histology(),
-            legend: plateLegend(sim, stats, toggles, histology(),
-                sim.viewMode === ViewMode.STRAIN ? computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains) : null, strains),
+            legend,
             scaleUnit: histology() ? { per: 12, name: 'µm' } : null,
             tileOpts: {
                 mode: sim.viewMode,
@@ -215,22 +247,25 @@ export default function init(dom) {
                 paintOverlay: paintController.getHoverFootprint()
             }
         });
-        const reff = computeReff(history, params);
-        lastCaption = plateCaption(sim, stats, reff, strains, paintController, histology(), vp.frame.w < 600, measureCtx());
-        setCaption(lastCaption);
+        if (now - lastCaptionAt >= CAPTION_MS) {
+            lastCaption = captionText(vp);
+            setCaption(lastCaption);
+            lastCaptionAt = now; captionStale = false;
+        } else captionStale = true;
     }
     let lastCaption = '';
+    function captionText(vp) {
+        return plateCaption(sim, stats(), computeReff(history, params), strains, paintController, histology(),
+            vp.frame.w < 600, measureCtx());
+    }
 
     // What presetMeasure reads: the params, the history, how many cells the
     // wave has reached (the isochrones' stamps), the strain registry.
     function measureCtx() {
-        let reached = 0;
-        const arr = iso.arrival;
-        if (arr) for (const i of sim.grid.activeIndices) if (arr[i] !== Infinity) reached++;
         return {
-            params, history, strains, reached,
+            params, history, strains, reached: iso.reached,
             active: sim.grid.activeIndices.length, unvax0: sim.unvax0 || 0,
-            prevalence: () => computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains)
+            prevalence
         };
     }
 
@@ -239,7 +274,7 @@ export default function init(dom) {
     function immunityTarget() {
         let id = sim.selectedStrain;
         if (id == null || !getStrain(strains, id) || strains.extinct[id]) {
-            const prev = computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains);
+            const prev = prevalence();
             id = prev.length ? prev[0].id : 0;
         }
         return {
@@ -259,12 +294,16 @@ export default function init(dom) {
             while (accumulator >= tickInterval && budget > 0) { tickOnce(); accumulator -= tickInterval; budget--; }
             if (budget === 0) accumulator = 0;
         }
-        if (statsDirty) { updateStats(); statsDirty = false; }
+        if ((statsDirty || tsDirty || strainsDirty) && (!sim.playing || now - lastPanels >= PANEL_MS)) {
+            lastPanels = now;
+            if (statsDirty) { updateStats(); statsDirty = false; }
+            if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(histology())); tsDirty = false; }
+            if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
+        }
         if (renderDirty) { drawPlate(); renderDirty = false; }
-        if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(histology())); tsDirty = false; }
-        if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         if (!sim.playing && !renderDirty && !statsDirty && !tsDirty && !strainsDirty) {
-            // the caption setter is throttled; going idle, write the last one for sure
+            // the caption is throttled; going idle, write the latest one for sure
+            if (captionStale) { lastCaption = captionText(getEffectiveViewport()); captionStale = false; }
             setCaption(lastCaption, true);
             if (ts) setRoseCaption(ts.caption(histology()), true);
             running = false; rafId = null; return;
@@ -287,7 +326,7 @@ export default function init(dom) {
 
     /** Re-initialize grid, history, isochrones and the strain registry; params and toggles stay. */
     function resetGridOnly() {
-        sim.grid = new Grid(DEFAULTS.W, DEFAULTS.H);
+        sim.grid = new Grid(sim.W, sim.H);
         initializeGrid(sim.grid);
         initializeAnimals(sim.grid, params, rng);
         sim.tick = 0;
@@ -297,7 +336,7 @@ export default function init(dom) {
         if (ts) ts.clear();
         strains = createRegistry(params);
         sim.selectedStrain = null;
-        cachedStats = null;
+        cachedStats = cachedPrev = null;
         if (paintController) paintController.clearUndo();
         camera.refreshBaseViewport();
         camera.reset();
@@ -307,11 +346,13 @@ export default function init(dom) {
     // Seed strain α at axial offsets from the world center (and a ring of
     // neighbors, so the case doesn't fizzle at tick 1), through the paint path.
     function seedOpening(offsets) {
-        const { cq, cr } = hexBounds(sim.grid.W, sim.grid.H);
+        const { cq, cr, R } = hexBounds(sim.grid.W, sim.grid.H);
         const mode = paintController.getMode(), size = paintController.getBrushSize();
         paintController.setMode(PaintMode.SEED);
         paintController.setBrushSize(1);
-        for (const [dq, dr] of offsets) paintController.applyAtHex(cq + dq, cr + dr);
+        // the offsets are for the default world; a larger one scales them
+        const k = R / DEFAULTS.R;
+        for (const [dq, dr] of offsets) paintController.applyAtHex(cq + Math.round(dq * k), cr + Math.round(dr * k));
         paintController.setMode(mode);
         paintController.setBrushSize(size);
         paintController.clearUndo();
@@ -325,7 +366,6 @@ export default function init(dom) {
         applyScene(p, null, qs.has('mi') ? topoFromString(qs.get('mi')) : null);
         const n = (p.warmup || OPENING_WARMUP) + (still ? OPENING_STILL_EXTRA : 0);
         for (let k = 0; k < n; k++) tickOnce();
-        iso.build(sim.grid, sim.topology, sim.tick, 0);
     }
 
     // Random vaccine coverage given when the world is built (vax_coverage):
@@ -344,6 +384,24 @@ export default function init(dom) {
             } else unvax++;
         }
         sim.unvax0 = unvax;
+    }
+
+    // The world's radius; the grid is rebuilt by the caller.
+    function setWorldRadius(R) {
+        const [lo, hi] = WORLD_R_RANGE;
+        sim.R = Number.isFinite(R) ? Math.max(lo, Math.min(hi, R)) : DEFAULTS.R;
+        sim.W = sim.H = 2 * sim.R + 2;
+    }
+
+    // A new world size rebuilds the world and starts the run again, keeping
+    // the params and toggles as they are.
+    function setWorld(R) {
+        setWorldRadius(R);
+        resetGridOnly();
+        applyCoverage();
+        seedOpening(OPENING_SEEDS);
+        requestFrame();
+        if (typeof showToast === 'function') showToast('World of ' + worldCells(sim.R).toLocaleString('en-US') + ' cells');
     }
 
     // Reset restarts the running experiment, keeping its knob where it is;
@@ -418,6 +476,7 @@ export default function init(dom) {
 
     ui = setupUI($, sim, {
         onTopologyChange: () => { iso.markDirty(); markTile(); },
+        onWorldChange: (R) => setWorld(R),
         onViewModeChange: () => markTile(),
         onParamChange: () => invalidateDerived({ stats: true, strains: true }),
         onTogglesChange: () => { markTile(); statsDirty = true; },

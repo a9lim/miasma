@@ -1,94 +1,64 @@
 // dynamics-scratch.js — reusable next-state buffers for one tick.
 //
-// The integrator double-buffers typed arrays: dynamics.js reads the grid's
-// start-of-tick arrays, writes into these scratch arrays, swaps them onto the
-// grid, then recycles the old start arrays as the next scratch set.
+// The integrator double-buffers the fields a cell reads off its neighbours
+// (compartment, flags, status, strain slots, the animal and its strain):
+// dynamics.js reads the grid's start-of-tick arrays, writes into these scratch
+// arrays, swaps them onto the grid, then recycles the old start arrays as the
+// next scratch set. Fields only a cell's own update reads (age, health, immune
+// memory, the animal's age) are updated in place, after their last read.
+//
+// `near` and `contact` are per-cell stamps: a cell whose `near` equals the
+// tick's `stamp` has a transmitting neighbour this tick, one whose `contact`
+// does is a case or a case's neighbour (contact tracing). Stamping avoids
+// clearing them. The lists hold cell indices the tick collects as it goes
+// (I cells, AUTO_Q cells, contacts); `animalNb` counts living animal
+// neighbours for reservoir births, and `nearAnimal` stamps the neighbours of
+// infectious animals.
 
-let _scratch = null;
-let _flagScratch = null;
-let _statusScratch = null;
-let _ageScratch = null;
-let _healthScratch = null;
-let _strainIdsScratch = null;
-let _strainLoadsScratch = null;
-let _memXScratch = null;
-let _memYScratch = null;
-let _memKindScratch = null;
-let _memNScratch = null;
-let _animalScratch = null;
-let _animalAgeScratch = null;
-let _animalStrainScratch = null;
+let _comp = null, _flags = null, _status = null;
+let _ids = null, _loads = null;
+let _animal = null, _animalStrain = null;
+let _near = null, _contact = null, _stamp = 0;
+let _iList = null, _autoQList = null, _contactList = null, _animalNb = null, _nearAnimal = null;
 
-export function ensureTickScratch(N, maxActive, memSlots) {
-    if (_scratch === null || _scratch.length !== N) {
-        _scratch = new Uint8Array(N);
-    }
-    if (_flagScratch === null || _flagScratch.length !== N) {
-        _flagScratch = new Uint8Array(N);
-    }
-    if (_statusScratch === null || _statusScratch.length !== N) {
-        _statusScratch = new Uint8Array(N);
-    }
-    if (_ageScratch === null || _ageScratch.length !== N) {
-        _ageScratch = new Uint16Array(N);
-    }
-    if (_healthScratch === null || _healthScratch.length !== N) {
-        _healthScratch = new Float32Array(N);
+export function ensureTickScratch(N, maxActive) {
+    if (_comp === null || _comp.length !== N) {
+        _comp = new Uint8Array(N);
+        _flags = new Uint8Array(N);
+        _status = new Uint8Array(N);
+        _animal = new Uint8Array(N);
+        _animalStrain = new Uint16Array(N);
+        _near = new Uint32Array(N);
+        _contact = new Uint32Array(N);
+        _iList = new Int32Array(N);
+        _autoQList = new Int32Array(N);
+        _contactList = new Int32Array(N);
+        _animalNb = new Uint8Array(N);
+        _nearAnimal = new Uint32Array(N);
+        _stamp = 0;
     }
     const idsLen = N * maxActive;
-    if (_strainIdsScratch === null || _strainIdsScratch.length !== idsLen) {
-        _strainIdsScratch = new Uint16Array(idsLen);
+    if (_ids === null || _ids.length !== idsLen) {
+        _ids = new Uint16Array(idsLen);
+        _loads = new Float32Array(idsLen);
     }
-    if (_strainLoadsScratch === null || _strainLoadsScratch.length !== idsLen) {
-        _strainLoadsScratch = new Float32Array(idsLen);
-    }
-    const memLen = N * memSlots;
-    if (_memXScratch === null || _memXScratch.length !== memLen) {
-        _memXScratch = new Float32Array(memLen);
-        _memYScratch = new Float32Array(memLen);
-        _memKindScratch = new Uint8Array(memLen);
-    }
-    if (_memNScratch === null || _memNScratch.length !== N) {
-        _memNScratch = new Uint8Array(N);
-    }
-    if (_animalScratch === null || _animalScratch.length !== N) {
-        _animalScratch = new Uint8Array(N);
-    }
-    if (_animalAgeScratch === null || _animalAgeScratch.length !== N) {
-        _animalAgeScratch = new Uint16Array(N);
-    }
-    if (_animalStrainScratch === null || _animalStrainScratch.length !== N) {
-        _animalStrainScratch = new Uint16Array(N);
-    }
+    if (++_stamp === 0xFFFFFFFF) { _near.fill(0); _contact.fill(0); _nearAnimal.fill(0); _stamp = 1; }
     return {
-        compartment: _scratch,
-        flags: _flagScratch,
-        status: _statusScratch,
-        age: _ageScratch,
-        health: _healthScratch,
-        strainIds: _strainIdsScratch,
-        strainLoads: _strainLoadsScratch,
-        memX: _memXScratch,
-        memY: _memYScratch,
-        memKind: _memKindScratch,
-        memN: _memNScratch,
-        animal: _animalScratch,
-        animalAge: _animalAgeScratch,
-        animalStrain: _animalStrainScratch
+        compartment: _comp, flags: _flags, status: _status,
+        strainIds: _ids, strainLoads: _loads,
+        animal: _animal, animalStrain: _animalStrain,
+        near: _near, contact: _contact, stamp: _stamp,
+        iList: _iList, autoQList: _autoQList, contactList: _contactList,
+        animalNb: _animalNb, nearAnimal: _nearAnimal
     };
 }
 
 export function recycleTickScratch(arrays) {
-    _scratch = arrays.compartment;
-    _flagScratch = arrays.flags;
-    _statusScratch = arrays.status;
-    _ageScratch = arrays.age;
-    _healthScratch = arrays.health;
-    if (arrays.strainIds) _strainIdsScratch = arrays.strainIds;
-    if (arrays.strainLoads) _strainLoadsScratch = arrays.strainLoads;
-    if (arrays.memX) { _memXScratch = arrays.memX; _memYScratch = arrays.memY; _memKindScratch = arrays.memKind; }
-    if (arrays.memN) _memNScratch = arrays.memN;
-    if (arrays.animal) _animalScratch = arrays.animal;
-    if (arrays.animalAge) _animalAgeScratch = arrays.animalAge;
-    if (arrays.animalStrain) _animalStrainScratch = arrays.animalStrain;
+    _comp = arrays.compartment;
+    _flags = arrays.flags;
+    _status = arrays.status;
+    if (arrays.strainIds) _ids = arrays.strainIds;
+    if (arrays.strainLoads) _loads = arrays.strainLoads;
+    if (arrays.animal) _animal = arrays.animal;
+    if (arrays.animalStrain) _animalStrain = arrays.animalStrain;
 }

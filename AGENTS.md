@@ -20,7 +20,8 @@ Preview from the parent root with `node docs/sim-overhaul/serve.mjs <port>` (ser
 (`src/prng.js` hashes it into the shared `mulberry32`, which drives the tick, animal
 seeding, mutation, and recombination); `?mi=plane|torus|klein|rp2` opens on a surface
 (a retired name such as `cylinder` or `mobius` falls back to the default);
-`?view=<view mode>` opens on a view; `?canvas2d` forces the Canvas fallback.
+`?view=<view mode>` opens on a view; `?r=<radius>` opens on a world of that radius
+(16–239; Settings offers 59, 89, 119 and 179); `?canvas2d` forces the Canvas fallback.
 `docs/sim-overhaul/check.mjs` screenshots the page headless and reports console errors,
 overflow and frame rate.
 
@@ -53,7 +54,10 @@ The dynamics modules import cleanly in Node for headless runs (`Grid` →
 `initializeGrid` → `createRegistry(params)` → `tick`), but `strains.js` and `prng.js` call
 the `/shared/utils.js` globals `gaussian` and `mulberry32`, so define those on
 `globalThis` first; `tools/*.mjs` show how. `tools/presets-survey.mjs` runs every
-preset at its default knob across seeds (the facts under Presets below). In the browser,
+preset at its default knob across seeds (the facts under Presets below).
+`tools/bench.mjs [presets] [radii] [ticks] [seed]` times the tick, the census, the
+isochrone stamps and build per preset and radius, and prints a fingerprint of the
+final state: a refactor meant to keep behavior keeps every fingerprint. In the browser,
 `window.__miasma` exposes `{ sim, params, toggles, history, tickOnce, iso, plate,
 strains, paint, PaintMode, setPlaying, openScene, applyScene, viewport }`;
 `applyScene(presetObject)` applies any preset-shaped object, which is how a candidate
@@ -72,7 +76,7 @@ src/initialization.js    applyHexMask, fresh human and animal seeding (animal_se
 src/topology.js          the four surfaces as edge gluings: slot table, edge isometries, cone points
 src/dynamics.js          tick(): steps 1–9, buffer swap, transition counters
 src/dynamics-animal.js   step 10: reservoir demography, animal SIR, spillover
-src/dynamics-scratch.js  next-state buffers recycled between ticks
+src/dynamics-scratch.js  next-state buffers, stamps and index lists recycled between ticks
 src/default-params.js    DEFAULT_PARAMS (sim-wide knobs plus the seed genome)
 src/default-toggles.js   DEFAULT_TOGGLES
 src/immunity.js          the antigenic torus (distance, midpoint) and per-cell memory: susceptibility, remember, forget
@@ -86,20 +90,22 @@ src/toggles.js           compartment, flag, and automatic-response toggles; anim
 src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), Paint tab
 src/camera.js            zoom/pan over the fitted plate
 src/isochrones.js        latest-wave arrival day per cell, smoothed, contoured and faded on the lattice
+src/isochrones-worker.js the isochrone build off the main thread
 src/plate.js             the plate per frame: copies, edges, cone points, labels, title, cartouche, scale bar
 src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a state texture
-src/render.js            Canvas 2D fallback for the lattice (the same marks), plate geometry
+src/render.js            Canvas 2D fallback for the lattice (the same marks, batched), plate geometry
 src/histology.js         the Immunoediting preset as an H&E-stained section (Canvas; GPU mirrors it)
 src/caption.js           the live figure caption and the Reference cartouche rows
 src/rose.js              Nightingale's rose (Counts tab)
 src/stats.js             census and observed Re (Counts tab)
 src/lineage.js           strain prevalence, Strains tab (figures, rows, vaccine match), phylogeny, genome editor
 src/history.js           per-tick ring buffer: transitions, spillovers, the Z census
-src/prng.js              ?seed= RNG
+src/prng.js              ?seed= RNG; rare per-cell rolls by skipping
 src/ui.js                surface picker (glyphs), map view, Settings assembly, about panel
 src/topology.test.mjs    topology tests
 src/immunity.test.mjs    immunity, registry and sweep tests
 tools/presets-survey.mjs the six presets at their default knobs across seeds
+tools/bench.mjs          per-tick cost by preset and radius, with state fingerprints
 tools/survey.mjs         headless long runs: fates, strain composition, genome drift
 tools/threshold.mjs      final-size sweep through the lattice epidemic threshold
 docs/ROADMAP.md          the plan: 2.1 (antigenic immunity, six experiment presets), 3.0 (the game)
@@ -110,12 +116,17 @@ docs/VISION.md           ideation draft: strengths, gaps, directions, measured e
 
 ### Grid and state
 
-Storage is a 120×120 axial rhombus of hexes (pointy-top on screen: `x = √3·(q + r/2)`, `y = 1.5·r`), indexed `r * W + q`.
-`applyHexMask` (`initialization.js`) carves out the inscribed regular hexagon (radius 59,
-10,621 cells) and writes `grid.activeIndices`; cells outside it are permanent
+Storage is a (2R + 2)-square axial rhombus of hexes (pointy-top on screen: `x = √3·(q + r/2)`, `y = 1.5·r`), indexed `r * W + q`.
+`applyHexMask` (`initialization.js`) carves out the inscribed regular hexagon (radius R,
+3R(R + 1) + 1 cells) and writes `grid.activeIndices`; cells outside it are permanent
 `Compartment.EMPTY` / `Animal.VOID` padding. Hot loops iterate `activeIndices`, and
 compartment counts over it always sum to `grid.activeCount`. `topology.hexBounds`
 recomputes the same center and radius independently, so the two formulas must agree.
+R is 59 by default (120×120 storage, 10,621 cells, `DEFAULTS.R`); Settings → World
+offers `WORLD_RADII` (59, 89, 119, 179: up to 96,661 cells) and `?r=` any radius in
+`WORLD_R_RANGE`. Everything sized by the world reads `hexBounds`; the opening's seed
+offsets are written for R = 59 and scale by R/59, and the closest zoom scales the same
+way, so a larger world zooms in to the default world's cell.
 
 `Grid` holds parallel typed arrays: `compartment` (S E I R D V M Z, plus the EMPTY
 sentinel), `status` (none / H / Q), `flags` (LATENT on E, CARRIER on R, F_CORPSE on D,
@@ -130,19 +141,38 @@ off the right strain.
 
 ### The tick
 
-`tick()` uses simultaneous update: it reads the start-of-tick arrays, writes scratch
-copies, and swaps them onto the grid at the end, recycling the old arrays as the next
-scratch set (`dynamics-scratch.js`). A new per-cell field needs a scratch buffer, the
-copy-in, and the swap.
+`tick()` uses simultaneous update for the fields a cell reads off its neighbours
+(compartment, flags, status, the strain slots, the animal and its strain): it reads the
+start-of-tick arrays, writes scratch copies, and swaps them onto the grid at the end,
+recycling the old arrays as the next scratch set (`dynamics-scratch.js`). The fields
+only a cell's own update reads (age, health, the immune memory, the animal's age) are
+written in place after that read; age advances in the last pass. A new per-cell field
+read by a neighbour needs a scratch buffer, the copy-in and the swap; one read only by
+its own cell is written in place, after its last read.
 
-Order (step numbers match the comments in `dynamics.js`): 1 age → 2 births →
-3 within-host competition, pruning, recombination → 6 hospital allocation (a pre-pass)
-→ 4+5 one pass of transmission and transitions → 7 health degradation → 7.5 vaccination
-rollout → 7.6 auto-quarantine → 8 age mortality → 9 Z → 10 animals → swap → extinction
-sweep. Later steps overwrite `next`: Z overwrites everything before it, step 8 skips
-cells already D or EMPTY so an age-out is not double-counted, 7.5 and 7.6 read `next`
-so a same-tick recovery is eligible, and animals run after Z so spillover respects Z
+Order (step numbers match the comments in `dynamics.js`): Pass A, one sweep of the
+start-of-tick state (transmitting cells stamp their neighbours in `near`, the I cells
+are listed in row-major order, stale H is stripped, AUTO_Q cells are listed, animals
+are counted) → 6 hospital allocation over the I list → Pass B, each cell's own update
+in row-major order: 2 births into an EMPTY cell; for an I cell 3 within-host
+competition, pruning and recombination, 5 leaving I or coinfection, 7 health; 4
+transmission into S, R and V, only where `near` is stamped (a cell with no source beside
+it would roll nothing); the rest of 5; then 7.6's provenance restore, and a cell whose
+next compartment is I stamps itself and its neighbours as contacts → 7.5 vaccination
+rollout → 7.6 auto-quarantine over the contacts and the AUTO_Q cells → 8 age mortality
+→ 9 Z → 10 animals → 1 age, in place, counting Z (`zPop`) → swap → extinction sweep.
+Later steps overwrite `next`: Z overwrites everything before it, step 8 skips cells
+already D or EMPTY so an age-out is not double-counted, 7.5 and 7.6 read `next` so a
+same-tick recovery is eligible, and animals run after Z so spillover respects Z
 conversions.
+
+A rare roll made at every cell (7.5's rollout, 8's mortality, the reservoir's
+mortality) is drawn by skipping (`prng.js` `nextSuccess`): the gap to the next success
+is geometric, and an age-dependent rate is thinned from the highest rate any age has,
+so each cell keeps exactly its own chance at one draw per success. The single-pass
+order (2026-10-25) draws the RNG in a different order than before, so a `?seed=` run
+differs from one made earlier; 24 and 48 seeds per side against the old order found no
+difference beyond noise.
 
 Most rates are per strain. The 26 `GENOME_FIELDS` (β σ γ μ, the maternal and flag
 rates, the Z rates, health impact, and animal β/γ/μ) live in registry arrays, and the
@@ -155,7 +185,8 @@ count. `season_amp` scales every human-to-human β by `1 + A·cos(2πt/365)`.
 
 ### Transmission and transitions
 
-`pickIncomingStrain(i)` computes infection for one target. Sources are I (weight 1),
+`pickIncomingStrain(i)` computes infection for one target and returns the picked strain,
+or −1 when the roll fails; it memoizes the target's σ per strain for the call. Sources are I (weight 1),
 R+CARRIER (`c_transmit_mult`), and D+F_CORPSE (`f_transmit_mult`), times
 `q_transmit_mult` for quarantined sources. Each edge's β is the load-weighted sum of the
 source's strain β, each slot scaled by the target's susceptibility to that strain
@@ -230,11 +261,15 @@ surveilled and its interior is shielded.
 
 ### Animal reservoir
 
-`dynamics-animal.js` runs 10a aging, 10b births (a VOID cell with at least
-`animal_birth_threshold` live animal neighbors becomes S), 10c SIR plus spillover, and
-10d age-ramped mortality. Each sub-step reads the start-of-tick `animal`, so a 10b
-newborn is inert in 10c and 10d, and a 10c death is not recounted in 10d. There is no
-toggle: `animal_density: 0` seeds no animals and births never start. The default is
+`dynamics-animal.js` runs 10b births (a VOID cell with at least
+`animal_birth_threshold` live animal neighbors becomes S) and 10c SIR plus spillover in
+one pass, then 10d age-ramped mortality (by skipping), then 10a aging in place. A sweep
+first scatters each living animal into its neighbours' counts for 10b and stamps the
+neighbours of infectious animals, so a susceptible animal looks for a source only where
+there is one. Each sub-step reads the start-of-tick `animal`, so a 10b newborn is inert
+in 10c and 10d, and a 10c death is not recounted in 10d. There is no toggle:
+`animal_density: 0` seeds no animals and births never start, and with no animal alive
+(Pass A counts them) the step returns at once. The default is
 0.12, with `animal_seed` (0.005) of them infected at the start; among presets only
 Spillover keeps a reservoir, and seeds 5% infected so it starts where the disease
 lives. A reservoir that burns through its animals dies out: a self-sustaining one needs
@@ -247,7 +282,8 @@ write sets `animal_strain`, and recovery, death, disposal, and birth reset it to
 co-located (same cell index): an infectious animal can expose a susceptible human with
 its own strain (`spillover_rate`, scaled by the human's susceptibility to it), and an infectious human can
 infect a susceptible animal with its slot-0 strain (`reverse_spillover_rate`).
-Animal-to-animal spread runs over neighbors and reservoir-samples the source strain.
+Animal-to-animal spread runs over neighbors; on infection the strain comes from one of
+the transmitting neighbours, uniformly.
 
 ### Immunity
 
@@ -362,7 +398,15 @@ a new wave meets old stamps the field jumps by hundreds of days, and contouring 
 stack a line for every level. A contour is drawn at its base opacity times
 `isoFade(latest − level)`, a quadratic ramp from 1 down to `FADE_FLOOR` (0.12) over
 `FADE_DAYS` (420), so the plate keeps the newest waves and lets old ones go. The clock is
-`latest`, not the tick: once an outbreak ends nothing fades further. The fade and the
+`latest`, not the tick: once an outbreak ends nothing fades further. The build
+(`buildContours`) is pure and runs in `isochrones-worker.js`: main.js keeps `record`
+(O(cells) per tick) and, when a build is due (every four ticks while the field
+changes), posts the arrival field and the compartments, one build at a time; the
+result (the padded field and the segments, transferred) lands a frame or two later and
+redraws the plate, and one from before a reset is dropped. Without a module worker
+(Node, the tools) it runs in place. Under WebGPU the shader draws the lines from the
+padded field, so only the levels a label can sit on are contoured; the Canvas fallback
+contours every level. The fade and the
 cliff rule run per pixel on the GPU (uniform 43; the shader tests the same triangle span
 the CPU does) and per level in `drawContours`, so the two paths agree. Segments feed the
 label placement and the Canvas renderer, and a padded copy of the field (one cell past
@@ -386,9 +430,13 @@ change and `plate.js` blits it, and its copies through `destination-in` fading. 
 GPU state texel is `x` compartment, `y` flags | status << 4, `z` animal | (hatch angle
 code + 1) << 3 (31 angles), `w` the ramp value or, in the strain view, the hue byte; the
 shader computes the same OKLCH wheel from `wheelParams()` (uniforms 21–22). The Canvas
-path bins marks to 31 angles × 32 hues and hatches each bin within its bounds. Measured at the default grid mid-outbreak, the Canvas tile
-costs 17–40 ms (a fill through thousands of adjacent hexes is superlinear in Skia);
-the GPU path holds 60 fps at 4× on a 2× display.
+path bins marks to 31 angles × 32 hues and hatches each bin within its bounds. Chrome
+builds a canvas path in time quadratic in its length (10,000 hexes in one path take
+0.2 s, 100,000 take 20 s), so the tile draws long runs of marks `BATCH` (400) to a path
+(`render.js` `batched`), hatches a group of cells a batch at a time (each batch clipped
+to its cells, on lines anchored at the origin), and clips to the world's outline
+polygon rather than to a path of every cell. Both paths hold 60 fps at 4× on a 2×
+display; see Performance below.
 
 Canvas text is Newsreader and waits on `_loadTextFonts()`; theme changes invalidate
 `plateTheme()` (a `MutationObserver` on `data-theme`), and the colophon's theme
@@ -407,8 +455,10 @@ defaults; the preset's one knob; its line of description), and four tabs: Counts
 (Nightingale's rose, census, observed Re, reservoir census), Strains (Fig. 3 the
 antigenic map with "Match the vaccine to …", Fig. 4 the phylogeny, top strains, genome
 editor), Paint, and Settings (map view, toggles, advanced parameters). The zoom cluster
-sits at the plate's top left. `ui.js` assembles the strip and Settings and returns
-`{ resetUI, showAbout, showPreset }`.
+sits at the plate's top left. `ui.js` assembles the strip and Settings (map view, World, toggles, advanced
+parameters) and returns `{ resetUI, showAbout, showPreset }`. World sets the radius:
+a new size rebuilds the world with the params and toggles as they are, gives the
+coverage, and seeds the opening's two cases (main.js `setWorld`).
 
 The page opens on a living frame: `openScene` applies `OPENING_PRESET` (Threshold on
 the torus, or the `?mi=` surface), seeds two cases (one near a glued edge), warms up for
@@ -442,9 +492,13 @@ living branch's weight its current prevalence and its tip the strain's swatch.
 
 The loop in `main.js` runs `BASE_TICK_RATE` 10 × speed (0.25–4×) days per second, at
 most 16 ticks per frame, and idle-stops when paused with nothing dirty. Each tick pushes
-transition counts to `history` and the rose, computes stats once (`cachedStats`), stamps
-isochrone arrivals, and clears paint undo/redo so a stroke can never rewind evolved
-state.
+transition counts and its Z census to `history` and the rose, stamps isochrone
+arrivals, and clears paint undo/redo so a stroke can never rewind evolved state. The
+census (`stats()`) and strain prevalence (`prevalence()`) are O(cells) sweeps made on
+demand: a paint stroke or a new world drops them, and a tick only marks them stale, so
+while the clock runs they are recounted at most every `PANEL_MS` (100 ms). The Counts,
+Strains and rose panels redraw at most every `PANEL_MS` and the caption and the
+cartouche's rows every `CAPTION_MS` (250 ms); paused, everything catches up at once.
 
 `camera.getEffectiveViewport()` returns one shared object, mutated on every call; its
 `frame` (the canvas below the colophon band) is measured on resize. The paint
@@ -466,6 +520,9 @@ false`) so the about panel shows them without a second handler firing.
   through `wakeRenders()` in `main.js`, which marks panels dirty and re-measures the
   chart canvas (its backing store goes stale while `display: none`). A new gated panel
   needs the same wiring or it shows stale numbers while paused.
+- The plate redraws every frame something changed, but text does not: a new
+  tick-driven panel or caption goes through the same `PANEL_MS` / `CAPTION_MS` cadence
+  and the stale census rather than computing per tick.
 - Panels build their DOM once and cache value refs (`panelEl._statsRefs`,
   `panelEl._lineageRefs`); per-tick writes are guarded by text equality. Strain rows are
   pooled by id and reordered with `appendChild`. `document.startViewTransition` stays
@@ -493,21 +550,45 @@ false`) so the about panel shows them without a second handler firing.
   Z is an ordinary compartment behind a default-off toggle.
 - The hex lattice is what gives clean isotropic wavefronts; shrink the grid rather than
   move to squares for speed.
+- Per-cell work scales with the world, so a new O(cells) pass in the tick or the frame
+  is a cost at 96,661 cells: fold it into a pass that already visits every cell, or
+  visit only the cells that can act (the `near` and contact stamps, the I and AUTO_Q
+  lists), and check `tools/bench.mjs` before and after.
+
+## Performance
+
+Measured 2026-10-25 on an M5 Max, Chrome with WebGPU at a 2× pixel ratio, the opening
+(Threshold on the torus) at 4×, and with 4× CPU throttling as a stand-in for a
+typical laptop (`Emulation.setCPUThrottlingRate`):
+
+| World | Tick (Node, Threshold / Sandbox) | Page idle, throttled 4× | Before the pass |
+|---|---|---|---|
+| 10,621 cells (R 59) | 0.21 / 0.57 ms | 84%, 60 fps | 58% |
+| 42,841 cells (R 119) | 0.67 / 1.7 ms | 66%, 60 fps | 5%, frames to 50 ms |
+| 96,661 cells (R 179) | 1.3 / 3.2 ms | 48%, 60 fps | — |
+
+The tick was 0.72 / 1.43 ms at 10,621 cells before. Startup to a running opening is
+0.15, 0.28 and 0.44 s at the three sizes (0.6, 1.1 and 1.8 s throttled); before, the
+first Canvas frame alone took 4 s at R 119 and 19 s at R 179 (the quadratic path
+build). What is left on the main thread at large sizes: the tick's three full passes
+and its copy-in of the double-buffered fields, packing and uploading the state texture
+(W·H·4 bytes a tick), and `record`.
 
 ## Presets
 
 Six experiments (`presets.js`); each preset's comment records the calibration behind
 its values. `tools/presets-survey.mjs` reproduces the facts below (ten seeds, 3,000 days,
-the default knob, the opening's two seeds).
+the default knob, the opening's two seeds, the default world; re-run 2026-10-25 after
+the tick's RNG order changed).
 
 | Preset | Knob (default) | Measured in the caption | Ten seeds, 3,000 days |
 |---|---|---|---|
 | Threshold (opening) | β (0.11, 1.8× critical) | β against the critical β (≈ 0.061, independent edges); share of cells reached | takes off 10/10, peak 501 E+I, ends by day 575, reaches 97% |
 | Herd immunity | coverage (0.48, reset) | coverage against the lattice threshold (near 50%) and 1 − 1/R₀ (82%); share of the unvaccinated reached | peak 157, ends by day 1,167, reaches 73% of the unvaccinated |
-| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends (0/20 in calibration), peak 2,071, 64 living strains at the end, waves locked to the season |
+| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends (0/20 in calibration), peak 2,027, 69 living strains at the end, waves locked to the season |
 | Spillover | spillover rate (0.02) | human-to-human Re over 30 days; reservoir share of human cases | never ends, human Re 0.38, 62% of human cases from the reservoir |
-| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 401 transformed cells at day 1,000, 668 at the end; escape at ≤ 0.25, elimination at ≥ 0.35 |
-| Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 1,395 zombies at day 1,000, 1,195 at the end; burns out in 3/10 |
+| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 422 transformed cells at day 1,000, 680 at the end; escape at ≤ 0.25, elimination at ≥ 0.35 |
+| Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 1,040 zombies at day 1,000, 1,320 at the end; burns out in 3/10 |
 
 ## Open work
 
@@ -517,6 +598,10 @@ this file. `docs/VISION.md` holds the wider directions and the measurements behi
 
 - The default-on `auto_quarantine` is instant, unlimited and omniscient (it sees every
   true case); the presets turn it off, and 3.0's budgets and reports replace it.
+- The tick runs on the main thread. Moving it to a worker is the next lever for worlds
+  past ~100,000 cells: the site is cross-origin isolated (COOP same-origin, COEP
+  credentialless), so the grid could live in SharedArrayBuffers, with paint, presets
+  and the registry's panels crossing as messages.
 - The drift preset's lineages diffuse from α in every direction rather than along a
   canalized trunk: on a nearest-neighbour lattice competition is local, so lineages in
   different regions coexist. Long-range mixing (`docs/VISION.md`, A) would globalize it.

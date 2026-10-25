@@ -43,16 +43,201 @@ export function isoFade(age) {
     return Math.max(FADE_FLOOR, 1 - x * x);
 }
 
-export function createIsochrones() {
+/**
+ * The isochrones of one arrival field: smooth it, pad it one cell past the
+ * edges through the gluing (the WebGPU plate draws the lines from that), and
+ * contour it, every level or, with `all` false, only the levels a label can
+ * sit on (every ISO_LABEL days, while still plain enough to label). `job` is
+ * { arrival, compartment, act, W, H, topology, latest, all }; `bufs` is the
+ * caller's scratch, reused between calls. Pure, so it runs in the isochrone
+ * worker (isochrones-worker.js) or, without one, on the main thread.
+ * Returns { padded, side, maxLevel, latest, contours }, padded null while no
+ * cell has been reached.
+ */
+export function buildContours(job, bufs) {
+    const { arrival, compartment: empty, act, W, H, topology, latest, all } = job;
+    const N = W * H;
+    if (!bufs.field || bufs.field.length !== N) {
+        bufs.field = new Float32Array(N);
+        bufs.field2 = new Float32Array(N);
+        bufs.holeFlag = new Uint8Array(N);
+        bufs.holes = new Int32Array(N);
+        bufs.holeVal = new Float32Array(N);
+    }
+    let field = bufs.field;
+    const { field2, holeFlag, holes, holeVal } = bufs;
+    const nb = getNeighborTable(W, H, topology).idx;
+    const ahead = latest + ISO_STEP * 0.75;      // value for cells the wave has not reached
+        // EMPTY cells that were never reached carry no information (holes);
+        // they take their neighbors' values so the lines pass through.
+        let nHoles = 0, reached = 0;
+        for (let k = 0; k < act.length; k++) {
+            const i = act[k], a = arrival[i];
+            if (a === Infinity) {
+                field[i] = ahead;
+                if (empty[i] === Compartment.EMPTY) holes[nHoles++] = i;
+            } else { field[i] = a; reached++; }
+        }
+        const contours = [];
+        if (!reached) return { padded: null, side: 0, maxLevel: 0, latest: 0, contours };
+        // Every other cell averages only the neighbors within CLIFF of its
+        // own value, so the edge between one wave's stamps and another's stays
+        // sharp, for SMOOTH_PASSES passes; the holes keep filling for two more.
+        const isHole = holeFlag;
+        for (let k = 0; k < act.length; k++) isHole[act[k]] = 0;
+        for (let h = 0; h < nHoles; h++) isHole[holes[h]] = 1;
+        let src = field, dst = field2;
+        for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+            for (let k = 0; k < act.length; k++) {
+                const i = act[k], own = src[i], base = i * 6;
+                let s = 0, n = 0;
+                if (isHole[i]) {
+                    for (let d = 0; d < 6; d++) { const j = nb[base + d]; if (j >= 0) { s += src[j]; n++; } }
+                    dst[i] = n ? s / n : own;
+                } else {
+                    // unrolled: this is the build's hottest loop
+                    const j0 = nb[base], j1 = nb[base + 1], j2 = nb[base + 2], j3 = nb[base + 3], j4 = nb[base + 4], j5 = nb[base + 5];
+                    if (j0 >= 0) { const v = src[j0]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    if (j1 >= 0) { const v = src[j1]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    if (j2 >= 0) { const v = src[j2]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    if (j3 >= 0) { const v = src[j3]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    if (j4 >= 0) { const v = src[j4]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    if (j5 >= 0) { const v = src[j5]; if (Math.abs(v - own) <= CLIFF) { s += v; n++; } }
+                    dst[i] = 0.5 * own + 0.5 * (n ? s / n : own);
+                }
+            }
+            const t = src; src = dst; dst = t;
+        }
+        for (let pass = SMOOTH_PASSES; pass < SMOOTH_PASSES + 2; pass++) {
+            for (let h = 0; h < nHoles; h++) {
+                const i = holes[h], base = i * 6;
+                let s = 0, n = 0;
+                for (let d = 0; d < 6; d++) { const j = nb[base + d]; if (j >= 0) { s += src[j]; n++; } }
+                holeVal[h] = n ? s / n : src[i];
+            }
+            for (let h = 0; h < nHoles; h++) src[holes[h]] = holeVal[h];
+        }
+        if (src !== field) { bufs.field2 = field; bufs.field = field = src; }
+        let maxLevel = 0;
+        for (let L = ISO_STEP; L < latest - 2; L += ISO_STEP) maxLevel = L;
+        const { R } = hexBounds(W, H);
+        // Padded field for the GPU: relative (q, r) in [-R-1, R+1], read
+        // through the gluing; -1 beyond an open edge.
+        const side = 2 * R + 3;
+        const look0 = lookupTable(W, H, topology);
+        let padded = bufs.padded;
+        if (!padded || padded.length !== side * side) bufs.padded = padded = new Float32Array(side * side);
+        for (let k = 0; k < padded.length; k++) padded[k] = look0[k] >= 0 ? field[look0[k]] : -1;
+        const out = { padded, side, maxLevel, latest, contours };
+        if (!maxLevel) return out;
+        // The levels to contour: every ISO_STEP days, or only the labeled ones
+        // still plain enough to carry a label.
+        const levels = [];
+        for (let L = ISO_STEP; L <= maxLevel; L += ISO_STEP) {
+            if (all || (L % ISO_LABEL === 0 && isoFade(latest - L) >= LABEL_FADE)) levels.push(L);
+        }
+        if (!levels.length) return out;
+        const lo0 = levels[0], hi0 = levels[levels.length - 1], stepL = all ? ISO_STEP : ISO_LABEL;
+        const segs = levels.map(() => []);
+        const inW = worldMask(R);
+        const SQ3 = Math.sqrt(3);
+        // One triangle of cell centers; values -1 mark a corner beyond an open edge.
+        const tri = (q0, r0, v0, q1, r1, v1, q2, r2, v2) => {
+            if (v0 < 0 || v1 < 0 || v2 < 0) return;
+            const lo = v0 < v1 ? (v0 < v2 ? v0 : v2) : (v1 < v2 ? v1 : v2);
+            const hi = v0 > v1 ? (v0 > v2 ? v0 : v2) : (v1 > v2 ? v1 : v2);
+            if (hi - lo > CLIFF_SPAN || hi < lo0 || lo > hi0) return;
+            let L = Math.ceil(lo / stepL) * stepL;
+            if (L < lo0) L = lo0;
+            if (L > hi) return;
+            const x0 = SQ3 * (q0 + r0 / 2), y0 = 1.5 * r0, x1 = SQ3 * (q1 + r1 / 2), y1 = 1.5 * r1, x2 = SQ3 * (q2 + r2 / 2), y2 = 1.5 * r2;
+            for (; L <= hi && L <= hi0; L += stepL) {
+                if (L === lo && L === hi) continue;
+                const out = segs[(L - lo0) / stepL];
+                if (!out) continue;
+                let n = 0, ax = 0, ay = 0;
+                // edges 0–1, 1–2, 2–0: a crossing where one end is below L and the other not
+                if ((v0 < L) !== (v1 < L)) { const t = (L - v0) / (v1 - v0); ax = x0 + t * (x1 - x0); ay = y0 + t * (y1 - y0); n = 1; }
+                if ((v1 < L) !== (v2 < L)) {
+                    const t = (L - v1) / (v2 - v1), x = x1 + t * (x2 - x1), y = y1 + t * (y2 - y1);
+                    if (n) { out.push(ax, ay, x, y); continue; }
+                    ax = x; ay = y; n = 1;
+                }
+                if (n && (v2 < L) !== (v0 < L)) { const t = (L - v2) / (v0 - v2); out.push(ax, ay, x2 + t * (x0 - x2), y2 + t * (y0 - y2)); }
+            }
+        };
+        // Every triangle with at least one corner in the world. Corners outside
+        // read through the gluing; those beyond an open edge drop the triangle.
+        for (let r = -R - 1; r <= R; r++) {
+            const row = (r + R + 1) * side + R + 1;
+            for (let q = -R - 1; q <= R; q++) {
+                const k = row + q, kb = k + 1, kc = k + side, kd = kc + 1;
+                const inA = inW[k] | inW[kb] | inW[kc], inB = inW[kb] | inW[kc] | inW[kd];
+                if (!inA && !inB) continue;
+                const b = padded[kb], c = padded[kc];
+                if (inA) tri(q, r, padded[k], q + 1, r, b, q, r + 1, c);
+                if (inB) tri(q + 1, r, b, q, r + 1, c, q + 1, r + 1, padded[kd]);
+            }
+        }
+        for (let n = 0; n < levels.length; n++) {
+            if (!segs[n].length) continue;
+            const level = levels[n];
+            const c = { level, segs: Float32Array.from(segs[n]) };
+            if (level % ISO_LABEL === 0) c.runLen = runLengths(c.segs);
+            contours.push(c);
+        }
+        return out;
+}
+
+/**
+ * The arrival field of a run and its isochrones. main.js calls `record` after
+ * every tick and paint stroke and `build` before drawing; with
+ * `opts.worker` the build runs in a Web Worker and lands a frame or two
+ * later, calling `opts.onBuilt`; without one (Node, or no module workers) it
+ * runs in place.
+ */
+export function createIsochrones(opts = {}) {
     let arrival = null;          // Float32Array(W*H), tick of the latest wave's arrival
     let was = null;              // Uint8Array(W*H), E/I/Z at the previous record
     let latest = 0, latestOut = 0;   // newest stamp; and its value at the last build
-    let field = null, tmp = null;
     // [{ level, segs: Float32Array [x0,y0,x1,y1,...], runLen? }]; on the labeled levels runLen[k]
     // is the length in cells of the connected line that segment k belongs to
     let contours = [];
     let padded = null, side = 0, maxLevelOut = 0;   // the field one cell past the edges, for the GPU
-    let lastBuild = -1, lastTopo = -1, dirty = true;
+    let lastBuild = -1, lastTopo = -1, lastAll = true, dirty = true;
+    let reached = 0;             // cells stamped at least once
+    const bufs = {};
+    // One build in flight at a time; a newer request waits in `queued`, and a
+    // result from before a clear (`gen`) is dropped.
+    let worker = null, busy = false, queued = null, gen = 0, sentAct = null;
+    if (opts.worker && typeof Worker !== 'undefined') {
+        try {
+            worker = new Worker(new URL('./isochrones-worker.js', import.meta.url), { type: 'module' });
+            worker.onmessage = (e) => {
+                busy = false;
+                if (e.data.gen === gen) { apply(e.data); if (opts.onBuilt) opts.onBuilt(); }
+                if (queued) { const q = queued; queued = null; post(q.job, q.act); }
+            };
+            // a worker that cannot start leaves the build on the main thread
+            worker.onerror = () => { worker = null; busy = false; queued = null; dirty = true; if (opts.onBuilt) opts.onBuilt(); };
+        } catch (e) {
+            worker = null;
+        }
+    }
+
+    function apply(r) {
+        contours = r.contours;
+        maxLevelOut = r.maxLevel;
+        latestOut = r.latest;
+        if (r.padded) { padded = r.padded; side = r.side; }
+    }
+
+    function post(job, act) {
+        busy = true;
+        // the active cells go once per world; the worker keeps them
+        if (act !== sentAct) { job.act = act; sentAct = act; }
+        worker.postMessage(job, [job.arrival.buffer, job.compartment.buffer]);
+    }
 
     function ensure(grid) {
         const N = grid.W * grid.H;
@@ -60,9 +245,10 @@ export function createIsochrones() {
             arrival = new Float32Array(N).fill(Infinity);
             was = new Uint8Array(N);
             latest = 0;
-            field = new Float32Array(N);
-            tmp = new Float32Array(N);
+            reached = 0;
             contours = [];
+            padded = null;
+            gen++;
             dirty = true;
         }
     }
@@ -82,6 +268,7 @@ export function createIsochrones() {
                 if (was[i]) continue;
                 was[i] = 1;
                 if (arrival[i] === Infinity || tick - arrival[i] >= REARRIVE_GAP) {
+                    if (arrival[i] === Infinity) reached++;
                     arrival[i] = tick; any = true;
                     if (tick > latest) latest = tick;
                 }
@@ -93,109 +280,33 @@ export function createIsochrones() {
     function clear() {
         if (arrival) { arrival.fill(Infinity); was.fill(0); }
         latest = latestOut = 0;
+        reached = 0;
         contours = [];
+        maxLevelOut = 0;
         lastBuild = -1;
+        gen++;
+        queued = null;
         dirty = true;
     }
 
     /**
-     * Rebuild the contours if the field changed and at least `every` ticks have
-     * passed. Returns true when the contours changed.
+     * Rebuild the isochrones if the field changed and at least `every` ticks
+     * have passed (see buildContours for `all`). Returns true when they changed
+     * in place; a worker's result arrives later, through `opts.onBuilt`.
      */
-    function build(grid, topology, tick, every = 4) {
+    function build(grid, topology, tick, every = 4, all = true) {
         ensure(grid);
-        if (!dirty && topology === lastTopo) return false;
-        if (topology === lastTopo && lastBuild >= 0 && tick - lastBuild < every && tick >= lastBuild) return false;
-        lastBuild = tick; lastTopo = topology; dirty = false;
+        if (!dirty && topology === lastTopo && all === lastAll) return false;
+        if (topology === lastTopo && all === lastAll && lastBuild >= 0 && tick - lastBuild < every && tick >= lastBuild) return false;
+        lastBuild = tick; lastTopo = topology; lastAll = all; dirty = false;
         const { W, H } = grid;
-        const act = grid.activeIndices;
-        const nb = getNeighborTable(W, H, topology).idx;
-        const ahead = latest + ISO_STEP * 0.75;      // value for cells the wave has not reached
-        let reached = 0;
-        for (let k = 0; k < act.length; k++) {
-            const i = act[k], a = arrival[i];
-            if (a !== Infinity) reached++;
-            field[i] = a === Infinity ? ahead : a;
+        if (worker) {
+            const job = { gen, arrival: arrival.slice(), compartment: grid.compartment.slice(), act: null, W, H, topology, latest, all };
+            if (busy) queued = { job, act: grid.activeIndices };
+            else post(job, grid.activeIndices);
+            return false;
         }
-        if (!reached) { contours = []; maxLevelOut = 0; latestOut = 0; return true; }
-        // EMPTY cells that were never reached carry no information; let them
-        // take their neighbors' values so the lines pass through. Every other
-        // cell averages only the neighbors within CLIFF of its own value, so the
-        // edge between one wave's stamps and another's stays sharp.
-        const empty = grid.compartment;
-        for (let pass = 0; pass < SMOOTH_PASSES + 2; pass++) {
-            for (let k = 0; k < act.length; k++) {
-                const i = act[k], own = field[i];
-                const hole = arrival[i] === Infinity && empty[i] === Compartment.EMPTY;
-                let s = 0, n = 0;
-                for (let d = 0; d < 6; d++) {
-                    const j = nb[i * 6 + d];
-                    if (j >= 0 && (hole || Math.abs(field[j] - own) <= CLIFF)) { s += field[j]; n++; }
-                }
-                const avg = n ? s / n : own;
-                tmp[i] = hole ? avg : (pass < SMOOTH_PASSES ? 0.5 * own + 0.5 * avg : own);
-            }
-            for (let k = 0; k < act.length; k++) field[act[k]] = tmp[act[k]];
-        }
-        latestOut = latest;
-        let maxLevel = 0;
-        for (let L = ISO_STEP; L < latest - 2; L += ISO_STEP) maxLevel = L;
-        maxLevelOut = maxLevel;
-        contours = [];
-        const { cq, cr, R } = hexBounds(W, H);
-        // Padded field for the GPU: relative (q, r) in [-R-1, R+1], read
-        // through the gluing; -1 beyond an open edge.
-        side = 2 * R + 3;
-        const look0 = lookupTable(W, H, topology);
-        if (!padded || padded.length !== side * side) padded = new Float32Array(side * side);
-        for (let k = 0; k < padded.length; k++) padded[k] = look0[k] >= 0 ? field[look0[k]] : -1;
-        if (!maxLevel) return true;
-        const out = new Map();
-        for (let L = ISO_STEP; L <= maxLevel; L += ISO_STEP) out.set(L, []);
-        // Value at a lattice point (relative coords); NaN beyond an open edge.
-        const valueAt = (q, r) => {
-            const i = look0[(r + R + 1) * side + (q + R + 1)];
-            return i >= 0 ? field[i] : NaN;
-        };
-        const SQ3 = Math.sqrt(3);
-        const px = (q, r) => SQ3 * (q + r / 2), py = (q, r) => 1.5 * r;
-        const tri = (q0, r0, v0, q1, r1, v1, q2, r2, v2) => {
-            if (v0 !== v0 || v1 !== v1 || v2 !== v2) return;
-            const lo = Math.min(v0, v1, v2), hi = Math.max(v0, v1, v2);
-            if (hi - lo > CLIFF_SPAN) return;
-            const first = Math.ceil(lo / ISO_STEP) * ISO_STEP;
-            for (let L = Math.max(first, ISO_STEP); L <= hi && L <= maxLevel; L += ISO_STEP) {
-                if (L === lo && L === hi) continue;
-                const pts = [];
-                const edge = (qa, ra, va, qb, rb, vb) => {
-                    if ((va < L) === (vb < L)) return;
-                    const t = (L - va) / (vb - va);
-                    pts.push(px(qa, ra) + t * (px(qb, rb) - px(qa, ra)), py(qa, ra) + t * (py(qb, rb) - py(qa, ra)));
-                };
-                edge(q0, r0, v0, q1, r1, v1);
-                edge(q1, r1, v1, q2, r2, v2);
-                edge(q2, r2, v2, q0, r0, v0);
-                if (pts.length === 4) out.get(L).push(pts[0], pts[1], pts[2], pts[3]);
-            }
-        };
-        // Every triangle with at least one corner in the world. Corners outside
-        // read through the gluing; those beyond an open edge drop the triangle.
-        for (let r = -R - 1; r <= R; r++) {
-            for (let q = -R - 1; q <= R; q++) {
-                const inA = cube(q, r) <= R || cube(q + 1, r) <= R || cube(q, r + 1) <= R;
-                const inB = cube(q + 1, r) <= R || cube(q, r + 1) <= R || cube(q + 1, r + 1) <= R;
-                if (!inA && !inB) continue;
-                const a = valueAt(q, r), b = valueAt(q + 1, r), c = valueAt(q, r + 1);
-                if (inA) tri(q, r, a, q + 1, r, b, q, r + 1, c);
-                if (inB) tri(q + 1, r, b, q, r + 1, c, q + 1, r + 1, valueAt(q + 1, r + 1));
-            }
-        }
-        for (const [level, segs] of out) {
-            if (!segs.length) continue;
-            const c = { level, segs: Float32Array.from(segs) };
-            if (level % ISO_LABEL === 0) c.runLen = runLengths(c.segs);
-            contours.push(c);
-        }
+        apply(buildContours({ arrival, compartment: grid.compartment, act: grid.activeIndices, W, H, topology, latest, all }, bufs));
         return true;
     }
 
@@ -207,6 +318,7 @@ export function createIsochrones() {
         get maxLevel() { return maxLevelOut; },
         get latest() { return latestOut; },
         get arrival() { return arrival; },
+        get reached() { return reached; },
         markDirty() { dirty = true; }
     };
 }
@@ -258,4 +370,18 @@ function lookupTable(W, H, topology) {
 
 function cube(q, r) {
     return Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+}
+
+// The padded lattice (side 2R + 3) as 1 inside the world, 0 outside. Cached per R.
+const _maskCache = new Map();
+function worldMask(R) {
+    let m = _maskCache.get(R);
+    if (m) return m;
+    const side = 2 * R + 3;
+    m = new Uint8Array(side * side);
+    for (let r = -R - 1; r <= R + 1; r++) {
+        for (let q = -R - 1; q <= R + 1; q++) if (cube(q, r) <= R) m[(r + R + 1) * side + (q + R + 1)] = 1;
+    }
+    _maskCache.set(R, m);
+    return m;
 }

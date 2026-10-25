@@ -99,10 +99,20 @@ export function topoToString(t) {
     }
 }
 
+// ─── World size ───
+// The world is the regular hexagon of radius R inscribed in a (2R + 2)-cell
+// axial rhombus (initialization.js applyHexMask), 3R(R + 1) + 1 cells.
+// Settings offers WORLD_RADII; ?r= takes any radius in WORLD_R_RANGE.
+export const WORLD_RADII = Object.freeze([59, 89, 119, 179]);
+export const WORLD_R_RANGE = Object.freeze([16, 239]);
+export const worldCells = (R) => 3 * R * (R + 1) + 1;
+const DEFAULT_R = 59;
+
 // ─── Default sim parameters ───
 export const DEFAULTS = Object.freeze({
-    W: 120,
-    H: 120,
+    R: DEFAULT_R,           // world radius in cells
+    W: 2 * DEFAULT_R + 2,   // the rhombus that stores it
+    H: 2 * DEFAULT_R + 2,
     hexSize: 6,
     tickRate: 30,         // ticks per second target (Phase 2+)
     topology: Topology.TORUS,
