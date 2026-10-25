@@ -41,12 +41,50 @@ sessions, and parallel lanes fit a whole version in one.
 | Version | Theme | Contents | Size |
 |---|---|---|---|
 | **2.0** | The atlas | done 2026-10-24 (§5) | — |
-| **2.1** | Immunity by distance; presets that work | antigenic space (§2.1), seeing it (§2.2), six experiments (§2.3), the fixes that ride along (§2.4) | M–L |
+| **2.1** | Immunity by distance; presets that work | done 2026-10-24 (§2.0, §5) | — |
 | **3.0** | The game | a tactical reverse Plague Inc: reports instead of truth, costed orders, an evolving adversary, scored against the world you didn't touch (§3) | L |
 
 Everything else in `VISION.md` is unslated (§4).
 
 ## 2. 2.1: immunity by distance, and presets that work
+
+### 2.0 As built (2026-10-24)
+
+2.1 landed in one session (§5). What differs from the plan below, and what was learned:
+
+- **Strain marks** are the antigen itself (a9's call): `ag_x` → hatch angle over 180°,
+  `ag_y` → hue around an OKLCH wheel fitted like the inks (light L 0.525 C 0.08, dark
+  L 0.62 C 0.10), α opposite the accent, the wheel hurrying and its chroma dipping
+  through the accent's hue. The antigenic map is the torus as a square centred on α,
+  its ground the key of marks.
+- **Isochrones fade** (a9's call; built by a lane): re-stamped on re-arrival after 32
+  days, faded by age against the newest stamp (quadratic to 0.12 over 420 days), no
+  contours across cliffs between waves, labels only on fresh, long lines.
+- **The registry** reclaims dead branches always and splices dead single-line
+  ancestors only above 16,384 slots, so the antigenic map can draw the trunk's whole
+  path; `gen` keeps lineage depth.
+- **Within-host fitness** is β × the host's susceptibility, as planned. Recombination's
+  range-scaled noise lets selection inflate β, so the drift preset turns it off, and
+  `mutation_strength: 0` now means no genome noise.
+- **Seasonality** (`season_amp`, from `VISION.md` C) came in for the drift preset:
+  without it drift settles into a spatial endemic state with no waves.
+- **The drift preset** shows seasons, drift (about 1.5 AU a year) and deepening
+  lineages, but lineages diffuse from α in every direction rather than along a
+  canalized trunk: on a nearest-neighbour lattice competition is local, so lineages
+  in different regions coexist **[synthesis]**. A low mutation rate (0.002) keeps each
+  wave to a few variants, so the plate shows sectors, not confetti. Long-range mixing
+  (`VISION.md` A) is the lever for a trunk.
+- **Spillover** needed two model fixes found in calibration: chronic *human* carriers
+  transmit for life and made human chains supercritical (removed from the preset), and
+  a reservoir that burns through its rodents dies out (the rodents now carry the
+  infection chronically, with turnover, and `animal_seed` starts 5% infected).
+- **The presets' facts** are in `AGENTS.md` ("Presets"), reproduced by
+  `tools/presets-survey.mjs`.
+- **The experiment strip** puts the preset picker, its knob and its description in the
+  margin head; the picker left Settings, and Reset restarts the running experiment.
+- **Calibration lanes** on Sonnet were stopped by its biology safeguard (a false
+  positive on an educational lattice model), as was Codex's ideation thread; the
+  calibration ran in the main loop instead. Pure math consults went through.
 
 The evidence is in `VISION.md`, "What the measurements say". Immunity recognizes only
 exact strain ids, so every mutant is fully novel to every host. The phylogeny stays a
@@ -328,6 +366,11 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 |---|---|---|---|
 | 2.0 | 2026-10-24 | `59dfb32`, `58a3d09` | The atlas: the plate after Snow, isochrones, glued-edge copies, Nightingale's rose, the time-scaled phylogeny, the H&E section, the inks; Cylinder and Möbius removed, the Klein bottle's flat form proved impossible. |
 | Vision | 2026-10-24 | `66be1bb` | `docs/VISION.md` and the headless surveys in `tools/`. |
+| 2.1 isochrones | 2026-10-24 | `030c0d1` | Isochrones re-arrive, fade with age, skip cliffs between waves; labels on fresh long lines; the rose counts Z. |
+| 2.1 M1 | 2026-10-24 | `8155a8d` | Immunity by antigenic distance: the antigenic torus, per-cell memory in place of the bloom filter, σ on every infection roll, vaccine antigen, genome-aware within-host fitness, id reclamation, the immunity view, `season_amp`, 44 tests. |
+| 2.1 M2 | 2026-10-24 | `e1910c3` | Strain marks from antigenic position (angle × OKLCH hue, GPU and Canvas), Fig. 3 the antigenic map with vaccine matching, Fig. 4 the captioned phylogeny. |
+| 2.1 M3 | 2026-10-24 | `9a298de` | Six presets as experiments with knobs and measured captions, the experiment strip, `vax_coverage`, `animal_seed`, adaptive splicing. |
+| 2.1 M4 | 2026-10-24 | (this commit) | Docs (`AGENTS.md`, `about.md`, `README.md`, `index.html` text and JSON-LD), `tools/presets-survey.mjs`. |
 
 ## 6. Gotchas
 

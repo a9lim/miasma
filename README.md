@@ -1,8 +1,9 @@
 # Miasma
 
-A stochastic epidemic simulator on a hex grid. Seed an outbreak, pick a surface and a
-preset or tune your own pathogen, and watch the wavefront spread, mutate, and run into
-the interventions you paint.
+A stochastic epidemic simulator on a hex grid. Run one of six experiments, each with
+one knob and a number measured live, or seed your own outbreak, pick a surface, and
+watch the wavefront spread, drift antigenically, and run into the interventions you
+paint.
 
 **[Open it](https://a9l.im/miasma)** · part of [a9l.im](https://a9l.im)
 
@@ -14,30 +15,39 @@ the interventions you paint.
   infections, chronic carriers, and infectious corpses.
 - **Automatic responses**: hospital beds with overflow mortality, contact-tracing
   quarantine, and a background vaccination rollout, each switchable.
-- **Multi-strain evolution**: every strain carries its own genome of rates. Strains
-  mutate, coinfect (up to four per cell), and recombine, and each cell keeps a record
-  of past exposures that gives cross-immunity. Reinfection and vaccine breakthrough
-  therefore favor strains a cell hasn't seen.
+- **Immunity by antigenic distance**: every strain carries its own genome of rates and
+  a position on an antigenic torus. Strains mutate (stepping through antigenic space),
+  coinfect (up to four per cell), and recombine; each cell remembers up to four antigens
+  it met by infection or vaccine, and its protection against a strain falls off with
+  distance from them. Reinfection and breakthrough therefore favor drifted strains,
+  within-host competition favors strains that escape the host, and a vaccine matched to
+  one strain loses ground as the virus drifts.
 - **Population dynamics**: aging, births into empty land (children of recovered parents
   start with maternal antibodies), health that degrades during infection, and
   age-driven mortality.
 - **Animal reservoir**: its own births, aging, and per-strain SIR dynamics, passing
   infections to and from the human layer.
 - **Zombies**: one state machine with two readings. It can run a zombie outbreak where
-  humans fight back, or oncoviral cell transformation held back by immune surveillance.
+  humans fight back, or tumour growth from an oncovirus held back by immune
+  surveillance.
 - **Four surfaces**: the hexagonal world with its edges open (plane) or glued in
   pairs: torus, Klein bottle, and real projective plane. Faded copies of the world
   sit beyond each glued edge, and strokes on them land on the world.
-- **Ten presets**: SEIR vanilla, COVID-like, Ebola, tuberculosis, Andes hantavirus,
-  smallpox, plague with rats, zombie apocalypse, oncoviral transformation, and absurd
-  mode.
+- **Six experiments**: Threshold (the critical transmission rate, and the ragged front
+  just above it), Herd immunity (about half coverage stops a wave on a lattice, not the
+  textbook 82%), Antigenic drift (seasonal waves of drifting variants), Spillover (a
+  rodent reservoir keeping subcritical human chains going), Immunoediting (surveillance
+  eliminating, holding or losing a tumour), and Zombie apocalypse. Each has one knob in
+  the margin and a measured number in the figure caption; the Sandbox has every
+  mechanic at its default.
 - **The atlas**: the map is a plate in the line of John Snow's 1854 cholera map:
   the disease in red, recovery as stipple, vaccination as hatching, deaths as
-  crosses, and isochrones of the day the wave arrived. Views for compartment,
-  strain (one hatch angle per strain), age, health, status, and susceptibility;
-  the oncoviral preset becomes an H&E-stained section. Nightingale's rose and
-  observed Re sit in the Counts tab; the Strains tab ranks strains by prevalence
-  and has a time-scaled phylogeny and a per-strain genome editor.
+  crosses, and isochrones of the day each wave arrived, fading as they age. Views for
+  compartment, strain (a strain's hatch angle and colour are its antigenic
+  position), age, health, status, and immunity to a chosen strain; the Immunoediting
+  preset becomes an H&E-stained section. Nightingale's rose and observed Re sit in the
+  Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
+  strains by prevalence, a vaccine-matching control and a per-strain genome editor.
 - **Intervention painting**: seed, vaccinate, quarantine, sanitize, and cull, with three
   brush sizes. Undo and redo work until the simulation advances.
 
@@ -74,12 +84,14 @@ Add `?seed=<any text>` to the URL for a reproducible run.
 
 ## How it's built
 
-Vanilla JavaScript modules with no dependencies, drawn with Canvas 2D. Cell state is a
+Vanilla JavaScript modules with no dependencies; the lattice draws in WebGPU with a
+Canvas 2D fallback. Cell state is a
 set of typed arrays over a 120×120 axial grid masked to a hexagon of 10,621 cells. Each
 tick computes the next state into scratch buffers and swaps them in, so every cell
 updates simultaneously. `src/dynamics.js` holds the per-tick model, `src/topology.js`
-the surface identifications, and `src/strains.js` the strain registry;
-`node src/topology.test.mjs` runs the topology tests. [AGENTS.md](AGENTS.md) has the
+the surface identifications, `src/immunity.js` antigenic distance and immune memory,
+and `src/strains.js` the strain registry; `node src/topology.test.mjs` and
+`node src/immunity.test.mjs` run the tests. [AGENTS.md](AGENTS.md) has the
 detailed map.
 
 ## License
