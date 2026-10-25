@@ -370,7 +370,7 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 | 2.1 M1 | 2026-10-24 | `8155a8d` | Immunity by antigenic distance: the antigenic torus, per-cell memory in place of the bloom filter, σ on every infection roll, vaccine antigen, genome-aware within-host fitness, id reclamation, the immunity view, `season_amp`, 44 tests. |
 | 2.1 M2 | 2026-10-24 | `e1910c3` | Strain marks from antigenic position (angle × OKLCH hue, GPU and Canvas), Fig. 3 the antigenic map with vaccine matching, Fig. 4 the captioned phylogeny. |
 | 2.1 M3 | 2026-10-24 | `9a298de` | Six presets as experiments with knobs and measured captions, the experiment strip, `vax_coverage`, `animal_seed`, adaptive splicing. |
-| 2.1 M4 | 2026-10-24 | (this commit) | Docs (`AGENTS.md`, `about.md`, `README.md`, `index.html` text and JSON-LD), `tools/presets-survey.mjs`. |
+| 2.1 M4 | 2026-10-24 | `a93ad0e` | Docs (`AGENTS.md`, `about.md`, `README.md`, `index.html` text and JSON-LD), `tools/presets-survey.mjs`. |
 
 ## 6. Gotchas
 
