@@ -20,7 +20,7 @@
 import { Grid } from './src/grid.js';
 import { computeViewport } from './src/render.js';
 import { createPlate } from './src/plate.js';
-import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells } from './src/config.js';
+import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells, OPENING_SEEDS } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
 import { initializeGrid, initializeAnimals } from './src/initialization.js';
@@ -60,10 +60,8 @@ const SPEED_STEPS = [0.25, 0.5, 1, 2, 4];
 const DEFAULT_SPEED_INDEX = 2;
 const BASE_TICK_RATE = 10;     // ticks (days) per second at 1×
 const HISTORY_CAP = 200;
-// The opening outbreak: two cases, one near a glued edge so the wave is seen
-// crossing it, one inland. Offsets are axial, relative to the world center.
+// The opening outbreak: its preset, seeded with OPENING_SEEDS (config.js).
 const OPENING_PRESET = 'threshold';
-const OPENING_SEEDS = [[30, -42], [-24, 10]];
 // Days the opening runs before it is shown: the preset's own warm-up, and
 // longer under reduced motion, which opens on a still plate.
 const OPENING_WARMUP = 96, OPENING_STILL_EXTRA = 120;
@@ -350,7 +348,7 @@ export default function init(dom) {
         const mode = paintController.getMode(), size = paintController.getBrushSize();
         paintController.setMode(PaintMode.SEED);
         paintController.setBrushSize(1);
-        // the offsets are for the default world; a larger one scales them
+        // the offsets are for the default world; another scales them
         const k = R / DEFAULTS.R;
         for (const [dq, dr] of offsets) paintController.applyAtHex(cq + Math.round(dq * k), cr + Math.round(dr * k));
         paintController.setMode(mode);

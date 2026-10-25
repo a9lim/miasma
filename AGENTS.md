@@ -122,11 +122,13 @@ Storage is a (2R + 2)-square axial rhombus of hexes (pointy-top on screen: `x = 
 `Compartment.EMPTY` / `Animal.VOID` padding. Hot loops iterate `activeIndices`, and
 compartment counts over it always sum to `grid.activeCount`. `topology.hexBounds`
 recomputes the same center and radius independently, so the two formulas must agree.
-R is 59 by default (120×120 storage, 10,621 cells, `DEFAULTS.R`); Settings → World
-offers `WORLD_RADII` (59, 89, 119, 179: up to 96,661 cells) and `?r=` any radius in
-`WORLD_R_RANGE`. Everything sized by the world reads `hexBounds`; the opening's seed
-offsets are written for R = 59 and scale by R/59, and the closest zoom scales the same
-way, so a larger world zooms in to the default world's cell.
+R is 89 by default (180×180 storage, 24,031 cells, `DEFAULTS.R`; 59 and 10,621 cells
+until 2026-10-25); Settings → World offers `WORLD_RADII` (59, 89, 119, 179: 10,621 to
+96,661 cells) and `?r=` any radius in `WORLD_R_RANGE`. Everything sized by the world
+reads `hexBounds`; the opening's seeds (`OPENING_SEEDS`) are offsets on the default
+world and scale by R / `DEFAULTS.R` (on the 59 world they round to the old (30, −42) and
+(−24, 10)), and the closest zoom shows a cell as large as the 59 world does at 3×,
+whatever the world.
 
 `Grid` holds parallel typed arrays: `compartment` (S E I R D V M Z, plus the EMPTY
 sentinel), `status` (none / H / Q), `flags` (LATENT on E, CARRIER on R, F_CORPSE on D,
@@ -462,7 +464,8 @@ coverage, and seeds the opening's two cases (main.js `setWorld`).
 
 The page opens on a living frame: `openScene` applies `OPENING_PRESET` (Threshold on
 the torus, or the `?mi=` surface), seeds two cases (one near a glued edge), warms up for
-the preset's `warmup` (200 days), and plays; under reduced motion it warms up 120 days
+the preset's `warmup` (300 days, when the wave has reached about 30% of the default
+world and crossed a glued edge), and plays; under reduced motion it warms up 120 days
 longer and stays paused. Applying a preset (`applyScene`) rebuilds the world, gives
 `vax_coverage`, and seeds the same two cases, so the plate is never empty. Reset
 restarts the running experiment with its knob where it is; in the Sandbox it restores
@@ -564,13 +567,16 @@ typical laptop (`Emulation.setCPUThrottlingRate`):
 | World | Tick (Node, Threshold / Sandbox) | Page idle, throttled 4× | Before the pass |
 |---|---|---|---|
 | 10,621 cells (R 59) | 0.21 / 0.57 ms | 84%, 60 fps | 58% |
+| 24,031 cells (R 89, the default) | 0.58 / 1.36 ms* | 72%, 60 fps* | — |
 | 42,841 cells (R 119) | 0.67 / 1.7 ms | 66%, 60 fps | 5%, frames to 50 ms |
 | 96,661 cells (R 179) | 1.3 / 3.2 ms | 48%, 60 fps | — |
 
-The tick was 0.72 / 1.43 ms at 10,621 cells before. Startup to a running opening is
-0.15, 0.28 and 0.44 s at the three sizes (0.6, 1.1 and 1.8 s throttled); before, the
-first Canvas frame alone took 4 s at R 119 and 19 s at R 179 (the quadratic path
-build). What is left on the main thread at large sizes: the tick's three full passes
+*Measured while other sessions loaded the machine; in the same run the 10,621-cell
+tick came out 0.25 / 0.82 ms, so these read high. The tick was 0.72 / 1.43 ms at
+10,621 cells before. Startup to a running opening is 0.15, 0.28, 0.28 and 0.44 s at the
+four sizes (0.6, 1.0, 1.1 and 1.8 s throttled; the default's opening warms up 300 days,
+the others' here 200); before, the first Canvas frame alone took 4 s at R 119 and 19 s
+at R 179 (the quadratic path build). What is left on the main thread at large sizes: the tick's three full passes
 and its copy-in of the double-buffered fields, packing and uploading the state texture
 (W·H·4 bytes a tick), and `record`.
 
@@ -578,17 +584,18 @@ and its copy-in of the double-buffered fields, packing and uploading the state t
 
 Six experiments (`presets.js`); each preset's comment records the calibration behind
 its values. `tools/presets-survey.mjs` reproduces the facts below (ten seeds, 3,000 days,
-the default knob, the opening's two seeds, the default world; re-run 2026-10-25 after
-the tick's RNG order changed).
+the default knob, the opening's two seeds, the default 24,031-cell world; surveyed
+2026-10-25, when the default grew from 10,621 cells). Its fifth argument sweeps a
+preset's knob, as the presets' comments record.
 
 | Preset | Knob (default) | Measured in the caption | Ten seeds, 3,000 days |
 |---|---|---|---|
-| Threshold (opening) | β (0.11, 1.8× critical) | β against the critical β (≈ 0.061, independent edges); share of cells reached | takes off 10/10, peak 501 E+I, ends by day 575, reaches 97% |
-| Herd immunity | coverage (0.48, reset) | coverage against the lattice threshold (near 50%) and 1 − 1/R₀ (82%); share of the unvaccinated reached | peak 157, ends by day 1,167, reaches 73% of the unvaccinated |
-| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends (0/20 in calibration), peak 2,027, 69 living strains at the end, waves locked to the season |
-| Spillover | spillover rate (0.02) | human-to-human Re over 30 days; reservoir share of human cases | never ends, human Re 0.38, 62% of human cases from the reservoir |
-| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 422 transformed cells at day 1,000, 680 at the end; escape at ≤ 0.25, elimination at ≥ 0.35 |
-| Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 1,040 zombies at day 1,000, 1,320 at the end; burns out in 3/10 |
+| Threshold (opening) | β (0.11, 1.8× critical) | β against the critical β (≈ 0.061, independent edges); share of cells reached | takes off 10/10, reaches the edge by day 193, peak 782 E+I, ends by day 840, reaches 97% (30% by day 300, the opening) |
+| Herd immunity | coverage (0.48, reset) | coverage against the lattice threshold (near 50%) and 1 − 1/R₀ (82%); share of the unvaccinated reached | peak 179, ends by day 1,874, reaches 66% of the unvaccinated (10% at 0.50) |
+| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends, peak 4,500, 146 living strains at the end, waves locked to the season |
+| Spillover | spillover rate (0.02) | human-to-human Re over 30 days; reservoir share of human cases | never ends, human Re 0.38, 62% of human cases from the reservoir (the same at any size) |
+| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 843 transformed cells at day 1,000, 1,693 at the end; escape at 0.25 (6,782), shrinking from 0.32 |
+| Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 3,327 zombies at day 1,000, 3,238 at the end, against 1,809 and 1,617 living; burns out in 0/10 (5/10 at 0.03) |
 
 ## Open work
 

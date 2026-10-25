@@ -1,11 +1,10 @@
 // camera.js — zoom/pan viewport composition for the hex canvas.
 
-import { DEFAULTS } from './config.js';
-
 export const ZOOM_MIN = 0.5;
-// The closest zoom on the default world; a larger world zooms in further, to
+// The closest zoom on the 59-radius world; a larger world zooms in further, to
 // the same size of cell.
 export const ZOOM_MAX = 3;
+const ZOOM_MAX_R = 59;
 export const ZOOM_STEP_WHEEL = 1.1;
 export const ZOOM_STEP_BTN = 1.25;
 
@@ -61,7 +60,7 @@ export function createCamera({ canvas, ctx, sim, getGrid, computeViewport, resiz
 
     function zoomTo(newZoom, anchorX, anchorY) {
         const z0 = sim.zoom;
-        const z1 = clampZoom(newZoom, ZOOM_MAX * Math.max(1, (getGrid().W - 2) / (DEFAULTS.W - 2)));
+        const z1 = clampZoom(newZoom, ZOOM_MAX * Math.max(1, (getGrid().W - 2) / 2 / ZOOM_MAX_R));
         if (z1 === z0) return false;
         const bv = ensureViewport();
         const ax = anchorX - bv.originX;

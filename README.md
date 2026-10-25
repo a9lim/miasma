@@ -87,8 +87,8 @@ world of that radius (Settings → World offers four sizes).
 
 Vanilla JavaScript modules with no dependencies; the lattice draws in WebGPU with a
 Canvas 2D fallback, and the isochrones build in a Web Worker. Cell state is a set of
-typed arrays over an axial grid masked to a regular hexagon: 10,621 cells by default,
-up to 96,661. Each tick computes the next state of what neighbours read into scratch
+typed arrays over an axial grid masked to a regular hexagon: 24,031 cells by default,
+from 10,621 to 96,661. Each tick computes the next state of what neighbours read into scratch
 buffers and swaps them in, so every cell updates simultaneously; the tick visits only
 the cells that can act where it can, and draws rare per-cell events by skipping to the
 next one. `src/dynamics.js` holds the per-tick model, `src/topology.js` the surface

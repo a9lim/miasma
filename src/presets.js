@@ -20,8 +20,10 @@
 //   warmup       — days the opening runs before it is shown (opening preset)
 //
 // Calibration (docs/ROADMAP.md §2.3): every preset was surveyed headlessly
-// across at least ten seeds; numbers are tuned for the 10,621-cell lattice,
-// and say so where they differ from textbook values.
+// across at least ten seeds (tools/presets-survey.mjs); the numbers below are
+// for the default 24,031-cell world (re-surveyed 2026-10-25; the presets were
+// first tuned on the 10,621-cell one), and say so where they differ from
+// textbook values.
 
 import { Topology } from './config.js';
 import { DEFAULT_PARAMS } from './default-params.js';
@@ -42,11 +44,12 @@ const NO_EVOLUTION = Object.freeze({ mutation_rate: 0, ag_step: 0, ag_jump: 0, r
 
 export const PRESETS = Object.freeze([
     {
-        // Final size jumps from about 1% to about 64% between β 0.060 and
-        // 0.080 (tools/threshold.mjs); from the opening's two 7-cell seeds the
-        // wave takes off in 10 of 10 seeds from β 0.08. At β 0.11 (T ≈ 0.50,
-        // 1.8× critical) the front stays ragged and holed, reaches a glued
-        // edge in about 110 days and fills 97% of cells.
+        // From the opening's two 7-cell seeds, final size jumps from about 2%
+        // to 85% between β 0.060 and 0.080 (2% at 0.060, 7% at 0.065, 20% at
+        // 0.070, where 6 of 10 seeds take off, 85% at 0.080, where all 10
+        // do). At β 0.11 (T ≈ 0.50, 1.8× critical) the front stays ragged
+        // and holed, reaches the world's edge in about 190 days and fills 97%
+        // of cells; the opening shows it at day 300, about 30% reached.
         key: 'threshold',
         label: 'Threshold',
         description: 'Below a critical β an outbreak stays a finite cluster; just above it, the front is ragged and holed.',
@@ -59,13 +62,14 @@ export const PRESETS = Object.freeze([
         },
         knob: { key: 'beta', label: 'β', min: 0.04, max: 0.3, step: 0.005, digits: 3 },
         measure: 'threshold',
-        warmup: 200
+        warmup: 300
     },
     {
         // Random coverage at efficacy 1: from the opening seeds the wave
-        // fills 92% of the unvaccinated at coverage 0.44, 73% at 0.48, 39% at
-        // 0.50, 15% at 0.52 and 5% at 0.55 (medians of ten seeds), against
-        // the mean-field threshold 1 − 1/R0 ≈ 82%.
+        // fills 92% of the unvaccinated at coverage 0.44, 66% at 0.48, 10% at
+        // 0.50, 3% at 0.52 and 2% at 0.55 (medians of ten seeds; on the
+        // 10,621-cell world, more finite, 92, 73, 39, 15 and 5%), against the
+        // mean-field threshold 1 − 1/R0 ≈ 82%.
         key: 'herd-immunity',
         label: 'Herd immunity',
         description: 'Contacts only between neighbours stop the wave at about half coverage, far below the textbook formula.',
@@ -80,9 +84,10 @@ export const PRESETS = Object.freeze([
         measure: 'herd'
     },
     {
-        // Twenty seeds, 3,000 days: no extinctions, waves locked to the
-        // 365-day season (peaks 358 days apart, troughs at 12% of the
-        // peaks), mean prevalence 8.6%, peaks 19%. A low mutation rate keeps
+        // Twenty seeds, 3,000 days on the 10,621-cell world: no extinctions,
+        // waves locked to the 365-day season (peaks 358 days apart, troughs
+        // at 12% of the peaks), mean prevalence 8.6%, peaks 19%; on the
+        // 24,031-cell world ten seeds never end either and peak at 19%. A low mutation rate keeps
         // each wave to a few variants, so the strain view shows coherent
         // sectors rather than confetti. Evolution is antigenic only: no
         // genome noise, no recombination, which would otherwise let
@@ -110,9 +115,10 @@ export const PRESETS = Object.freeze([
         // The rodents carry the infection chronically (recovery 0.01 a day,
         // lifespan about 800 days), 5% of them infected at the start, and
         // about 20% stay infected. Ten seeds, days 1,000–3,000: spillover
-        // 0.01 gives human Re 0.47 and 54% of human cases from the
+        // 0.01 gives human Re 0.47 and 53% of human cases from the
         // reservoir, 0.02 gives 0.38 and 62%, 0.04 0.31 and 69%, 0.08 0.26
-        // and 74%.
+        // and 74% (the same on the 10,621-cell world: these do not depend on
+        // its size).
         key: 'spillover',
         label: 'Spillover',
         description: 'Human chains too weak to last never end, because a rodent reservoir keeps sparking new ones.',
@@ -135,9 +141,11 @@ export const PRESETS = Object.freeze([
         // clones grow by contact, and surveillance kills them where they
         // touch healthy tissue (z_die_fighting rolls per encounter, so a
         // tumour's interior is shielded). Necrotic cells clear and tissue
-        // regrows into the gaps. Ten seeds, 3,000 days: surveillance 0.25 or
-        // less escapes (2,970–5,660 transformed cells), 0.29 holds (about
-        // 600, turning over for 3,000 days), 0.35 or more eliminates.
+        // regrows into the gaps. Ten seeds, 3,000 days: surveillance 0.25
+        // escapes (5,400 transformed cells by day 1,000, 6,800 by 3,000), 0.29
+        // holds (about 850 by day 1,000, 1,700 by 3,000, turning over), 0.32
+        // or more shrinks it (at 0.35, 47 cells by day 1,000 and 30 by
+        // 3,000).
         key: 'immunoediting',
         label: 'Immunoediting',
         description: 'Cells, not people: immune surveillance eliminates, holds or loses a tumour seeded by an oncovirus.',
@@ -164,10 +172,11 @@ export const PRESETS = Object.freeze([
         // zombie and the living resolves as a kill, an infecting kill, an
         // exposure or a conversion, and the zombie dies in the fight with
         // chance `z_die_fighting`. The living breed back into cleared
-        // ground. Six seeds, 3,000 days: fight-back 0.03 is overrun in some
-        // seeds (about 700 zombies, under 100 living), 0.06 oscillates
-        // (zombies 850–1,700, the living 380–1,500), and the living gain
-        // ground as it rises.
+        // ground. Ten seeds, 3,000 days: fight-back 0.03 is overrun (the
+        // living about 450 by day 1,000 and 140 by 3,000, and half the runs
+        // end with nobody left), 0.06 holds a standoff (about 3,300 zombies
+        // against 1,600–1,800 living, and none of ten burns out), and the
+        // living gain ground as it rises (0.10: about 2,100 against 3,200).
         key: 'zombie-apocalypse',
         label: 'Zombie apocalypse',
         description: 'Infectious corpses rise and the living fight back: overrun, an uneasy cycle, or the upper hand.',

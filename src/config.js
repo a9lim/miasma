@@ -106,7 +106,12 @@ export function topoToString(t) {
 export const WORLD_RADII = Object.freeze([59, 89, 119, 179]);
 export const WORLD_R_RANGE = Object.freeze([16, 239]);
 export const worldCells = (R) => 3 * R * (R + 1) + 1;
-const DEFAULT_R = 59;
+const DEFAULT_R = 89;
+// The opening's two cases, as axial offsets from the world's centre on the
+// default world: one near a glued edge, so the wave is seen crossing it, one
+// inland. Another world scales them by R / DEFAULTS.R (on the 59-radius world
+// they are (30, −42) and (−24, 10)).
+export const OPENING_SEEDS = Object.freeze([[45, -63], [-36, 15]]);
 
 // ─── Default sim parameters ───
 export const DEFAULTS = Object.freeze({

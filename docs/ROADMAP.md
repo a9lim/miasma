@@ -28,7 +28,7 @@ sessions, and parallel lanes fit a whole version in one.
 | 2026-10-24 | **The opening preset is Threshold,** calibrated to the ragged regime (§2.3). |
 | 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance, so drift never runs off the map and can recycle old antigens. **Strain marks encode the position directly:** one axis is hatch angle (0–180°), the other hue (0–360°), on an OKLCH wheel fitted like the inks and squeezed near the accent (§2.2). |
 | 2026-10-24 | **Isochrones fade** (a9's call): a cell's arrival is re-stamped when a new wave reaches it, contours fade with their age measured against the newest arrival, and contours never cross the cliff between waves (§2.2). |
-| 2026-10-25 | **The world's size is a setting** (Settings → World, `?r=`): 10,621 to 96,661 cells. The default stays 10,621, the size the presets and the opening were calibrated at, pending a9's call. |
+| 2026-10-25 | **The world's size is a setting** (Settings → World, `?r=`): 10,621 to 96,661 cells. **The default is 24,031** (a9's call): the presets were re-surveyed at that size and the opening's warm-up lengthened to keep its composition. |
 
 ### Open
 

@@ -4,7 +4,7 @@
 // world radii (the build contours only the labeled levels, as under WebGPU;
 // ALL=1 contours every level, as the Canvas fallback does). A fingerprint of the final state checks that a refactor meant
 // to preserve behavior does (same seed, same state).
-// usage: node tools/bench.mjs [presets=all] [radii=59] [ticks=600] [seed=1]
+// usage: node tools/bench.mjs [presets=all] [radii=the default] [ticks=600] [seed=1]
 // The dynamics call the /shared/utils.js globals; define them for Node.
 globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
@@ -16,7 +16,7 @@ const { tick } = await import(M + 'dynamics.js');
 const { PRESETS, applyPreset } = await import(M + 'presets.js');
 const { DEFAULT_PARAMS } = await import(M + 'default-params.js');
 const { DEFAULT_TOGGLES } = await import(M + 'default-toggles.js');
-const { Compartment, MemoryKind, DEFAULTS } = await import(M + 'config.js');
+const { Compartment, MemoryKind, DEFAULTS, OPENING_SEEDS } = await import(M + 'config.js');
 const { hexBounds } = await import(M + 'topology.js');
 const { memoryOf, remember } = await import(M + 'immunity.js');
 const { computeStats } = await import(M + 'stats.js');
@@ -24,9 +24,8 @@ const { createIsochrones } = await import(M + 'isochrones.js');
 
 const all = ['sandbox', ...PRESETS.map(p => p.key)];
 const keys = (process.argv[2] && process.argv[2] !== 'all' ? process.argv[2] : all.join(',')).split(',');
-const radii = (process.argv[3] || '59').split(',').map(Number);
+const radii = (process.argv[3] || String(DEFAULTS.R)).split(',').map(Number);
 const T = +(process.argv[4] || 600), SEED = +(process.argv[5] || 1);
-const OPENING = [[30, -42], [-24, 10]];
 
 function fnv(h, arr) {
     const b = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
@@ -51,8 +50,8 @@ for (const R of radii) {
             }
         }
         const { cq, cr } = hexBounds(W, W);
-        for (const [dq0, dr0] of OPENING) {
-            const dq = Math.round(dq0 * R / 59), dr = Math.round(dr0 * R / 59);
+        for (const [dq0, dr0] of OPENING_SEEDS) {
+            const dq = Math.round(dq0 * R / DEFAULTS.R), dr = Math.round(dr0 * R / DEFAULTS.R);
             for (const [a, b] of [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, -1], [-1, 1]]) {
                 const i = (cr + dr + b) * W + (cq + dq + a), c = grid.compartment[i];
                 if (c === Compartment.D || c === Compartment.EMPTY || c === Compartment.Z) continue;

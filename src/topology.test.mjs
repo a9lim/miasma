@@ -5,7 +5,7 @@
 // lattice geometry (bounds, PLANE nulls, TORUS translation round-trips), then
 // treat each glued table as a cell complex (cells, cell-edges, cell-vertices)
 // and check symmetry, χ, orientability and the cone points at the corners,
-// on W=H=12 (R=5) and the 120×120 default (R=59). The last block re-checks
+// on W=H=12 (R=5) and 120×120 (R=59). The last block re-checks
 // the lemma behind the Klein fallback: the hexagon of cells tiles the plane
 // by translation in exactly two (mirror-image) ways.
 
@@ -126,7 +126,7 @@ const INV = [3, 4, 5, 0, 1, 2];
     const eastNeighbor = wrap(cq + R + 1, cr, Topology.TORUS, W, H);
     check('TORUS east-wrap inside', eastNeighbor && inHex(eastNeighbor.q, eastNeighbor.r, W, H));
 
-    // Default 120×120: lattice generators
+    // 120×120: lattice generators
     {
         const b = hexBounds(120, 120);
         const R2 = b.R;
