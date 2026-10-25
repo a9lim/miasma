@@ -21,7 +21,8 @@
 //   no-ops and do NOT consume an undo slot.
 
 import { pixelToAxial, hexToPixel } from './grid.js';
-import { Compartment, Flag, Status, DEFAULTS } from './config.js';
+import { Compartment, Flag, Status, DEFAULTS, MEMORY_SLOTS, MemoryKind } from './config.js';
+import { memoryOf, remember } from './immunity.js';
 
 // ─── Paint mode enum ───
 // 'none' means the controller is dormant: pointer events do nothing.
@@ -95,7 +96,12 @@ function captureCellState(grid, i) {
         ids[s] = grid.strain_ids[base + s];
         lds[s] = grid.strain_loads[base + s];
     }
+    const mb = i * MEMORY_SLOTS;
     return {
+        memN:        grid.mem_n[i],
+        memX:        grid.mem_x.slice(mb, mb + MEMORY_SLOTS),
+        memY:        grid.mem_y.slice(mb, mb + MEMORY_SLOTS),
+        memKind:     grid.mem_kind.slice(mb, mb + MEMORY_SLOTS),
         compartment: grid.compartment[i],
         status:      grid.status[i],
         flags:       grid.flags[i],
@@ -117,6 +123,11 @@ function restoreCellState(grid, i, state) {
         grid.strain_ids[base + s] = state.strainIds[s];
         grid.strain_loads[base + s] = state.strainLoads[s];
     }
+    const mb = i * MEMORY_SLOTS;
+    grid.mem_n[i] = state.memN;
+    grid.mem_x.set(state.memX, mb);
+    grid.mem_y.set(state.memY, mb);
+    grid.mem_kind.set(state.memKind, mb);
 }
 
 // ─── Mode application ──────────────────────────────────────────────────────
@@ -131,7 +142,10 @@ function clearStrainSlots(grid, i) {
     }
 }
 
-function paintCell(grid, q, r, mode, toggles) {
+// ctx: { toggles, params, reg } — the live toggles, params (for the vaccine's
+// antigen) and strain registry (for the antigens a cured cell remembers).
+function paintCell(grid, q, r, mode, ctx) {
+    const toggles = ctx && ctx.toggles;
     if (q < 0 || q >= grid.W || r < 0 || r >= grid.H) return false;
     const i = grid.idx(q, r);
     if (grid.mask && grid.mask[i] === 0) return false;
@@ -167,6 +181,8 @@ function paintCell(grid, q, r, mode, toggles) {
             grid.flags[i] = Flag.NONE;
             grid.status[i] = Status.NONE;
             clearStrainSlots(grid, i);
+            const p = ctx && ctx.params;
+            remember(memoryOf(grid), i, (p && p.vax_ag_x) || 0, (p && p.vax_ag_y) || 0, MemoryKind.VACCINE);
             return true;
         }
         case PaintMode.QUARANTINE: {
@@ -191,6 +207,15 @@ function paintCell(grid, q, r, mode, toggles) {
                 grid.age[i] = 0;
                 changed = true;
             } else if (comp === Compartment.I || comp === Compartment.E) {
+                // A cure is a recovery: remember the carried antigens.
+                const reg = ctx && ctx.reg;
+                if (reg) {
+                    const mem = memoryOf(grid), base = i * MAX_SLOTS;
+                    for (let s = 0; s < MAX_SLOTS; s++) {
+                        const sid = grid.strain_ids[base + s];
+                        if (sid !== EMPTY_SLOT && sid < reg.ag_x.length) remember(mem, i, reg.ag_x[sid], reg.ag_y[sid], MemoryKind.INFECTION);
+                    }
+                }
                 grid.compartment[i] = Compartment.R;
                 grid.flags[i] = Flag.NONE;
                 grid.status[i] = Status.NONE;
@@ -236,6 +261,8 @@ function paintCell(grid, q, r, mode, toggles) {
  * @param {() => import('./grid.js').Grid} opts.getGrid — returns the live grid
  *   (must be a getter since main.js reassigns sim.grid on reset).
  * @param {() => object} [opts.getToggles] — current toggles object.
+ * @param {() => object} [opts.getParams] — current params (the vaccine's antigen).
+ * @param {() => object} [opts.getStrains] — current strain registry.
  * @param {() => object} opts.getViewport — returns { originX, originY, hexSize }.
  * @param {() => void} [opts.onMutate] — called after any cell change so the
  *   integrator can mark renderDirty / statsDirty.
@@ -247,7 +274,7 @@ function paintCell(grid, q, r, mode, toggles) {
  * @returns {object} controller handle (see below)
  */
 export function createPaintController(opts) {
-    const { canvas, getGrid, getToggles, getViewport, pickAt, onMutate, onHover, onHistoryChange } = opts || {};
+    const { canvas, getGrid, getToggles, getParams, getStrains, getViewport, pickAt, onMutate, onHover, onHistoryChange } = opts || {};
     if (!canvas) throw new Error('paint: canvas required');
     if (typeof getGrid !== 'function') throw new Error('paint: getGrid required');
     if (typeof getViewport !== 'function') throw new Error('paint: getViewport required');
@@ -362,7 +389,11 @@ export function createPaintController(opts) {
     function applyAtHex(q, r) {
         const grid = getGrid();
         if (!grid) return false;
-        const toggles = getToggles ? getToggles() : null;
+        const ctx = {
+            toggles: getToggles ? getToggles() : null,
+            params: getParams ? getParams() : null,
+            reg: getStrains ? getStrains() : null
+        };
         const cells = RADIUS_OFFSETS[brushSize] || buildRadiusOffsets(brushSize);
         let changed = 0;
         for (let k = 0; k < cells.length; k += 2) {
@@ -377,7 +408,7 @@ export function createPaintController(opts) {
             if (activeUndoStroke && !activeUndoStroke.has(i)) {
                 activeUndoStroke.set(i, captureCellState(grid, i));
             }
-            if (paintCell(grid, cq, cr, mode, toggles)) changed++;
+            if (paintCell(grid, cq, cr, mode, ctx)) changed++;
         }
         if (changed > 0 && onMutate) onMutate();
         return changed > 0;

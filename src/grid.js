@@ -2,7 +2,7 @@
 // Phase 1: all cells initialized to compartment S. Strain state arrays
 // are stubbed (zero-filled) — populated in Phase 7+.
 
-import { Animal, Compartment, Status, Flag, DEFAULTS, SQRT3 } from './config.js';
+import { Animal, Compartment, Status, Flag, DEFAULTS, MEMORY_SLOTS, SQRT3 } from './config.js';
 
 export class Grid {
     /** @param {number} W @param {number} H */
@@ -46,7 +46,12 @@ export class Grid {
         const slots = DEFAULTS.maxActiveStrains;
         this.strain_ids   = new Uint16Array(N * slots);
         this.strain_loads = new Float32Array(N * slots);
-        this.strain_hist  = new Uint8Array(N * 8); // 64-bit packed bloom (Phase 7)
+        // Immune memory (immunity.js): up to MEMORY_SLOTS remembered antigens
+        // per cell, oldest first; mem_n counts the filled slots.
+        this.mem_x    = new Float32Array(N * MEMORY_SLOTS);
+        this.mem_y    = new Float32Array(N * MEMORY_SLOTS);
+        this.mem_kind = new Uint8Array(N * MEMORY_SLOTS);
+        this.mem_n    = new Uint8Array(N);
         // Initialize all cells to S (Uint8Array already zero-filled, S === 0,
         // but be explicit for future-proofing).
         this.compartment.fill(Compartment.S);

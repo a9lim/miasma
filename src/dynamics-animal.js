@@ -5,7 +5,8 @@
 // tick orchestrator keeps the global step order visible.
 
 import { Animal, Compartment } from './config.js';
-import { bloomHas, EMPTY_STRAIN } from './strains.js';
+import { EMPTY_STRAIN } from './strains.js';
+import { susceptibility } from './immunity.js';
 
 const ZERO_COUNTS = Object.freeze({
     spillovers: 0,
@@ -29,7 +30,7 @@ export function runAnimalDynamics(ctx) {
         animal_strain,
         compartment,
         strain_ids,
-        strain_hist,
+        mem,
         next,
         nextAnimal,
         nextAnimalAge,
@@ -43,7 +44,8 @@ export function runAnimalDynamics(ctx) {
         strainRegistry,
         maxActive,
         uint16Max,
-        xImm
+        cInf,
+        vaxEff
     } = ctx;
 
     const {
@@ -194,12 +196,13 @@ export function runAnimalDynamics(ctx) {
                 && next[i] === Compartment.S) {
                 let spillSid = sid;
                 if (!useStrains || spillSid === EMPTY_STRAIN) spillSid = 0;
-                let blocked = false;
-                if (useStrains && xImm > 0 && strain_hist
-                    && bloomHas(strain_hist, i, spillSid)) {
-                    blocked = true;
-                }
-                if (!blocked && rng() < spillP) {
+                // Prior immunity scales the spillover by the human's
+                // susceptibility to the animal's strain (immunity.js).
+                const reg = strainRegistry;
+                const susc = useStrains && mem && mem.n[i] > 0 && spillSid < reg.ag_x.length
+                    ? susceptibility(mem, i, reg.ag_x[spillSid], reg.ag_y[spillSid], cInf, vaxEff)
+                    : 1;
+                if (rng() < spillP * susc) {
                     next[i] = Compartment.E;
                     if (useStrains) {
                         const slot0 = i * maxActive;

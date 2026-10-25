@@ -74,7 +74,7 @@ export const ViewMode = Object.freeze({
     AGE:            'age',
     HEALTH:         'health',
     STATUS:         'status',
-    SUSCEPTIBILITY: 'susceptibility'
+    IMMUNITY:       'immunity'
 });
 
 // Map a data-topology / ?mi= string to the Topology enum. Anything else,
@@ -109,6 +109,14 @@ export const DEFAULTS = Object.freeze({
     viewMode: ViewMode.COMPARTMENT,
     maxActiveStrains: 4   // per cell coinfection cap (Phase 7+)
 });
+
+// ─── Antigenic space ───
+// A square torus ANTIGENIC_SIZE antigenic units (AU) around (immunity.js).
+// One AU is the distance at which cross-immunity falls by 1/e.
+export const ANTIGENIC_SIZE = 8;
+// Antigens each cell remembers, oldest first; a new one drops the oldest.
+export const MEMORY_SLOTS = 4;
+export const MemoryKind = Object.freeze({ INFECTION: 0, VACCINE: 1 });
 
 // Flat-top hex geometry — axial neighbor offsets (clockwise from east).
 export const HEX_DIRS = Object.freeze([

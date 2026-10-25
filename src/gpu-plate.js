@@ -17,8 +17,9 @@
 // The encodings match render.js, the Canvas fallback, mark for mark.
 //
 // State texel: x compartment · y flags | status<<4 · z animal | (strain slot+1)<<3
-// · w ramp value (age, health or susceptibility, 0–255).
+// · w ramp value (age, health or immunity, 0–255).
 
+import { memoryOf, susceptibility } from './immunity.js';
 import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
 
 const SHADER = /* wgsl */`
@@ -245,7 +246,7 @@ fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
 }
 `;
 
-const MODES = { compartment: 0, strain: 1, age: 2, health: 3, status: 4, susceptibility: 5 };
+const MODES = { compartment: 0, strain: 1, age: 2, health: 3, status: 4, immunity: 5 };
 
 function rgb(hex) {
     const n = parseInt(hex.slice(1), 16);
@@ -308,7 +309,9 @@ export async function createGpuPlate(canvas) {
     }
 
     /** Pack the grid into the state texture. */
-    function uploadState(grid, mode, ageMax, slotOf) {
+    function uploadState(grid, mode, opts, slotOf) {
+        let ageMax = opts.ageMax || 5000;
+        const im = opts.immunity, mem = im ? memoryOf(grid) : null;
         const { W, H } = grid;
         ensureTextures(W, H, fieldSide || 3);
         const d = stateData, comp = grid.compartment, flags = grid.flags, status = grid.status, an = grid.animal;
@@ -329,11 +332,7 @@ export async function createGpuPlate(canvas) {
             d[o + 2] = z;
             if (mode === 'age') d[o + 3] = Math.min(255, (grid.age[i] / ageMax) * 255) | 0;
             else if (mode === 'health') d[o + 3] = Math.max(0, Math.min(255, grid.health[i] * 255)) | 0;
-            else if (mode === 'susceptibility') {
-                let n = 0;
-                for (let b = 0; b < 8; b++) { let x = grid.strain_hist[i * 8 + b]; while (x) { n += x & 1; x >>= 1; } }
-                d[o + 3] = Math.round(255 * (1 - Math.min(1, n / 16)) * (status[i] === 2 ? 0.5 : 1));
-            }
+            else if (mode === 'immunity' && im) d[o + 3] = Math.round(255 * (1 - susceptibility(mem, i, im.ax, im.ay, im.cInf, im.cVax)));
         }
         device.queue.writeTexture({ texture: stateTex }, d, { bytesPerRow: W * 4 }, [W, H]);
     }

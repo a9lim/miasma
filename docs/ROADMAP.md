@@ -24,18 +24,17 @@ sessions, and parallel lanes fit a whole version in one.
 | 2026-10-24 | **Fewer, better presets** (Worldline's rule): a preset earns its place as an experiment with one knob, not as coverage. The cut presets' mechanics stay reachable from Settings. |
 | 2026-10-24 | **Antigenic memory replaces the bloom filter outright.** Miasma persists no state, so there is nothing to migrate and no compatibility reader to keep. |
 | 2026-10-24 | **2.0, the atlas:** the plate in the line of Snow's map, the inks, four surfaces that glue every edge or none (`58a3d09`). |
+| 2026-10-24 | **2.1 is built now, in one session.** 3.0 waits until it can be done properly. |
+| 2026-10-24 | **The opening preset is Threshold,** calibrated to the ragged regime (§2.3). |
+| 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance, so drift never runs off the map and can recycle old antigens. **Strain marks encode the position directly:** one axis is hatch angle (0–180°), the other hue (0–360°), on an OKLCH wheel fitted like the inks and squeezed near the accent (§2.2). |
+| 2026-10-24 | **Isochrones fade** (a9's call): a cell's arrival is re-stamped when a new wave reaches it, contours fade with their age measured against the newest arrival, and contours never cross the cliff between waves (§2.2). |
 
 ### Open
 
-1. **Opening preset.** Recommended: Threshold, calibrated to the ragged regime (§2.3).
-   The alternative is Antigenic drift, the flagship of 2.1.
-2. **Strain marks** (§2.2): what exactly ink and hatch angle encode. Settle it with a
-   sketch before M2.
-3. **Isochrones for recurring waves** (§2.2): needed only if the drift plate reads poorly
-   with first-arrival contours.
-4. **3.0's clock** (§3.1): weekly turns (recommended) or real time with pause.
-5. **3.0's mode:** the sandbox stays the default and the game is a mode (recommended), or
-   the game becomes the front door.
+1. **3.0's clock** (§3.1): weekly turns (recommended) or real time with pause. Left for
+   3.0.
+2. **3.0's mode:** the sandbox stays the default and the game is a mode (recommended), or
+   the game becomes the front door. Left for 3.0.
 
 ## 1. Versions
 

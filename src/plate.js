@@ -21,10 +21,10 @@ import { STRAIN_STYLES } from './strain-style.js';
 import { strainStyle } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
 
-const NUMERALS = { compartment: 'I', strain: 'II', age: 'III', health: 'IV', status: 'V', susceptibility: 'VI', histology: 'VII' };
+const NUMERALS = { compartment: 'I', strain: 'II', age: 'III', health: 'IV', status: 'V', immunity: 'VI', histology: 'VII' };
 
-/** Plate title for a view, surface and width. */
-export function plateTitle(mode, topology, histology, narrow) {
+/** Plate title for a view, surface and width; `immunity` names the immunity view's strain. */
+export function plateTitle(mode, topology, histology, narrow, immunity) {
     const S = SURFACES[topology], key = histology ? 'histology' : mode;
     const n = 'Plate ' + NUMERALS[key] + '.';
     if (narrow) return n;
@@ -35,7 +35,7 @@ export function plateTitle(mode, topology, histology, narrow) {
         case ViewMode.AGE: return `${n} Age of the population ${on}`;
         case ViewMode.HEALTH: return `${n} Health of the population ${on}`;
         case ViewMode.STATUS: return `${n} Hospital beds and quarantine ${on}`;
-        case ViewMode.SUSCEPTIBILITY: return `${n} Susceptibility ${on}, by prior exposure`;
+        case ViewMode.IMMUNITY: return `${n} Immunity to strain ${(immunity && immunity.name) || 'α'} ${on}`;
         default: return `${n} The outbreak ${on}, by day of arrival`;
     }
 }
@@ -143,7 +143,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     function drawGpu(s, t, G, S, dpr) {
         const { cq, cr } = hexBounds(s.grid.W, s.grid.H), o = s.tileOpts;
         if (tileDirty) {
-            gpu.uploadState(s.grid, s.mode, o.ageMax || 5000, strainSlotOf);
+            gpu.uploadState(s.grid, s.mode, o, strainSlotOf);
             if (s.field && s.field.padded) gpu.uploadField(s.field.padded, s.field.side);
             tileDirty = false;
         }
@@ -282,7 +282,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         const rects = [], narrow = f.w < 600;
         // title
         ctx.font = font(narrow ? 13.5 : 14.5, true); ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
-        const title = plateTitle(s.mode, s.topology, s.histology, narrow || f.w < 760);
+        const title = plateTitle(s.mode, s.topology, s.histology, narrow || f.w < 760, s.tileOpts && s.tileOpts.immunity);
         const tw = ctx.measureText(title).width, tx = f.x + f.w - (narrow ? 12 : 22), ty = f.y + (narrow ? 62 : 32);
         ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(tx - tw - 8, ty - 17, tw + 14, 24);
         ctx.fillStyle = t.muted; ctx.fillText(title, tx, ty);

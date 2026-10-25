@@ -31,7 +31,7 @@
 // Animal dynamics run AFTER Z so Z's conversion of an I human into Z cannot
 // then spillover-flow to its co-located animal within the same tick.
 
-import { Animal, Compartment, DEFAULTS, Flag, Status } from './config.js';
+import { Animal, Compartment, DEFAULTS, Flag, MEMORY_SLOTS, MemoryKind, Status } from './config.js';
 import { DEFAULT_PARAMS } from './default-params.js';
 import { DEFAULT_TOGGLES } from './default-toggles.js';
 import { getNeighborTable } from './topology.js';
@@ -39,12 +39,11 @@ import { runExtinctionSweep } from './strain-extinction.js';
 import { runAnimalDynamics } from './dynamics-animal.js';
 import { ensureTickScratch, recycleTickScratch } from './dynamics-scratch.js';
 import {
-    bloomHas,
-    bloomSet,
     EMPTY_STRAIN,
     mutateStrain,
     recombineStrains
 } from './strains.js';
+import { forget, remember, susceptibility } from './immunity.js';
 
 const MAX_ACTIVE = DEFAULTS.maxActiveStrains;
 
@@ -62,6 +61,8 @@ export { DEFAULT_PARAMS };
 const _edgeStrainBuf = new Uint16Array(6);
 const _edgeWeightBuf = new Float64Array(6);
 const _edgeNbrIdxBuf = new Int32Array(6);
+// Per-slot within-host fitness for Step 3.
+const _fitBuf = new Float64Array(DEFAULTS.maxActiveStrains);
 
 const UINT16_MAX = 65535;
 
@@ -69,7 +70,7 @@ const UINT16_MAX = 65535;
  * Advance the grid one tick. Returns transition counts for time-series /
  * stats. Simultaneous-update: reads are taken from `grid.compartment`,
  * `grid.flags`, `grid.status`, `grid.age`, `grid.health`, `grid.strain_ids`,
- * `grid.strain_hist`; writes land in scratch buffers, and we swap buffers at
+ * and the immune memory (`grid.mem_*`); writes land in scratch buffers, and we swap buffers at
  * the end so the grid still owns the start-of-tick arrays (no GC churn).
  *
  * Invariant: after tick, the count of cells in every compartment sums to
@@ -82,8 +83,9 @@ const UINT16_MAX = 65535;
  * @param {() => number} [rng] — uniform [0, 1) source; defaults to Math.random
  * @param {object} [strainRegistry] — strain registry from `createRegistry()`.
  *   When provided, transmission becomes strain-aware: each infectious neighbor
- *   contributes its strain's β (not the global β), cross-immunity from the
- *   target cell's bloom modulates the per-edge survival product, and on
+ *   contributes its strain's β (not the global β), the target's susceptibility
+ *   to that strain (antigenic distance from its memory) scales the per-edge
+ *   survival product, and on
  *   infection a per-edge weighted pick chooses the source strain (with a
  *   `mutation_rate` probability of spawning a mutant via mutateStrain).
  *   When omitted, falls through to the existing single-strain behavior.
@@ -110,7 +112,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     const p = params || DEFAULT_PARAMS;
     const t = toggles || DEFAULT_TOGGLES;
     const r = rng || Math.random;
-    const { W, H, compartment, flags, status, age, health, strain_ids, strain_loads, strain_hist, animal, animal_age, animal_strain } = grid;
+    const { W, H, compartment, flags, status, age, health, strain_ids, strain_loads, animal, animal_age, animal_strain } = grid;
+    const mem = { x: grid.mem_x, y: grid.mem_y, kind: grid.mem_kind, n: grid.mem_n };
     const N = W * H;
     const active = grid.activeIndices;
     const activeCount = active ? active.length : N;
@@ -125,7 +128,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     const nbrTable = getNeighborTable(W, H, topology);
     const nbrIdx = nbrTable.idx;
 
-    const scratch = ensureTickScratch(N, MAX_ACTIVE);
+    const scratch = ensureTickScratch(N, MAX_ACTIVE, MEMORY_SLOTS);
     const next = scratch.compartment;
     const nextFlags = scratch.flags;
     const nextStatus = scratch.status;
@@ -133,7 +136,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     const nextHealth = scratch.health;
     const nextStrainIds = scratch.strainIds;
     const nextStrainLoads = scratch.strainLoads;
-    const nextStrainHist = scratch.strainHist;
+    const nextMem = { x: scratch.memX, y: scratch.memY, kind: scratch.memKind, n: scratch.memN };
     const nextAnimal = scratch.animal;
     const nextAnimalAge = scratch.animalAge;
     const nextAnimalStrain = scratch.animalStrain;
@@ -148,8 +151,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     else nextStrainIds.fill(EMPTY_STRAIN);
     if (strain_loads) nextStrainLoads.set(strain_loads);
     else nextStrainLoads.fill(0);
-    if (strain_hist) nextStrainHist.set(strain_hist);
-    else nextStrainHist.fill(0);
+    nextMem.x.set(mem.x); nextMem.y.set(mem.y); nextMem.kind.set(mem.kind); nextMem.n.set(mem.n);
     if (animal) nextAnimal.set(animal);
     else nextAnimal.fill(Animal.VOID);
     if (animal_age) nextAnimalAge.set(animal_age);
@@ -170,22 +172,19 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         d_disposal, birth_rate, birth_threshold, health_degrade_per_tick,
         mortality_baseline, mortality_age_max, mortality_max_age,
         age_susceptibility_mult, age_severity_mult, health_mortality_mult,
-        mutation_rate, mutation_strength, cross_immunity_mult,
+        mutation_rate, mutation_strength,
         coinfection_load_delta, competition_strength, recombination_rate,
         min_strain_load,
         vax_rollout_rate,
-        r_susceptibility_mult, vax_efficacy
+        immunity_strength, vax_efficacy, ag_step, ag_jump, vax_ag_x, vax_ag_y,
+        season_amp
     } = p;
-    // Clamp cross-immunity multiplier into [0, 1]; values outside the range
-    // would invert the bloom check or push survival negative.
-    const xImm = cross_immunity_mult > 1 ? 1 : (cross_immunity_mult < 0 ? 0 : cross_immunity_mult);
-    // Reinfection / breakthrough multipliers, clamped to [0, 1]. R cells'
-    // pInf is multiplied by rSuscMult; V cells' pInf is multiplied by
-    // (1 - vaxEff). Defaults keep both mechanisms partially live; presets
-    // that want textbook immunity override these values.
-    const rSuscMult = r_susceptibility_mult > 1
-        ? 1
-        : (r_susceptibility_mult < 0 ? 0 : r_susceptibility_mult);
+    // Seasonal forcing: human-to-human β swings by ±season_amp over a
+    // 365-day year, peaking on day 0 of each year.
+    const season = season_amp > 0 ? 1 + season_amp * Math.cos(2 * Math.PI * tickIdx / 365) : 1;
+    // Protection a memory gives against its own antigen, clamped to [0, 1]:
+    // cInf for an infection, vaxEff for a vaccine (immunity.js).
+    const cInf = immunity_strength > 1 ? 1 : (immunity_strength < 0 ? 0 : immunity_strength);
     const vaxEff = vax_efficacy > 1
         ? 1
         : (vax_efficacy < 0 ? 0 : vax_efficacy);
@@ -235,6 +234,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         const sid = strain_ids[i * MAX_ACTIVE];
         if (sid === EMPTY_STRAIN || sid < 0 || sid >= regLen) return -1;
         return sid;
+    }
+    // Susceptibility of cell i to strain sid from its start-of-tick memory
+    // (immunity.js); 1 for a cell that remembers nothing.
+    const agX = useStrains ? reg.ag_x : null;
+    const agY = useStrains ? reg.ag_y : null;
+    function suscTo(i, sid) {
+        if (mem.n[i] === 0 || sid < 0 || sid >= regLen) return 1;
+        return susceptibility(mem, i, agX[sid], agY[sid], cInf, vaxEff);
     }
     // Convenience: closure factories so call sites read like
     //   const gammaSrc = gammaOf(i);
@@ -405,8 +412,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         nextStrainIds[slotBase] = mStrainId;
                         nextStrainLoads[slotBase] = 0;
                     }
-                    const histBase = i * 8;
-                    for (let b = 0; b < 8; b++) nextStrainHist[histBase + b] = 0;
+                    forget(nextMem, i);
                     births++;
                 }
             }
@@ -440,9 +446,20 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             }
             if (n_active < 2) continue; // single-strain or empty: skip Step 3
 
-            // Replicator dynamics. avgLoad = 1 / n_active because the
-            // current loads sum to 1 across active slots by invariant.
-            const avgLoad = 1 / n_active;
+            // Replicator dynamics. A strain's fitness in this host is its β
+            // times the host's susceptibility to it, so a more transmissible
+            // strain, or one escaping what this host remembers, gains load:
+            //   x_s ← x_s · (1 + k · (f_s − f̄) / f̄),  f̄ = Σ x_s f_s.
+            // Loads sum to 1 across active slots by invariant.
+            let fBar = 0;
+            for (let s = 0; s < MAX_ACTIVE; s++) {
+                const sid = strain_ids[slot0 + s];
+                const sld = strain_loads[slot0 + s];
+                if (sid === EMPTY_STRAIN || sld <= 0) continue;
+                const fs = (sid < regLen ? reg.beta[sid] : beta) * suscTo(i, sid);
+                _fitBuf[s] = fs;
+                fBar += sld * fs;
+            }
             let sumAfter = 0;
             for (let s = 0; s < MAX_ACTIVE; s++) {
                 const sid = strain_ids[slot0 + s];
@@ -457,7 +474,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     nextStrainLoads[slot0 + s] = 0;
                     continue;
                 }
-                let updated = old * (1 + compStrength * (old - avgLoad));
+                let updated = fBar > 0 ? old * (1 + compStrength * (_fitBuf[s] - fBar) / fBar) : old;
                 if (updated < 0) updated = 0;
                 // Pruning: below threshold → drop. Count the prune so the
                 // caller can surface it as a stat.
@@ -476,7 +493,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             // below minLoad, which the previous tick's invariant disallows)
             // sumAfter is 0 and we leave the cell with an empty slot list;
             // step 5's I→{R, D} branch will handle that cell as having no
-            // active strain (no bloom set on recovery).
+            // active strain (nothing remembered on recovery).
             if (sumAfter > 0) {
                 const invSum = 1 / sumAfter;
                 for (let s = 0; s < MAX_ACTIVE; s++) {
@@ -592,7 +609,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
 
     // ─── Step 6 (pre-pass): Hospital allocation ─────────────────────────────
     // Deterministic row-major assignment of H status to I cells, capped at
-    // floor(h_capacity_frac * W * H) beds. Q-flagged I cells are excluded from
+    // floor(h_capacity_frac * active cells) beds. Q-flagged I cells are excluded from
     // the queue entirely (quarantine takes precedence — they don't consume a
     // bed). Cells that were H last tick but are no longer I have their H
     // cleared here (we re-derive H from current I cells; non-I cells get any
@@ -615,7 +632,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // branch in Step 5 is gated on t.auto_hospital for the same reason.
     let overflowRegime = false;
     if (t.auto_hospital) {
-        const cap = Math.floor(h_capacity_frac * N);
+        const cap = Math.floor(h_capacity_frac * activeCount);
         // First pass: count I cells eligible for a bed (compartment I, not Q).
         let iQueue = 0;
         for (let ak = 0; ak < activeCount; ak++) {
@@ -739,12 +756,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         if (sld <= 0) continue;
                         sawAnyStrain = true;
                         const strainBeta = sid < regLen ? reg.beta[sid] : beta;
-                        let slotContrib = strainBeta * sld;
-                        if (xImm > 0 && strain_hist
-                            && bloomHas(strain_hist, ii, sid)) {
-                            slotContrib *= (1 - xImm);
-                        }
-                        edgeBeta += slotContrib;
+                        edgeBeta += strainBeta * sld * suscTo(ii, sid);
                         if (attributableId === EMPTY_STRAIN) attributableId = sid;
                     }
                     // Memory-state neighbour fallback. R+CARRIER and
@@ -765,18 +777,13 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         if (memSid !== EMPTY_STRAIN) {
                             sawAnyStrain = true;
                             const strainBeta = memSid < regLen ? reg.beta[memSid] : beta;
-                            let slotContrib = strainBeta;
-                            if (xImm > 0 && strain_hist
-                                && bloomHas(strain_hist, ii, memSid)) {
-                                slotContrib *= (1 - xImm);
-                            }
-                            edgeBeta += slotContrib;
+                            edgeBeta += strainBeta * suscTo(ii, memSid);
                             attributableId = memSid;
                         }
                     }
                 }
                 if (!sawAnyStrain) edgeBeta = beta;
-                let pStep = edgeBeta * w;
+                let pStep = edgeBeta * w * season;
                 const clamped = pStep > 1 ? 1 : (pStep < 0 ? 0 : pStep);
                 prodSurvive *= (1 - clamped);
                 anyContrib = true;
@@ -798,17 +805,10 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         if (status[ii] === Status.Q) {
             pInf *= q_susceptibility_mult;
         }
-        // Compartment-level susceptibility multipliers. R cells (recovered
-        // with broad infection-derived immunity) get rSuscMult; V cells
-        // (vaccinated) get (1 - vaxEff). Per-strain
-        // bloom-history scaling already happened above (slotContrib *=
-        // (1 - xImm)) so a previously-seen strain is further suppressed.
-        const tc = compartment[ii];
-        if (tc === Compartment.R) {
-            pInf *= rSuscMult;
-        } else if (tc === Compartment.V) {
-            pInf *= (1 - vaxEff);
-        }
+        // Prior immunity already scaled each strain's contribution above
+        // (suscTo: distance from what this cell remembers), so R and V
+        // cells need no compartment-level multiplier: an identical strain
+        // meets 1 − c, a distant one almost a naive host.
         const aN = Math.min(1, age[ii] / safeMaxAge);
         pInf *= (1 + ageSuscDelta * aN);
         if (pInf > 1) pInf = 1;
@@ -842,7 +842,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     }
                 }
             }
-            // In-neighbor slot pick by (β_s · load_s · xImm-factor).
+            // In-neighbor slot pick by (β_s · load_s · σ_s).
             if (pickedNi >= 0 && strain_ids && strain_loads) {
                 const sbase = pickedNi * MAX_ACTIVE;
                 let slotWeightSum = 0;
@@ -852,12 +852,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     const sld = strain_loads[sbase + s];
                     if (sld <= 0) continue;
                     const bS = sid < regLen ? reg.beta[sid] : beta;
-                    let sw = bS * sld;
-                    if (xImm > 0 && strain_hist
-                        && bloomHas(strain_hist, ii, sid)) {
-                        sw *= (1 - xImm);
-                    }
-                    slotWeightSum += sw;
+                    slotWeightSum += bS * sld * suscTo(ii, sid);
                 }
                 if (slotWeightSum > 0) {
                     let roll = r() * slotWeightSum;
@@ -869,11 +864,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         const sld = strain_loads[sbase + s];
                         if (sld <= 0) continue;
                         const bS = sid < regLen ? reg.beta[sid] : beta;
-                        let sw = bS * sld;
-                        if (xImm > 0 && strain_hist
-                            && bloomHas(strain_hist, ii, sid)) {
-                            sw *= (1 - xImm);
-                        }
+                        const sw = bS * sld * suscTo(ii, sid);
                         lastValid = sid;
                         roll -= sw;
                         if (roll <= 0) {
@@ -888,7 +879,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             // Mutation roll on the picked strain.
             if (pick !== EMPTY_STRAIN && mutRate > 0 && r() < mutRate) {
                 const mutId = mutateStrain(
-                    strainRegistry, pick, mutStrength, r, tickIdx
+                    strainRegistry, pick, mutStrength, r, tickIdx, ag_step, ag_jump
                 );
                 if (typeof mutId === 'number' && mutId !== EMPTY_STRAIN && mutId !== -1) {
                     pick = mutId;
@@ -967,17 +958,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         if (becameCarrier) {
                             nextFlags[i] = nextFlags[i] | Flag.CARRIER;
                         }
-                        // Phase 7/8: recovery confers strain-specific
-                        // immunity to ALL strains the cell was carrying.
-                        // Loop over every active slot and bloom-set its
-                        // strain ID, then clear loads + ids.
+                        // Recovery remembers the antigen of every strain
+                        // the cell was carrying, then clears loads + ids.
                         //
-                        // Phase A: if the cell became a CARRIER, the
-                        // strain at slot 0 is RETAINED with load=0 so
-                        // cTransmitMultOf can read its per-strain
-                        // transmit multiplier at the source side.
-                        // Bloom is still set for all slots (recovery
-                        // memory is independent of carrier memory).
+                        // If the cell became a CARRIER, the strain at slot
+                        // 0 is RETAINED with load=0 so cTransmitMultOf can
+                        // read its per-strain transmit multiplier at the
+                        // source side. Immune memory is independent of
+                        // carrier memory.
                         if (useStrains) {
                             const slot0 = i * MAX_ACTIVE;
                             const carrierStrain = becameCarrier && strain_ids
@@ -986,8 +974,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                             if (strain_ids) {
                                 for (let s = 0; s < MAX_ACTIVE; s++) {
                                     const sid = strain_ids[slot0 + s];
-                                    if (sid !== EMPTY_STRAIN) {
-                                        bloomSet(nextStrainHist, i, sid);
+                                    if (sid !== EMPTY_STRAIN && sid < regLen) {
+                                        remember(nextMem, i, agX[sid], agY[sid], MemoryKind.INFECTION);
                                     }
                                 }
                             }
@@ -1015,9 +1003,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         const becameFCorpse = !!t.F;
                         if (becameFCorpse) nextFlags[i] = nextFlags[i] | Flag.F_CORPSE;
                         nextHealth[i] = 0;
-                        // Dead cells don't carry an active strain. We do
-                        // NOT set the bloom — the dead don't accrue
-                        // immunity memory.
+                        // Dead cells don't carry an active strain, and the
+                        // dead remember nothing new.
                         //
                         // Phase A: F-corpse cells keep slot 0 = the
                         // strain that killed them (load=0 memory) so
@@ -1053,24 +1040,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     if (tx.infected && tx.pick !== EMPTY_STRAIN) {
                         const slot0 = i * MAX_ACTIVE;
                         const pick = tx.pick;
-                        // Cross-immunity gate: bloom hit ⇒ skip. The
-                        // per-slot xImm scaling in pickIncomingStrain
-                        // softens this probabilistically, but the
-                        // contract is to also hard-skip when the bloom
-                        // already records exposure.
+                        // Prior immunity already scaled the roll inside
+                        // pickIncomingStrain. Already-present check:
+                        // no-op if pick is in any active slot.
                         let blocked = false;
-                        if (xImm > 0 && strain_hist
-                            && bloomHas(strain_hist, i, pick)) {
-                            blocked = true;
-                        }
-                        // Already-present check: no-op if pick is in
-                        // any active slot of the target.
-                        if (!blocked) {
-                            for (let s = 0; s < MAX_ACTIVE; s++) {
-                                if (nextStrainIds[slot0 + s] === pick) {
-                                    blocked = true;
-                                    break;
-                                }
+                        for (let s = 0; s < MAX_ACTIVE; s++) {
+                            if (nextStrainIds[slot0 + s] === pick) {
+                                blocked = true;
+                                break;
                             }
                         }
                         if (!blocked) {
@@ -1189,21 +1166,16 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 break;
             }
             case Compartment.R: {
-                // Reinfection. R cells are normally fully immune (default
-                // r_susceptibility_mult = 0 would scale pInf to 0 inside
-                // pickIncomingStrain. When the param is > 0 they become
-                // partially susceptible: the bloom-filter cross-immunity
-                // already softens contributions from previously-seen
-                // strains via (1 - xImm), so reinfections favor strains
-                // the cell hasn't seen — which is the right shape (novel
-                // antigens slip past prior immunity at reduced rate).
+                // Reinfection. An R cell's susceptibility to each strain
+                // comes from its memory (suscTo inside pickIncomingStrain):
+                // 1 − immunity_strength against the antigen it recovered
+                // from, rising toward 1 with antigenic distance, so
+                // reinfections favor strains that have drifted away.
                 //
                 // On breakthrough: R → E. Strain slots get the picked
-                // strain at load 1; the bloom history is preserved (it's
-                // a record of past exposures, not a clean slate).
-                // Carrier flag (if any) clears — the cell is no longer
-                // recovered.
-                if (rSuscMult <= 0) break;
+                // strain at load 1; memory is kept (it's a record of past
+                // exposures, not a clean slate). Carrier flag (if any)
+                // clears — the cell is no longer recovered.
                 const txR = pickIncomingStrain(i);
                 if (txR.infected) {
                     next[i] = Compartment.E;
@@ -1230,17 +1202,12 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 break;
             }
             case Compartment.V: {
-                // Vaccine breakthrough. V cells are normally fully
-                // immune when vax_efficacy = 1 → pInf scaled to 0
-                // inside pickIncomingStrain. When efficacy < 1, the
-                // residual (1 - vaxEff) factor lets infection through.
-                // Bloom history is preserved — vaccinated cells that
-                // were previously R keep their cross-immunity record.
-                //
-                // Gated on t.V so toggle-off skips the case entirely
-                // (and on vax_efficacy < 1 — perfect efficacy is a
-                // free early-out).
-                if (!t.V || vaxEff >= 1) break;
+                // Vaccine breakthrough. A V cell remembers the vaccine's
+                // antigen with protection vax_efficacy; a strain that has
+                // drifted from it, or an imperfect vaccine, lets infection
+                // through (suscTo inside pickIncomingStrain). Memory is
+                // kept. Gated on t.V so toggle-off skips the case.
+                if (!t.V) break;
                 const txV = pickIncomingStrain(i);
                 if (txV.infected) {
                     next[i] = Compartment.E;
@@ -1353,9 +1320,10 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // infection doesn't suppress it (sanitize handles that), and Z is its
     // own pathogen class. D/EMPTY are no-ops.
     //
-    // Vaccinated cells get their strain slots and flags wiped (clean slate)
-    // and their bloom-history is preserved (a vaccinated R cell keeps its
-    // earned immunity record).
+    // Vaccinated cells get their strain slots and flags wiped (clean slate),
+    // remember the vaccine's antigen (vax_ag_x, vax_ag_y), and keep the rest
+    // of their memory (a vaccinated R cell keeps its earned immunity).
+    const vaxAgX = vax_ag_x || 0, vaxAgY = vax_ag_y || 0;
     if (t.V && t.vax_rollout && vax_rollout_rate > 0) {
         for (let ak = 0; ak < activeCount; ak++) {
             const i = active ? active[ak] : ak;
@@ -1366,6 +1334,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 next[i] = Compartment.V;
                 nextFlags[i] = Flag.NONE;
                 nextStatus[i] = Status.NONE;
+                remember(nextMem, i, vaxAgX, vaxAgY, MemoryKind.VACCINE);
                 if (useStrains) {
                     const slot0 = i * MAX_ACTIVE;
                     for (let s = 0; s < MAX_ACTIVE; s++) {
@@ -1767,7 +1736,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         animal_strain,
         compartment,
         strain_ids,
-        strain_hist,
+        mem,
         next,
         nextAnimal,
         nextAnimalAge,
@@ -1781,7 +1750,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         strainRegistry,
         maxActive: MAX_ACTIVE,
         uint16Max: UINT16_MAX,
-        xImm
+        cInf,
+        vaxEff
     });
     spillovers += animalCounts.spillovers;
     reverseSpillovers += animalCounts.reverseSpillovers;
@@ -1807,9 +1777,10 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     if (strain_loads) {
         grid.strain_loads = nextStrainLoads;
     }
-    if (strain_hist) {
-        grid.strain_hist = nextStrainHist;
-    }
+    grid.mem_x = nextMem.x;
+    grid.mem_y = nextMem.y;
+    grid.mem_kind = nextMem.kind;
+    grid.mem_n = nextMem.n;
     if (animal) {
         grid.animal = nextAnimal;
     }
@@ -1827,7 +1798,10 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         health,
         strainIds: strain_ids,
         strainLoads: strain_loads,
-        strainHist: strain_hist,
+        memX: mem.x,
+        memY: mem.y,
+        memKind: mem.kind,
+        memN: mem.n,
         animal,
         animalAge: animal_age,
         animalStrain: animal_strain

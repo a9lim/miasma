@@ -53,7 +53,9 @@ export const PRESETS = Object.freeze([
             spillover_rate: 0,
             reverse_spillover_rate: 0,
             // Recovery is permanent and α never mutates: one strain, SEIR.
-            r_susceptibility_mult: 0,
+            immunity_strength: 1,
+            ag_step: 0,
+            ag_jump: 0,
             mutation_rate: 0,
             // No births so the population stays fixed during the run.
             birth_rate: 0,
@@ -85,7 +87,6 @@ export const PRESETS = Object.freeze([
             q_susceptibility_mult:     0.3,
             mutation_rate: 0.004,
             // Waning immunity + imperfect vaccine — both are real for COVID.
-            r_susceptibility_mult: 0.15,   // recovered cells ~15% as susceptible as naive
             vax_efficacy:          0.80,   // ~20% breakthrough on contact
             animal_density: 0,
             spillover_rate: 0,
@@ -309,7 +310,6 @@ export const PRESETS = Object.freeze([
             l_reactivate:    0.003,
             c_seed:          0.40,
             c_transmit_mult: 0.5,
-            r_susceptibility_mult: 0.25,
             vax_efficacy:          0.75,
             birth_rate: 0.06,
             mutation_rate:     0.02,

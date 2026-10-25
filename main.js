@@ -28,7 +28,7 @@ import { computeStats, computeReff, renderStatsPanel } from './src/stats.js';
 import { makeParams } from './src/params.js';
 import { makeToggles, DEFAULT_TOGGLES } from './src/toggles.js';
 import { initTimeseries } from './src/rose.js';
-import { createRegistry } from './src/strains.js';
+import { createRegistry, getStrain } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
 import { applyPreset, getPreset } from './src/presets.js';
@@ -130,7 +130,7 @@ export default function init(dom) {
         if (!$.statsPanel) return;
         const stats = cachedStats || computeStats(sim.grid);
         const reff = computeReff(history, params);
-        const capacity = Math.floor((params.h_capacity_frac || 0) * sim.grid.W * sim.grid.H);
+        const capacity = Math.floor((params.h_capacity_frac || 0) * sim.grid.activeIndices.length);
         renderStatsPanel($.statsPanel, stats, reff, capacity);
     }
 
@@ -166,7 +166,10 @@ export default function init(dom) {
     function updateStrainPanel() {
         if (!$.strainPanel || !$.strainPanel.classList.contains('active')) return;
         const prevalence = computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains);
-        renderStrainPanel($.strainPanel, prevalence, strains, null, sim.tick);
+        renderStrainPanel($.strainPanel, prevalence, strains, (id) => {
+            sim.selectedStrain = id;
+            if (sim.viewMode === ViewMode.IMMUNITY) markTile();
+        }, sim.tick);
     }
 
     const setCaption = window._colophon ? window._colophon.caption($.caption, 250) : () => {};
@@ -181,6 +184,7 @@ export default function init(dom) {
             tileDirty = false;
         }
         const stats = cachedStats || computeStats(sim.grid);
+        sim.immunity = sim.viewMode === ViewMode.IMMUNITY ? immunityTarget() : null;
         plate.draw({
             grid: sim.grid, vp, topology: sim.topology, mode: sim.viewMode,
             dpr: canvas.width / Math.max(1, vp.cssWidth),
@@ -192,6 +196,7 @@ export default function init(dom) {
                 mode: sim.viewMode,
                 animalDisplay: toggles.animalDisplay || 'dots',
                 ageMax: params.mortality_max_age || 5000,
+                immunity: sim.immunity,
                 paintOverlay: paintController.getHoverFootprint()
             }
         });
@@ -200,6 +205,20 @@ export default function init(dom) {
         setCaption(lastCaption);
     }
     let lastCaption = '';
+
+    // The immunity view's strain: the one selected in the Strains tab while it
+    // lives, else the most prevalent, else α.
+    function immunityTarget() {
+        let id = sim.selectedStrain;
+        if (id == null || !getStrain(strains, id) || strains.extinct[id]) {
+            const prev = computeStrainPrevalence(sim.grid, strains, DEFAULTS.maxActiveStrains);
+            id = prev.length ? prev[0].id : 0;
+        }
+        return {
+            id, name: strains.names[id], ax: strains.ag_x[id], ay: strains.ag_y[id],
+            cInf: params.immunity_strength, cVax: params.vax_efficacy
+        };
+    }
 
     function frame(now) {
         if (document.hidden) { running = false; return; }
@@ -249,6 +268,7 @@ export default function init(dom) {
         accumulator = 0;
         if (ts) ts.clear();
         strains = createRegistry(params);
+        sim.selectedStrain = null;
         cachedStats = null;
         if (paintController) paintController.clearUndo();
         camera.refreshBaseViewport();
@@ -308,6 +328,8 @@ export default function init(dom) {
         canvas,
         getGrid: () => sim.grid,
         getToggles: () => toggles,
+        getParams: () => params,
+        getStrains: () => strains,
         getViewport: getEffectiveViewport,
         // Hit-testing goes through the plate, so a stroke on a faded copy lands
         // on the world cell it is a copy of.

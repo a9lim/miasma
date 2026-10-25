@@ -11,12 +11,15 @@ let _ageScratch = null;
 let _healthScratch = null;
 let _strainIdsScratch = null;
 let _strainLoadsScratch = null;
-let _strainHistScratch = null;
+let _memXScratch = null;
+let _memYScratch = null;
+let _memKindScratch = null;
+let _memNScratch = null;
 let _animalScratch = null;
 let _animalAgeScratch = null;
 let _animalStrainScratch = null;
 
-export function ensureTickScratch(N, maxActive) {
+export function ensureTickScratch(N, maxActive, memSlots) {
     if (_scratch === null || _scratch.length !== N) {
         _scratch = new Uint8Array(N);
     }
@@ -39,9 +42,14 @@ export function ensureTickScratch(N, maxActive) {
     if (_strainLoadsScratch === null || _strainLoadsScratch.length !== idsLen) {
         _strainLoadsScratch = new Float32Array(idsLen);
     }
-    const histLen = N * 8;
-    if (_strainHistScratch === null || _strainHistScratch.length !== histLen) {
-        _strainHistScratch = new Uint8Array(histLen);
+    const memLen = N * memSlots;
+    if (_memXScratch === null || _memXScratch.length !== memLen) {
+        _memXScratch = new Float32Array(memLen);
+        _memYScratch = new Float32Array(memLen);
+        _memKindScratch = new Uint8Array(memLen);
+    }
+    if (_memNScratch === null || _memNScratch.length !== N) {
+        _memNScratch = new Uint8Array(N);
     }
     if (_animalScratch === null || _animalScratch.length !== N) {
         _animalScratch = new Uint8Array(N);
@@ -60,7 +68,10 @@ export function ensureTickScratch(N, maxActive) {
         health: _healthScratch,
         strainIds: _strainIdsScratch,
         strainLoads: _strainLoadsScratch,
-        strainHist: _strainHistScratch,
+        memX: _memXScratch,
+        memY: _memYScratch,
+        memKind: _memKindScratch,
+        memN: _memNScratch,
         animal: _animalScratch,
         animalAge: _animalAgeScratch,
         animalStrain: _animalStrainScratch
@@ -75,7 +86,8 @@ export function recycleTickScratch(arrays) {
     _healthScratch = arrays.health;
     if (arrays.strainIds) _strainIdsScratch = arrays.strainIds;
     if (arrays.strainLoads) _strainLoadsScratch = arrays.strainLoads;
-    if (arrays.strainHist) _strainHistScratch = arrays.strainHist;
+    if (arrays.memX) { _memXScratch = arrays.memX; _memYScratch = arrays.memY; _memKindScratch = arrays.memKind; }
+    if (arrays.memN) _memNScratch = arrays.memN;
     if (arrays.animal) _animalScratch = arrays.animal;
     if (arrays.animalAge) _animalAgeScratch = arrays.animalAge;
     if (arrays.animalStrain) _animalStrainScratch = arrays.animalStrain;

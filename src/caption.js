@@ -36,8 +36,9 @@ export function plateCaption(sim, s, reff, strains, paint, histology, narrow) {
         body = `${day} Health of every living cell, from pale (frail) to dark (well).`;
     } else if (sim.viewMode === ViewMode.STATUS) {
         body = `${day} Crosses are hospital beds, outlines are quarantine; everything else is muted.`;
-    } else if (sim.viewMode === ViewMode.SUSCEPTIBILITY) {
-        body = `${day} Susceptibility, from pale (exposed to many strains) to dark (never exposed).`;
+    } else if (sim.viewMode === ViewMode.IMMUNITY) {
+        const im = sim.immunity;
+        body = `${day} Immunity to strain ${im ? im.name : 'α'}, from pale (unprotected) to dark (protected); it falls off with each cell's antigenic distance from what it remembers.`;
     } else {
         const parts = [`${fmt(s.I)} infectious`, `${fmt(s.E)} exposed`, `${fmt(s.R)} recovered`, `${fmt(s.D)} dead`];
         if (s.V) parts.push(`${fmt(s.V)} vaccinated`);
@@ -77,7 +78,7 @@ export function plateLegend(sim, s, toggles, histology, topStrains) {
         }
         case ViewMode.AGE: rows.push({ kind: 'ramp', ink: _themePalette().inks.umber, label: 'Age, newborn to oldest' }); break;
         case ViewMode.HEALTH: rows.push({ kind: 'ramp', ink: _themePalette().inks.viridian, label: 'Health, frail to well' }); break;
-        case ViewMode.SUSCEPTIBILITY: rows.push({ kind: 'ramp', ink: _themePalette().inks.prussian, label: 'Susceptibility' }); break;
+        case ViewMode.IMMUNITY: rows.push({ kind: 'ramp', ink: _themePalette().inks.prussian, label: 'Immunity, none to full' }); break;
         case ViewMode.STATUS:
             rows.push({ kind: '+', label: 'Hospitalized' }, { kind: 'Q', label: 'Quarantined' });
             break;

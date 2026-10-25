@@ -53,13 +53,15 @@ const ADVANCED_LAYOUT = [
     { key: 'vax_rollout_rate',    label: 'Rollout rate / tick', min: 0,    max: 0.05, step: 0.0005, digits: 4 },
     { key: 'vax_efficacy',        label: 'Vaccine efficacy',    min: 0,    max: 1,    step: 0.01,  digits: 2 },
 
-    { heading: 'Reinfection' },
-    { key: 'r_susceptibility_mult', label: 'R susceptibility ×p', min: 0,  max: 1,    step: 0.01,  digits: 2 },
+    { heading: 'Immunity' },
+    { key: 'immunity_strength',   label: 'Infection protection', min: 0,   max: 1,    step: 0.01,  digits: 2 },
+    { key: 'ag_step',             label: 'Antigenic step (AU)', min: 0,    max: 1,    step: 0.01,  digits: 2 },
+    { key: 'ag_jump',             label: 'Antigenic jump rate', min: 0,    max: 0.2,  step: 0.005, digits: 3 },
+    { key: 'season_amp',          label: 'Seasonal swing',      min: 0,    max: 0.8,  step: 0.01,  digits: 2 },
 
     { heading: 'Multi-strain' },
     { key: 'mutation_rate',       label: 'Mutation rate',       min: 0,    max: 0.1,  step: 0.001, digits: 3 },
     { key: 'mutation_strength',   label: 'Mutation strength',   min: 0,    max: 0.5,  step: 0.01,  digits: 2 },
-    { key: 'cross_immunity_mult', label: 'Cross-immunity ×',    min: 0,    max: 1,    step: 0.05,  digits: 2 },
 
     { heading: 'Coinfection / recombination' },
     { key: 'coinfection_load_delta', label: 'Coinfection load Δ',   min: 0, max: 1,    step: 0.01,  digits: 2 },

@@ -17,6 +17,7 @@
 
 import {
     strainCount,
+    bornCount,
     countLiving,
     getStrain,
     isExtinct,
@@ -679,9 +680,8 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) 
     // (registry-size − prevalence-count) which over-counted "extinct" for
     // strains that simply had no I cells right now — the new flag-based
     // counts are honest about which strains are gone for good vs. dormant.
-    const registrySize = registry ? strainCount(registry) : 0;
     const aliveCount = registry ? countLiving(registry) : 0;
-    const extinct = registrySize - aliveCount;
+    const extinct = registry ? bornCount(registry) - aliveCount : 0;
     const totalText = extinct > 0
         ? aliveCount + ' alive · ' + extinct + ' extinct'
         : aliveCount + ' alive';
@@ -803,7 +803,7 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick) 
     // ── Phylogeny ──
     if (registry && forestEl) {
         const now = performance.now();
-        const signature = strainCount(registry) + '|' + countLiving(registry) + '|' + (activeId === null ? '' : activeId) + '|' + document.documentElement.dataset.theme;
+        const signature = bornCount(registry) + '|' + countLiving(registry) + '|' + (activeId === null ? '' : activeId) + '|' + document.documentElement.dataset.theme;
         if (now - refs.lastForestDraw >= 250 || refs.lastForestSignature !== signature) {
             renderPhylogeny(forestEl, registry, prevalence, activeId, tick);
             refs.lastForestSignature = signature;

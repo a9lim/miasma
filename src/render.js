@@ -15,7 +15,7 @@
 //   latent E: a dot in the red; carrier R: a red dot in the stipple;
 //   F-corpse: a red cross; H: a plus; Q: a cordon (hex outline).
 // Strain view hatches each carrier at its strain's angle and ink
-// (strain-style.js). Age, health and susceptibility are single-ink ramps.
+// (strain-style.js). Age, health and immunity are single-ink ramps.
 // The oncoviral preset turns the tile into an H&E-stained section (histology.js).
 //
 // This is the Canvas 2D renderer: the fallback when WebGPU is unavailable
@@ -23,6 +23,7 @@
 // redrawn only when the state, view, theme, zoom or brush changes; frames in
 // between are a handful of drawImage calls.
 
+import { memoryOf, susceptibility } from './immunity.js';
 import { Compartment, Flag, Status, ViewMode, DEFAULTS, SQRT3 } from './config.js';
 import { hexBounds } from './topology.js';
 import { strainSlot, strainStyle, STRAIN_STYLES } from './strain-style.js';
@@ -215,7 +216,7 @@ function drawAtlas(c, grid, T, rc, t, opts) {
     const human = opts.animalDisplay !== 'only';
     const S = [], E = [], I = [], R = [], D = [], Dc = [], V = [], M = [], Z = [], lat = [], car = [], H = [], Q = [];
     const strains = mode === ViewMode.STRAIN ? Array.from({ length: STRAIN_STYLES }, () => []) : null;
-    const ramp = mode === ViewMode.AGE || mode === ViewMode.HEALTH || mode === ViewMode.SUSCEPTIBILITY ? [] : null;
+    const ramp = mode === ViewMode.AGE || mode === ViewMode.HEALTH || mode === ViewMode.IMMUNITY ? [] : null;
     for (let k = 0; k < act.length; k++) {
         const i = act[k], x = comp[i];
         if (x === Compartment.EMPTY) continue;
@@ -363,12 +364,6 @@ function dominantStrain(grid, i) {
     return best;
 }
 
-function bloomCount(bloom, i) {
-    let n = 0;
-    for (let k = 0; k < 8; k++) { let b = bloom[i * 8 + k]; while (b) { n += b & 1; b >>= 1; } }
-    return n;
-}
-
 // Single-ink ramps, quantized to eight steps so each step is one batched fill.
 function drawRamp(c, grid, cells, mode, rr, t, opts) {
     const ink = mode === ViewMode.AGE ? t.inks.umber : mode === ViewMode.HEALTH ? t.inks.viridian : t.inks.prussian;
@@ -376,11 +371,12 @@ function drawRamp(c, grid, cells, mode, rr, t, opts) {
     // age reads relative to the oldest living cell, so the ramp spans the population
     let ageMax = 1;
     if (mode === ViewMode.AGE) for (const i of cells) if (grid.age[i] > ageMax) ageMax = grid.age[i];
+    const im = opts.immunity, mem = im ? memoryOf(grid) : null;
     for (const i of cells) {
         let v;
         if (mode === ViewMode.AGE) v = Math.min(1, grid.age[i] / ageMax);
         else if (mode === ViewMode.HEALTH) v = Math.max(0, Math.min(1, grid.health[i]));
-        else v = (1 - Math.min(1, bloomCount(grid.strain_hist, i) / 16)) * (grid.status[i] === Status.Q ? 0.5 : 1);
+        else v = im ? 1 - susceptibility(mem, i, im.ax, im.ay, im.cInf, im.cVax) : 0;
         bins[Math.min(7, (v * 8) | 0)].push(i);
     }
     for (let b = 0; b < 8; b++) fillCells(c, bins[b], t.rgba(ink, 0.08 + 0.1 * b), rr);

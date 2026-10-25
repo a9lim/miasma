@@ -56,7 +56,6 @@ export const DEFAULT_PARAMS = Object.freeze({
     // Multi-strain
     mutation_rate:       0.008,
     mutation_strength:   0.07,
-    cross_immunity_mult: 0.65,
 
     // Coinfection / recombination
     coinfection_load_delta: 0.35,
@@ -81,7 +80,16 @@ export const DEFAULT_PARAMS = Object.freeze({
     // Vaccination rollout
     vax_rollout_rate:        0.0015,
 
-    // Reinfection / vaccine breakthrough
-    r_susceptibility_mult:   0.15,
-    vax_efficacy:            0.85
+    // Immunity by antigenic distance (immunity.js). A memory protects
+    // against its own antigen with strength c, falling off as exp(−d) with
+    // distance d in antigenic units (AU) on a torus ANTIGENIC_SIZE around.
+    immunity_strength: 0.9,    // c for an infection
+    vax_efficacy:      0.85,   // c for a vaccine
+    ag_step:           0.15,   // mean antigenic step per mutation, AU
+    ag_jump:           0.03,   // chance a mutation jumps 2 AU instead
+    vax_ag_x:          0,      // the vaccine's antigen (α's, by default)
+    vax_ag_y:          0,
+
+    // Seasonal forcing: β × (1 + season_amp · cos(2π t / 365)).
+    season_amp:        0
 });

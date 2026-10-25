@@ -7,11 +7,11 @@ import { DEFAULT_PARAMS } from './default-params.js';
 export function initializeGrid(grid) {
     applyHexMask(grid);
 
-    const { compartment, mask, age, health, strain_ids, strain_loads, strain_hist } = grid;
+    const { compartment, mask, age, health, strain_ids, strain_loads, mem_n } = grid;
     const N = compartment.length;
     if (strain_ids) strain_ids.fill(EMPTY_STRAIN);
     if (strain_loads) strain_loads.fill(0);
-    if (strain_hist) strain_hist.fill(0);
+    if (mem_n) mem_n.fill(0);
     for (let i = 0; i < N; i++) {
         age[i] = 0;
         if (mask[i] === 0) {

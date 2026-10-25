@@ -1,7 +1,4 @@
-// strains.js — strain registry, similarity metric, point mutation, bloom-filter
-// prior-exposure helpers. Phase 7 implements the registry + point mutation +
-// cross-immunity primitives. Phase 8 will add coinfection + recombination +
-// lineage edges on top of these.
+// strains.js — strain registry, point mutation, recombination, reclamation.
 //
 // Data model:
 //   - The registry is a single mutable object owned by main.js (one per sim).
@@ -9,17 +6,16 @@
 //     the seed strain α, created at construction time.
 //   - Strain IDs are Uint16 indices into the registry. The sentinel
 //     EMPTY_STRAIN (0xFFFF) marks an unoccupied per-cell slot.
-//   - Per-cell prior exposure lives in a 64-bit bloom filter (8 Uint8 bytes
-//     at offset cellIdx * 8 in grid.strain_hist). Two cheap hashes of the
-//     strain ID set two bits per insertion; lookup ANDs both. Bloom filters
-//     false-positive but never false-negative — the FPR scales with the
-//     number of distinct strains inserted (~30 strains per cell ≈ 30% FPR,
-//     which is acceptable for the optimistic-cross-immunity gate the
-//     dynamics layer uses).
+//   - Every strain has an antigenic position (ag_x, ag_y) on the torus of
+//     immunity.js. Cells remember positions, not ids, so a strain that no cell
+//     carries and no living strain descends from can be reclaimed and its id
+//     reused (runExtinctionSweep). Display names follow a monotone birth
+//     serial, so a reused id never repeats an old name.
 //
-// This module is pure-ish: no DOM, no globals beyond the exported sentinels.
-// Functions either mutate the supplied registry / bloom buffer or return
-// fresh values.
+// This module is pure-ish: no DOM, no globals beyond the exported sentinels
+// and the shared gaussian().
+
+import { agMid, agWrap } from './immunity.js';
 
 // Greek lowercase letters, IDs 0..23 → α..ω. Past 24 we append a numeric
 // suffix (α1, β1, ..., ω1, α2, ...). Defined once so strainName(id) is O(1).
@@ -63,20 +59,13 @@ const GAMMA_MAX = 1;
 const MU_MIN    = 0;
 const MU_MAX    = 0.1;
 
-// Similarity reference distance: from (0,0,0,0) to (1,1,1,0.1) in
-// (β, σ, γ, μ) space. sqrt(1 + 1 + 1 + 0.01) = sqrt(3.01) ≈ 1.7349.
-// Two strains at maximum parameter-space separation give similarity ≈ 0;
-// identical params give similarity = 1. The exact constant doesn't need
-// to be tight — it's just a normalization so callers get a [0, 1] knob.
-//
-// Phase A: similarity continues to use just (β, σ, γ, μ) even though the
-// genome is now ~23 fields. Cross-immunity in dynamics.js gates on exact
-// bloom membership, not similarity — this helper is purely a future hook
-// for UI / debugging that wants a [0, 1] pairwise distance.
-const SIMILARITY_REF_MAX = Math.sqrt(BETA_MAX * BETA_MAX +
-                                     SIGMA_MAX * SIGMA_MAX +
-                                     GAMMA_MAX * GAMMA_MAX +
-                                     MU_MAX * MU_MAX);
+// Antigenic steps (immunity.js units, AU). A mutation moves its strain a
+// distance drawn with mean `ag_step`, or, with chance `ag_jump`, makes one
+// large jump of AG_JUMP_AU: the occasional single substitution that changes
+// antigenicity a lot. A recombinant takes its parents' midpoint plus a small
+// jitter.
+const AG_JUMP_AU = 2;
+const AG_RECOMBINATION_JITTER = 0.05;
 
 // ─── Per-strain genome fields ───────────────────────────────────────────────
 //
@@ -161,19 +150,20 @@ export const DEFAULT_GENOME = Object.freeze({
 });
 
 /**
- * Return the display name for a given strain ID.
+ * Return the display name for a strain's birth serial (its place in the
+ * order strains were born, which never repeats even when ids are reused).
  *   0..23  → α..ω
  *   24..47 → α1..ω1
  *   48..71 → α2..ω2
  *   ...
  * Wraps via modulo on the 24-letter Greek alphabet with a numeric suffix.
  *
- * @param {number} id
+ * @param {number} serial
  * @returns {string}
  */
-export function strainName(id) {
-    const letter = GREEK[id % 24];
-    const cycle = Math.floor(id / 24);
+export function strainName(serial) {
+    const letter = GREEK[serial % 24];
+    const cycle = Math.floor(serial / 24);
     return cycle === 0 ? letter : letter + cycle;
 }
 
@@ -191,7 +181,10 @@ function clamp(v, lo, hi) {
  *   ids[]        : Uint16 IDs (always equal to their array index — present
  *                  so consumers can pass the registry around as a row-like
  *                  object without reaching for indices)
- *   names[]      : string display names (matches strainName(id))
+ *   names[]      : string display names (strainName of the birth serial)
+ *   ag_x[], ag_y[] : antigenic position on the torus of immunity.js (AU)
+ *   gen[]        : generations from α (a recombinant counts its deeper parent);
+ *                  kept when the sweep splices dead ancestors out of `parent`
  *   beta[]       : Float64
  *   sigma[]      : Float64
  *   gamma[]      : Float64
@@ -206,9 +199,9 @@ function clamp(v, lo, hi) {
  *   birthTick[]  : Int32 tick at which the strain was registered
  *
  * Plain JS arrays (not typed) because the count is small (≤ MAX_STRAINS) and
- * we want growable storage without managing capacity. The dynamics path
- * never iterates the registry in a per-cell hot loop — per-tick traffic
- * goes through getStrain() / similarity() for the top-K prevalent set.
+ * we want growable storage without managing capacity. `free` holds reclaimed
+ * ids (reclaimStrain), reused before the arrays grow; `born` counts every
+ * strain ever registered.
  *
  * @param {{beta:number, sigma:number, gamma:number, mu:number}} seedParams
  * @returns {object} registry
@@ -217,6 +210,8 @@ export function createRegistry(seedParams) {
     const reg = {
         ids:       [],
         names:     [],
+        ag_x:      [],
+        ag_y:      [],
         // Core SEIR(D) rates
         beta:                    [],
         sigma:                   [],
@@ -253,19 +248,22 @@ export function createRegistry(seedParams) {
         // Lineage + bookkeeping
         parent:    [],
         parents2:  [],
+        gen:       [],
         birthTick: [],
-        // Extinction tombstone (Phase B). `extinct[id]` is true when no live
-        // cell carries the strain in any strain_ids slot;
-        // `extinctTick[id]` records the sim tick at which the sweep first
-        // observed extinction. Tombstones never reclaim IDs (the bloom filter
-        // hashes IDs into per-cell prior-exposure bits; reusing an ID would
-        // invalidate that record). A strain can resurrect from a
-        // maternal/carrier/F-corpse seed pulling it back into circulation —
-        // the sweep unmarks in that case.
+        // Extinction tombstone. `extinct[id]` is true when no live cell or
+        // animal carries the strain in any slot; `extinctTick[id]` records the
+        // sim tick at which the sweep first observed extinction. A strain can
+        // resurrect from a maternal/carrier/F-corpse seed pulling it back into
+        // circulation — the sweep unmarks in that case. A tombstoned strain
+        // with no living descendant is reclaimed (`freed`), and its id goes
+        // back on `free`.
         extinct:     [],
-        extinctTick: []
+        extinctTick: [],
+        freed:       [],
+        free:        [],
+        born:        0
     };
-    registerStrain(reg, seedParams, null, 0);
+    registerStrain(reg, seedParams, null, 0, null, 0, 0);
     return reg;
 }
 
@@ -276,27 +274,30 @@ export function createRegistry(seedParams) {
  * before storing so downstream callers can trust the registry's values
  * without re-validating.
  *
- * Throws (well, no — silently returns -1) if the registry has hit
- * MAX_STRAINS. Phase 7 won't get anywhere near 65k strains in practice,
- * but the guard keeps the Uint16 invariant honest if a pathological
- * mutation-heavy preset is loaded.
+ * Takes a reclaimed id when one is free, else appends. Silently returns -1
+ * if every id up to MAX_STRAINS is live.
  *
  * `parent2Id` is optional and defaults to null — only recombination hybrids
- * (see recombineStrains) supply a second parent. Phase 7 callers that pass
- * 4 args keep working unchanged.
+ * (see recombineStrains) supply a second parent. The antigenic position
+ * defaults to the parent's, or α's origin.
  *
  * @param {object} reg
  * @param {{beta:number, sigma:number, gamma:number, mu:number}} params
  * @param {number|null} parentId
  * @param {number} birthTick
  * @param {number|null} [parent2Id]
+ * @param {number} [agX]
+ * @param {number} [agY]
  * @returns {number} new strain ID, or -1 if the registry is full
  */
-export function registerStrain(reg, params, parentId, birthTick, parent2Id) {
-    const id = reg.ids.length;
+export function registerStrain(reg, params, parentId, birthTick, parent2Id, agX, agY) {
+    const id = reg.free.length ? reg.free.pop() : reg.ids.length;
     if (id >= MAX_STRAINS) return -1;
-    reg.ids.push(id);
-    reg.names.push(strainName(id));
+    const hasParent = parentId !== null && parentId !== undefined;
+    reg.ids[id] = id;
+    reg.names[id] = strainName(reg.born++);
+    reg.ag_x[id] = agWrap(typeof agX === 'number' ? agX : (hasParent ? reg.ag_x[parentId] : 0));
+    reg.ag_y[id] = agWrap(typeof agY === 'number' ? agY : (hasParent ? reg.ag_y[parentId] : 0));
     // Iterate the canonical genome field list so adding a new per-strain
     // field is a one-line change to GENOME_FIELDS + DEFAULT_GENOME, not a
     // hand-edit here. Missing keys fall back to DEFAULT_GENOME.
@@ -305,17 +306,18 @@ export function registerStrain(reg, params, parentId, birthTick, parent2Id) {
         const raw = (typeof src[f.key] === 'number')
             ? src[f.key]
             : DEFAULT_GENOME[f.key];
-        reg[f.key].push(clamp(raw, f.min, f.max));
+        reg[f.key][id] = clamp(raw, f.min, f.max);
     }
-    reg.parent.push(parentId === null || parentId === undefined ? null : (parentId | 0));
-    reg.parents2.push(parent2Id === null || parent2Id === undefined ? null : (parent2Id | 0));
-    reg.birthTick.push(birthTick | 0);
-    // Phase B: every new strain starts alive (a brand-new mutant has at least
-    // one cell carrying it — the caller is registering it because it's about
-    // to write the ID into a slot). The next extinction sweep that finds zero
-    // carriers will mark it.
-    reg.extinct.push(false);
-    reg.extinctTick.push(-1);
+    reg.parent[id] = hasParent ? (parentId | 0) : null;
+    reg.parents2[id] = parent2Id === null || parent2Id === undefined ? null : (parent2Id | 0);
+    reg.gen[id] = hasParent ? 1 + Math.max(reg.gen[parentId] | 0, reg.parents2[id] === null ? 0 : (reg.gen[reg.parents2[id]] | 0)) : 0;
+    reg.birthTick[id] = birthTick | 0;
+    // Every new strain starts alive (the caller is registering it because
+    // it's about to write the ID into a slot). The next extinction sweep that
+    // finds zero carriers will mark it.
+    reg.extinct[id] = false;
+    reg.extinctTick[id] = -1;
+    reg.freed[id] = false;
     return id;
 }
 
@@ -330,12 +332,15 @@ export function registerStrain(reg, params, parentId, birthTick, parent2Id) {
  */
 export function getStrain(reg, id) {
     if (id === EMPTY_STRAIN) return null;
-    if (id < 0 || id >= reg.ids.length) return null;
+    if (id < 0 || id >= reg.ids.length || reg.freed[id]) return null;
     const out = {
         id,
         name:        reg.names[id],
+        agX:         reg.ag_x[id],
+        agY:         reg.ag_y[id],
         parent:      reg.parent[id],
         parent2:     reg.parents2[id],
+        gen:         reg.gen[id],
         birthTick:   reg.birthTick[id],
         extinct:     !!reg.extinct[id],
         extinctTick: reg.extinctTick[id] | 0
@@ -347,7 +352,8 @@ export function getStrain(reg, id) {
 }
 
 /**
- * Number of registered strains.
+ * Size of the id space in use: one past the highest id ever assigned. Loops
+ * over strains run to this bound and skip `freed` ids.
  *
  * @param {object} reg
  * @returns {number}
@@ -356,14 +362,28 @@ export function strainCount(reg) {
     return reg.ids.length;
 }
 
+/** Number of strains ever born, including reclaimed ones. */
+export function bornCount(reg) {
+    return reg.born;
+}
+
+/**
+ * Reclaim a tombstoned strain: mark it freed and put its id back for reuse.
+ * The caller (runExtinctionSweep) guarantees nothing references it: no cell
+ * or animal slot, and no living strain descends from it.
+ */
+export function reclaimStrain(reg, id) {
+    if (id <= 0 || id >= reg.ids.length || reg.freed[id] || !reg.extinct[id]) return;
+    reg.freed[id] = true;
+    reg.free.push(id);
+}
+
 // ─── Extinction tombstoning (Phase B) ───────────────────────────────────────
 //
 // A strain is "extinct" when no cell in the world carries it in any
 // strain_ids slot (active load — including the load=0 memory cases for M /
-// R+CARRIER / D+F-corpse / Z-pseudo). Tombstoning is decoupled from registration — the registry
-// never frees an ID, because the per-cell bloom filter hashes IDs into
-// prior-exposure bits and reusing an ID would silently corrupt cross-
-// immunity records. Phase B is tombstone-only; no GC, no compaction.
+// R+CARRIER / D+F-corpse / Z) and no animal carries it. A tombstoned strain
+// with no living descendant is later reclaimed (reclaimStrain).
 //
 // α (ID 0) is special-cased to never extinct: it's the seed strain, used as
 // the default founder for de-novo infections (animal spillover, paint-seed,
@@ -433,49 +453,21 @@ export function countLiving(reg) {
     return alive;
 }
 
-/**
- * Similarity in [0, 1] between two strains by L2 distance in
- * (β, σ, γ, μ) parameter space.
- *
- *   dist = sqrt((Δβ)² + (Δσ)² + (Δγ)² + (Δμ)²)
- *   sim  = max(0, 1 - dist / SIMILARITY_REF_MAX)
- *
- * Same ID gets a fast-path 1.0. Out-of-range IDs return 0 (treat as
- * "maximally different") so the dynamics layer doesn't have to null-check
- * every cross-immunity query.
- *
- * @param {object} reg
- * @param {number} idA
- * @param {number} idB
- * @returns {number}
- */
-export function similarity(reg, idA, idB) {
-    if (idA === idB) return 1.0;
-    const n = reg.ids.length;
-    if (idA < 0 || idA >= n || idB < 0 || idB >= n) return 0;
-    const db = reg.beta[idA]  - reg.beta[idB];
-    const ds = reg.sigma[idA] - reg.sigma[idB];
-    const dg = reg.gamma[idA] - reg.gamma[idB];
-    const dm = reg.mu[idA]    - reg.mu[idB];
-    const dist = Math.sqrt(db * db + ds * ds + dg * dg + dm * dm);
-    const sim = 1 - dist / SIMILARITY_REF_MAX;
-    return sim < 0 ? 0 : sim;
-}
-
 // gaussian(rng) → standard-normal sample via the shared Box-Muller helper
 // (window.gaussian from /shared/utils.js); same rng-consumption order, and
 // it applies the same u1≥1e-12 clamp, so seeded sequences are unchanged.
 
 /**
  * Spawn a mutated child strain off `sourceId`, register it, and return the
- * new ID. Each parameter is perturbed by multiplicative gaussian noise:
+ * new ID. Each genome field is perturbed by multiplicative gaussian noise:
  *
  *   p' = p + p × σ_strength × N(0, 1)
  *
  * where σ_strength defaults to 0.05 (5% of the parameter's magnitude per
- * standard deviation). Results are clamped to the per-rate ranges. Lineage
- * is recorded via the `parent` field; the registry is append-only so the
- * lineage forms a forest (or a tree, if every mutation descends from α).
+ * standard deviation), clamped to the field's range. The antigenic position
+ * takes one step in a uniformly random direction: length exponential with
+ * mean `agStep`, or AG_JUMP_AU with chance `agJump`. Lineage is recorded via
+ * the `parent` field.
  *
  * Returns -1 if the source ID is invalid or the registry is full.
  *
@@ -484,9 +476,11 @@ export function similarity(reg, idA, idB) {
  * @param {number} mutationStrength
  * @param {() => number} rng — uniform [0, 1); defaults to Math.random
  * @param {number} birthTick
+ * @param {number} [agStep] — mean antigenic step, AU
+ * @param {number} [agJump] — chance of a large jump instead
  * @returns {number} new strain ID, or -1 on failure
  */
-export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick) {
+export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, agStep, agJump) {
     const src = getStrain(reg, sourceId);
     if (src === null) return -1;
     const strength = mutationStrength > 0 ? mutationStrength : DEFAULT_MUTATION_STRENGTH;
@@ -502,7 +496,12 @@ export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick) {
         const v = src[f.key];
         newParams[f.key] = v + v * strength * gaussian(r);
     }
-    return registerStrain(reg, newParams, sourceId, birthTick);
+    let len = 0;
+    if (agJump > 0 && r() < agJump) len = AG_JUMP_AU;
+    else if (agStep > 0) len = -agStep * Math.log(1 - r());
+    const theta = 2 * Math.PI * r();
+    return registerStrain(reg, newParams, sourceId, birthTick, null,
+        src.agX + len * Math.cos(theta), src.agY + len * Math.sin(theta));
 }
 
 /**
@@ -519,9 +518,9 @@ export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick) {
  * collapse to zero for parents whose μ is near zero, killing the novelty
  * exactly where it matters. Results are clamped to the per-rate ranges.
  *
- * Both parents are recorded: `parent` = idA, `parent2` = idB. The
- * registry's append-only lineage thus becomes a DAG rather than a tree
- * once any recombination occurs.
+ * Both parents are recorded: `parent` = idA, `parent2` = idB, so the lineage
+ * becomes a DAG once any recombination occurs. The antigenic position is the
+ * parents' midpoint (the shorter way round the torus) plus a small jitter.
  *
  * Returns -1 if either parent ID is out of range, is EMPTY_STRAIN, or
  * idA === idB (no self-recombination — that's just a noisy mutation, and
@@ -555,67 +554,7 @@ export function recombineStrains(reg, idA, idB, rng, birthTick) {
         const noise = RECOMBINATION_NOISE_STDDEV * fieldRange;
         newParams[f.key] = (a[f.key] + b[f.key]) / 2 + noise * gaussian(r);
     }
-    return registerStrain(reg, newParams, idA, birthTick, idB);
-}
-
-// ─── Bloom filter ───
-// 64 bits per cell at offset cellIdx * 8 in a Uint8Array. Two independent
-// hashes pick two bits to set on insertion; lookup ANDs both.
-//
-// h1: Knuth multiplicative hash (golden-ratio Fibonacci constant 2654435761).
-// h2: Different multiplier plus a Weyl-sequence offset (0x9e3779b1) so the
-// two hashes are decorrelated for sequential strain IDs — which is exactly
-// the access pattern we get since IDs are assigned in order. Both `>>> 0`
-// to force unsigned. Bit indices are h & 63 (low 6 bits → one of 64 bits).
-//
-// False-positive math (for documentation, not code): for k=2 hashes on
-// m=64 bits with n insertions, FPR ≈ (1 - e^(-kn/m))^k. At n=10 → ~7%,
-// n=30 → ~33%, n=64 → ~67%. The dynamics layer uses bloomHas as an
-// optimistic "you might have seen this" check — false positives gate
-// cross-immunity ON when the cell may not actually have seen the strain,
-// which is the gentler failure mode (the cell appears more-immune than
-// reality, not less).
-
-/**
- * Set the two bloom bits for `strainId` in the cell at `cellIdx`. Bloom
- * filters are write-only-set; clearing a strain's bits is not possible
- * without resetting the whole word for the cell.
- *
- * @param {Uint8Array} bloom — typically grid.strain_hist
- * @param {number} cellIdx — linear cell index
- * @param {number} strainId
- */
-export function bloomSet(bloom, cellIdx, strainId) {
-    const base = cellIdx * 8;
-    // Math.imul forces 32-bit multiplication; the unsigned shift normalizes
-    // to a non-negative 32-bit integer before the low-6-bit mask.
-    const h1 = (Math.imul(strainId, 2654435761) >>> 0) & 63;
-    const h2 = ((Math.imul(strainId, 40503) + 0x9e3779b1) >>> 0) & 63;
-    bloom[base + (h1 >>> 3)] |= 1 << (h1 & 7);
-    bloom[base + (h2 >>> 3)] |= 1 << (h2 & 7);
-}
-
-/**
- * Check both bloom bits for `strainId` in the cell at `cellIdx`. Returns
- * true iff BOTH are set ("probably seen this strain"). False positives
- * are possible (rate scales with the number of distinct strains inserted);
- * false negatives are not.
- *
- * NOTE on enumeration: a bloom filter cannot enumerate its members. The
- * cross-immunity caller is expected to iterate the top-K most-prevalent
- * strains (e.g. drawn from the registry / per-tick prevalence stats) and
- * call bloomHas(strain) for each candidate. Approximate by design.
- *
- * @param {Uint8Array} bloom
- * @param {number} cellIdx
- * @param {number} strainId
- * @returns {boolean}
- */
-export function bloomHas(bloom, cellIdx, strainId) {
-    const base = cellIdx * 8;
-    const h1 = (Math.imul(strainId, 2654435761) >>> 0) & 63;
-    const h2 = ((Math.imul(strainId, 40503) + 0x9e3779b1) >>> 0) & 63;
-    const b1 = (bloom[base + (h1 >>> 3)] >>> (h1 & 7)) & 1;
-    const b2 = (bloom[base + (h2 >>> 3)] >>> (h2 & 7)) & 1;
-    return b1 === 1 && b2 === 1;
+    return registerStrain(reg, newParams, idA, birthTick, idB,
+        agMid(a.agX, b.agX) + AG_RECOMBINATION_JITTER * gaussian(r),
+        agMid(a.agY, b.agY) + AG_RECOMBINATION_JITTER * gaussian(r));
 }
