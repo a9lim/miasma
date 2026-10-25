@@ -393,16 +393,22 @@ export default function init(dom) {
         onApplyPreset: (presetKey) => {
             const p = getPreset(presetKey);
             if (!p) return;
-            applyPreset(p, params, toggles, sim);
-            sim.presetKey = presetKey;
-            resetGridOnly();
-            if (ui && typeof ui.resetUI === 'function') ui.resetUI();
-            seedOpening(OPENING_SEEDS);
-            requestFrame();
+            applyScene(p);
             if (typeof showToast === 'function') showToast('Preset: ' + (p.label || presetKey));
             if (typeof _haptics !== 'undefined') _haptics.trigger('medium');
         }
     });
+
+    // Apply a preset object: params, toggles and surface, a fresh world, the
+    // opening's two cases.
+    function applyScene(p) {
+        applyPreset(p, params, toggles, sim);
+        sim.presetKey = p.key || null;
+        resetGridOnly();
+        if (ui && typeof ui.resetUI === 'function') ui.resetUI();
+        seedOpening(OPENING_SEEDS);
+        requestFrame();
+    }
 
     // ─── Zoom and pan ───
     function updateZoomIndicator() {
@@ -539,7 +545,7 @@ export default function init(dom) {
         sim, params, toggles, history, tickOnce, iso, plate,
         get strains() { return strains; },
         paint: paintController, PaintMode,
-        setPlaying, openScene, Topology, Compartment,
+        setPlaying, openScene, applyScene, Topology, Compartment,
         viewport: () => getEffectiveViewport()
     };
 
