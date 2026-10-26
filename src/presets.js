@@ -14,8 +14,10 @@
 //                  relies on and turns off what its experiment doesn't use,
 //                  because applyPreset resets to the defaults first
 //   knob         — { key, label, min, max, step, digits, reset? }: the one
-//                  slider; `reset` re-applies the preset with the new value
-//                  (the world must be rebuilt), otherwise it acts live
+//                  slider; `reset` restarts the run with the new value (the
+//                  world must be rebuilt), otherwise it acts live
+//   marks(params) — where the knob's ruler is ticked: a predicted threshold
+//                  where theory gives one, else the regimes the survey found
 //   measure      — which measured sentence the caption carries
 //   warmup       — days the opening runs before it is shown (opening preset)
 //
@@ -28,6 +30,28 @@
 import { Topology } from './config.js';
 import { DEFAULT_PARAMS } from './default-params.js';
 import { DEFAULT_TOGGLES } from './default-toggles.js';
+
+// ─── The theory the knobs are marked with ─────────────────────────────────
+// Bond percolation threshold of the triangular lattice, the hex cells'
+// adjacency graph.
+const P_C = 2 * Math.sin(Math.PI / 18);
+
+/** Chance an infectious cell infects a given neighbour before leaving I (geometric stay). */
+export function edgeT(beta, exit) {
+    return 1 - exit * (1 - beta) / (1 - (1 - exit) * (1 - beta));
+}
+
+/** β at which edgeT reaches the percolation threshold, for exit rate `exit`. */
+export function criticalBeta(exit) {
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (edgeT(m, exit) < P_C) lo = m; else hi = m; }
+    return lo;
+}
+
+/** 1 − 1/R₀ with R₀ = 6·T, the mean-field herd-immunity threshold. */
+export function meanFieldHerd(P) {
+    return 1 - 1 / (6 * edgeT(P.beta, P.gamma + P.mu));
+}
 
 // Everything secondary off: the textbook core, which presets then extend.
 const QUIET_TOGGLES = Object.freeze({
@@ -61,6 +85,7 @@ export const PRESETS = Object.freeze([
             ...NO_EVOLUTION, ...NO_DEMOGRAPHY, ...NO_ANIMALS
         },
         knob: { key: 'beta', label: 'β', min: 0.04, max: 0.3, step: 0.005, digits: 3 },
+        marks: (P) => [{ at: criticalBeta(P.gamma + P.mu), label: 'critical' }],
         measure: 'threshold',
         warmup: 300
     },
@@ -80,7 +105,8 @@ export const PRESETS = Object.freeze([
             vax_efficacy: 1, immunity_strength: 1, vax_coverage: 0.48, season_amp: 0,
             ...NO_EVOLUTION, ...NO_DEMOGRAPHY, ...NO_ANIMALS
         },
-        knob: { key: 'vax_coverage', label: 'Coverage', min: 0, max: 0.8, step: 0.01, digits: 2, reset: true },
+        knob: { key: 'vax_coverage', label: 'Coverage', min: 0, max: 0.9, step: 0.01, digits: 2, reset: true },
+        marks: (P) => [{ at: 0.5, label: 'lattice' }, { at: meanFieldHerd(P), label: '1 − 1/R₀' }],
         measure: 'herd'
     },
     {
@@ -106,6 +132,8 @@ export const PRESETS = Object.freeze([
             ...NO_ANIMALS
         },
         knob: { key: 'ag_step', label: 'Antigenic step', min: 0, max: 1.5, step: 0.05, digits: 2 },
+        // one antigenic unit: a step that long meets 1/e of the immunity to its parent
+        marks: () => [{ at: 1, label: '1 AU' }],
         measure: 'drift'
     },
     {
@@ -165,6 +193,7 @@ export const PRESETS = Object.freeze([
             ...NO_ANIMALS
         },
         knob: { key: 'z_die_fighting', label: 'Surveillance', min: 0, max: 0.5, step: 0.005, digits: 3 },
+        marks: () => [{ at: 0.25, label: 'escapes', align: 'end' }, { at: 0.32, label: 'shrinks', align: 'start' }],
         measure: 'immunoediting'
     },
     {
@@ -196,10 +225,27 @@ export const PRESETS = Object.freeze([
             immunity_strength: 0.9, ...NO_EVOLUTION, season_amp: 0, vax_coverage: 0,
             ...NO_ANIMALS
         },
-        knob: { key: 'z_die_fighting', label: 'Fight-back', min: 0, max: 0.5, step: 0.005, digits: 3 },
+        knob: { key: 'z_die_fighting', label: 'Fight-back', min: 0, max: 0.2, step: 0.005, digits: 3 },
+        marks: () => [{ at: 0.03, label: 'overrun' }, { at: 0.10, label: 'upper hand' }],
         measure: 'zombie'
     }
 ]);
+
+/**
+ * Whether the live params and toggles differ from what the preset `key` (or,
+ * for null, the sandbox) puts in place, leaving out its knob and the
+ * vaccine's antigen, which the experiment itself moves.
+ */
+export function modelChanged(key, params, toggles) {
+    const p = getPreset(key);
+    const P = Object.assign({}, DEFAULT_PARAMS, p ? p.params : null);
+    const T = Object.assign({}, DEFAULT_TOGGLES, p ? p.toggles : null);
+    if (!T.V) T.vax_rollout = false;
+    const skip = new Set(['vax_ag_x', 'vax_ag_y', p ? p.knob.key : '']);
+    for (const k in P) if (!skip.has(k) && Math.abs((params[k] || 0) - (P[k] || 0)) > 1e-9) return true;
+    for (const k in T) if (k !== 'animalDisplay' && !!toggles[k] !== !!T[k]) return true;
+    return false;
+}
 
 /** Look up a preset by its `key`. Returns null when missing. */
 export function getPreset(key) {
@@ -230,63 +276,114 @@ export function applyPreset(preset, params, toggles, sim) {
     return true;
 }
 
-// ─── The experiment strip ──────────────────────────────────────────────────
-// In the margin head: the preset picker (choosing applies it), the preset's
-// one knob, and its line of description. No innerHTML.
+// ─── The list of plates ────────────────────────────────────────────────────
+// The experiments are the atlas's plates, numbered in order; the sandbox
+// closes the list unnumbered. Choosing one applies it. No innerHTML.
+
+const NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+const SANDBOX_LINE = 'Every mechanic at its default, for free play; the Model tab holds every rate.';
+
+/** The plate numeral of a preset, or null (the sandbox). */
+export function plateNumeral(key) {
+    const k = PRESETS.findIndex((p) => p.key === key);
+    return k < 0 ? null : NUMERALS[k];
+}
 
 /**
- * Build the strip into `el`. hooks: { onApply(key), onKnob(key, value, knob) }.
- * Returns { show(key, params) } to sync it to the running preset without
- * applying anything.
+ * Build the list into `el` (an <ol>). hooks: { onApply(key), onRestore() }.
+ * Returns { show(key, changed) } to mark the running plate without applying
+ * anything; `changed` says its model has been edited, which offers Restore.
  */
-export function buildExperimentStrip(el, hooks) {
+export function buildExperimentList(el, hooks) {
     if (!el) return { show() {} };
     while (el.firstChild) el.removeChild(el.firstChild);
+    const entries = [];
+    const note = document.createElement('p');
+    note.className = 'plate-changed';
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'text-btn';
+    restore.textContent = 'Restore';
+    restore.addEventListener('click', () => { if (hooks.onRestore) hooks.onRestore(); });
+    note.append('Changed in the Model tab. ', restore);
+    const add = (key, numeral, title, line) => {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'plate-entry';
+        b.dataset.preset = key || '';
+        const n = document.createElement('span');
+        n.className = 'plate-n';
+        n.textContent = numeral || '';
+        const t = document.createElement('span');
+        t.className = 'plate-title';
+        t.textContent = title;
+        const d = document.createElement('span');
+        d.className = 'plate-line';
+        d.textContent = line;
+        b.append(n, t, d);
+        b.addEventListener('click', () => {
+            if (b.getAttribute('aria-current') === 'true') return;
+            if (hooks.onApply) hooks.onApply(key || null);
+        });
+        li.appendChild(b);
+        el.appendChild(li);
+        entries.push(b);
+    };
+    PRESETS.forEach((p, k) => add(p.key, NUMERALS[k], p.label, p.description));
+    add(null, '', 'Sandbox', SANDBOX_LINE);
 
-    const select = document.createElement('select');
-    select.className = 'sim-select preset-select';
-    select.setAttribute('aria-label', 'Experiment');
-    const custom = document.createElement('option');
-    custom.value = '';
-    custom.textContent = 'Sandbox';
-    select.appendChild(custom);
-    for (const p of PRESETS) {
-        const opt = document.createElement('option');
-        opt.value = p.key;
-        opt.textContent = p.label;
-        select.appendChild(opt);
+    function show(key, changed) {
+        for (const b of entries) {
+            const on = b.dataset.preset === (key || '');
+            b.setAttribute('aria-current', on ? 'true' : 'false');
+            if (on && changed && note.parentNode !== b.parentNode) b.parentNode.appendChild(note);
+        }
+        if (!changed && note.parentNode) note.parentNode.removeChild(note);
     }
-    el.appendChild(select);
+    return { show };
+}
 
-    const knobRow = document.createElement('div');
-    knobRow.className = 'knob-row';
-    const knobLabel = document.createElement('label');
-    knobLabel.className = 'knob-label';
+// ─── The knob ──────────────────────────────────────────────────────────────
+// Beside the figure caption, which measures it: the running experiment's one
+// slider, drawn as a ruler ticked where theory (or the survey) puts its
+// thresholds. Hidden in the sandbox.
+
+/**
+ * Build the knob into `el`. hooks: { onKnob(key, value, knob) }. Returns
+ * { show(key, params) }.
+ */
+export function buildKnob(el, hooks) {
+    if (!el) return { show() {} };
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const label = document.createElement('label');
+    label.className = 'knob-label';
+    const ruler = document.createElement('div');
+    ruler.className = 'knob-ruler';
     const slider = document.createElement('input');
     slider.type = 'range';
-    slider.className = 'sim-slider knob-slider';
-    const value = document.createElement('span');
+    slider.className = 'knob-slider';
+    slider.id = 'knob-slider';
+    label.htmlFor = slider.id;
+    const marks = document.createElement('div');
+    marks.className = 'knob-marks';
+    marks.setAttribute('aria-hidden', 'true');
+    ruler.append(slider, marks);
+    const value = document.createElement('output');
     value.className = 'knob-value';
-    knobRow.append(knobLabel, slider, value);
-    el.appendChild(knobRow);
+    value.htmlFor = slider.id;
+    el.append(label, ruler, value);
 
-    const hint = document.createElement('p');
-    hint.className = 'experiment-hint';
-    el.appendChild(hint);
-
-    if (window._dropdown && typeof window._dropdown.enhance === 'function') {
-        try { window._dropdown.enhance(select); } catch (_) { /* ok */ }
-    }
-
-    let current = null, syncing = false;
-    select.addEventListener('change', () => {
-        if (syncing) return;
-        if (hooks.onApply) hooks.onApply(select.value || null);
-    });
+    let current = null;
     const fmt = (v) => (current ? Number(v).toFixed(current.knob.digits) : '');
+    const fill = () => {
+        const k = current.knob;
+        slider.style.setProperty('--fill', ((slider.value - k.min) / (k.max - k.min) * 100) + '%');
+    };
     slider.addEventListener('input', () => {
         if (!current) return;
         value.textContent = fmt(slider.value);
+        fill();
         if (!current.knob.reset && hooks.onKnob) hooks.onKnob(current.knob.key, parseFloat(slider.value), current.knob);
     });
     slider.addEventListener('change', () => {
@@ -295,22 +392,28 @@ export function buildExperimentStrip(el, hooks) {
 
     function show(key, params) {
         current = getPreset(key);
-        syncing = true;
-        select.value = key || '';
-        select.dispatchEvent(new Event('change'));
-        syncing = false;
-        knobRow.hidden = !current;
-        if (current) {
-            const k = current.knob;
-            knobLabel.textContent = k.label;
-            slider.min = String(k.min); slider.max = String(k.max); slider.step = String(k.step);
-            slider.value = String(params[k.key]);
-            slider.setAttribute('aria-label', k.label);
-            value.textContent = fmt(params[k.key]);
-            hint.textContent = current.description;
-        } else {
-            hint.textContent = 'Every mechanic live at its default; Settings has the rest.';
+        el.hidden = !current;
+        if (!current) return;
+        const k = current.knob;
+        label.textContent = k.label;
+        slider.min = String(k.min); slider.max = String(k.max); slider.step = String(k.step);
+        slider.value = String(params[k.key]);
+        slider.setAttribute('aria-label', k.label);
+        value.textContent = fmt(params[k.key]);
+        fill();
+        while (marks.firstChild) marks.removeChild(marks.firstChild);
+        const list = current.marks ? current.marks(params) : [];
+        for (const m of list) {
+            if (!(m.at >= k.min && m.at <= k.max)) continue;
+            const tick = document.createElement('span');
+            tick.className = 'knob-mark' + (m.align ? ' knob-mark-' + m.align : '');
+            tick.style.setProperty('--at', ((m.at - k.min) / (k.max - k.min)).toFixed(4));
+            const em = document.createElement('em');
+            em.textContent = m.label;
+            tick.appendChild(em);
+            marks.appendChild(tick);
         }
+        el.title = list.length ? list.map((m) => `${m.label}: ${Number(m.at).toFixed(k.digits)}`).join('; ') : '';
     }
     return { show };
 }

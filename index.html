@@ -48,7 +48,6 @@
   <script defer src="/shared/icons.js"></script>
   <script defer src="/shared/colophon.js"></script>
   <script defer src="/shared/forms.js"></script>
-  <script defer src="/shared/dropdown.js"></script>
   <script defer src="colors.js"></script>
 
   <script type="application/ld+json">
@@ -223,11 +222,11 @@
     "@type": "HowTo",
     "name": "How to run an outbreak in Miasma",
     "step": [
-      {"@type": "HowToStep", "position": 1, "name": "Choose an experiment", "text": "Pick one of six experiments: Threshold, Herd immunity, Antigenic drift, Spillover, Immunoediting or Zombie apocalypse. Each sets the pathogen, the toggles and the surface, has one knob in the margin, and states a measured number in the figure caption; the Sandbox has every mechanic at its default."},
+      {"@type": "HowToStep", "position": 1, "name": "Choose an experiment", "text": "Pick one of six experiments: Threshold, Herd immunity, Antigenic drift, Spillover, Immunoediting or Zombie apocalypse. Each sets the pathogen, the toggles and the surface, has one knob under the plate, ticked where theory puts its threshold, and states a measured number in the figure caption; the Sandbox has every mechanic at its default."},
       {"@type": "HowToStep", "position": 2, "name": "Choose a surface", "text": "Glue the edges of the hexagonal world into a plane, torus, Klein bottle, or real projective plane. The same dynamics produce very different outbreak shapes on each, and the faded copies beyond each glued edge show where a wave goes."},
       {"@type": "HowToStep", "position": 3, "name": "Seed patient zero", "text": "Click on the lattice to place one or more infectious individuals. Re-seed to compare independent stochastic realizations."},
       {"@type": "HowToStep", "position": 4, "name": "Watch the dynamics", "text": "Watch the wave propagate. Isochrones record the day it reached each place, Nightingale's rose counts exposures, recoveries and deaths in ten-day wedges, and the caption reports observed Re as the outbreak evolves."},
-      {"@type": "HowToStep", "position": 5, "name": "Paint interventions", "text": "Switch among seed, vaccinate, quarantine, sanitize, and cull brushes to test how spatial intervention patterns alter the outcome; undo remains available until the simulation advances."}
+      {"@type": "HowToStep", "position": 5, "name": "Paint interventions", "text": "Switch among the seed, vaccinate, quarantine, sanitize, and cull brushes on the plate's left edge to test how spatial intervention patterns alter the outcome; undo remains available until the simulation advances."}
     ]
   }
   </script>
@@ -253,71 +252,89 @@
       <div class="plate-stage">
         <canvas id="plate-gpu" aria-hidden="true"></canvas>
         <canvas id="sim-canvas" aria-label="Atlas plate of a spatial epidemic on a hexagonal world whose edges are glued into a chosen surface"></canvas>
+
+        <!-- Over the plate: how it is drawn (the view) and the clock's rate. -->
+        <div class="plate-head">
+          <div id="viewmode-toggles" class="view-picker" role="radiogroup" aria-label="Map view">
+            <button class="view-btn" data-viewmode="compartment" role="radio" aria-checked="true" title="The outbreak, by day of arrival">State</button>
+            <button class="view-btn" data-viewmode="strain" role="radio" aria-checked="false" title="Each carrier hatched by its dominant strain">Strain</button>
+            <button class="view-btn" data-viewmode="age" role="radio" aria-checked="false" title="Age of every living cell">Age</button>
+            <button class="view-btn" data-viewmode="health" role="radio" aria-checked="false" title="Health of every living cell">Health</button>
+            <button class="view-btn" data-viewmode="status" role="radio" aria-checked="false" title="Hospital beds and quarantine">Status</button>
+            <button class="view-btn" data-viewmode="immunity" role="radio" aria-checked="false" title="Immunity to the selected or leading strain">Immunity</button>
+          </div>
+          <div class="run-tools" role="toolbar" aria-label="Run">
+            <button id="speed-btn" class="text-btn speed-btn" title="Speed (click to cycle)" aria-label="Simulation speed"><span class="speed-label">1×</span></button>
+            <button id="reset-btn" class="text-btn" title="Run the model again on a fresh world (R)" aria-label="Restart"><span class="reset-icon" data-icon="reset" data-icon-size="17"></span><span class="reset-label">Restart</span></button>
+            <button id="margin-open" class="text-btn" title="Show the controls (S)" aria-controls="margin" aria-expanded="false" hidden>Controls</button>
+          </div>
+        </div>
+
+        <!-- On the plate: the brushes, each swatch the mark it leaves (paint.js). -->
+        <div id="brush-rail" class="brush-rail" role="toolbar" aria-label="Brushes">
+          <div class="rail-history">
+            <button id="undo-btn" class="hair-btn" title="Undo stroke (⌘Z)" aria-label="Undo last stroke" disabled data-icon="undo" data-icon-size="15"></button>
+            <button id="redo-btn" class="hair-btn" title="Redo stroke (⌘⇧Z)" aria-label="Redo last stroke" disabled data-icon="redo" data-icon-size="15"></button>
+          </div>
+        </div>
+
+        <!-- Beside the scale bar it changes. -->
+        <div id="canvas-controls" class="plate-zoom" role="group" aria-label="Zoom">
+          <button id="zoom-out-btn" class="hair-btn" title="Zoom out (-)" aria-label="Zoom out" data-icon="minus" data-icon-size="14"></button>
+          <span id="zoom-indicator" class="zoom-level" aria-live="polite">100%</span>
+          <button id="zoom-in-btn" class="hair-btn" title="Zoom in (+)" aria-label="Zoom in" data-icon="plus" data-icon-size="14"></button>
+          <button id="zoom-reset-btn" class="hair-btn" title="Fit the plate (0)" aria-label="Fit the plate" data-icon="fitView" data-icon-size="14"></button>
+        </div>
       </div>
-      <div id="canvas-controls" class="plate-zoom" role="group" aria-label="Zoom">
-        <button id="zoom-out-btn" class="hair-btn" title="Zoom out (-)" aria-label="Zoom out" data-icon="minus" data-icon-size="15"></button>
-        <span id="zoom-indicator" class="zoom-level" aria-live="polite">100%</span>
-        <button id="zoom-in-btn" class="hair-btn" title="Zoom in (+)" aria-label="Zoom in" data-icon="plus" data-icon-size="15"></button>
-        <button id="zoom-reset-btn" class="hair-btn" title="Fit the plate (0)" aria-label="Fit the plate" data-icon="fitView" data-icon-size="15"></button>
-      </div>
-      <figcaption class="caption plate-caption"><span class="caption-n">Fig. 1.</span> <span id="plate-caption"></span></figcaption>
+      <!-- Under the plate: the caption, and beside it the experiment's one knob. -->
+      <figcaption class="figure-bar">
+        <p class="caption plate-caption"><span class="caption-n">Fig. 1.</span> <span id="plate-caption"></span></p>
+        <div id="knob" class="knob" role="group" aria-label="The experiment's knob"></div>
+      </figcaption>
     </figure>
 
     <aside id="margin" class="margin" aria-label="Miasma controls">
-      <div class="margin-head">
-        <div id="topology-toggles" class="surface-picker" role="radiogroup" aria-label="Surface">
-          <button class="surface-btn" data-topology="plane" role="radio" aria-checked="false" title="Plane: every edge is a shore">Plane</button>
-          <button class="surface-btn" data-topology="torus" role="radio" aria-checked="true" title="Torus: all three pairs glued straight">Torus</button>
-          <button class="surface-btn" data-topology="klein" role="radio" aria-checked="false" title="Klein bottle: two pairs twisted, one straight">Klein</button>
-          <button class="surface-btn" data-topology="rp2" role="radio" aria-checked="false" title="Projective plane: all three pairs twisted">RP²</button>
-        </div>
-        <div class="transport" role="toolbar" aria-label="Run">
-          <button id="speed-btn" class="hair-btn speed-btn" title="Speed (click to cycle)" aria-label="Simulation speed"><span class="speed-label">1×</span></button>
-          <button id="reset-btn" class="hair-btn" title="Reset (R)" aria-label="Reset simulation" data-icon="reset" data-icon-size="16"></button>
-          <button id="undo-btn" class="hair-btn" title="Undo stroke (⌘Z)" aria-label="Undo last paint stroke" disabled data-icon="undo" data-icon-size="16"></button>
-          <button id="redo-btn" class="hair-btn" title="Redo stroke (⌘⇧Z)" aria-label="Redo last paint stroke" disabled data-icon="redo" data-icon-size="16"></button>
-          <button id="viewmode-btn" class="hair-btn" title="Map view (M)" aria-label="Map view controls" data-icon="eye" data-icon-size="16"></button>
-          <button id="menu-btn" class="hair-btn" title="Hide controls (S)" aria-label="Hide controls" aria-expanded="true" data-icon="menu" data-icon-size="16"></button>
-        </div>
-        <div id="experiment" class="experiment" aria-label="Experiment"></div>
-      </div>
       <div class="margin-tabs" role="tablist" aria-label="Panels">
-        <button class="tab-btn active" data-tab="compartments" role="tab" aria-selected="true">Counts</button>
+        <button class="tab-btn active" data-tab="experiments" role="tab" aria-selected="true">Experiments</button>
+        <button class="tab-btn" data-tab="compartments" role="tab" aria-selected="false">Counts</button>
         <button class="tab-btn" data-tab="strains" role="tab" aria-selected="false">Strains</button>
-        <button class="tab-btn" data-tab="interventions" role="tab" aria-selected="false">Paint</button>
-        <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+        <button class="tab-btn" data-tab="model" role="tab" aria-selected="false">Model</button>
+        <button id="menu-btn" class="hair-btn margin-close" title="Hide the controls (S)" aria-label="Hide the controls" aria-controls="margin" aria-expanded="true" data-icon="close" data-icon-size="14"></button>
       </div>
       <div class="margin-panels">
-        <!-- Counts: Nightingale's rose, the census, observed Re, the reservoir.
-             #timeseries-panel survives stats-panel rebuilds (stats.js). -->
-        <div class="tab-panel active" id="tab-compartments" role="tabpanel">
+        <!-- Experiments: the atlas's list of plates, then the surface and the world they run on. -->
+        <div class="tab-panel active" id="tab-experiments" role="tabpanel">
+          <ol id="experiment-list" class="plates" aria-label="Experiments"></ol>
+          <section class="setup" aria-label="Surface">
+            <h2 class="margin-head">Surface</h2>
+            <div id="topology-toggles" class="surface-picker" role="radiogroup" aria-label="Surface">
+              <button class="surface-btn" data-topology="plane" role="radio" aria-checked="false" title="Plane: every edge is a shore">Plane</button>
+              <button class="surface-btn" data-topology="torus" role="radio" aria-checked="true" title="Torus: all three pairs glued straight">Torus</button>
+              <button class="surface-btn" data-topology="klein" role="radio" aria-checked="false" title="Klein bottle: two pairs twisted, one straight">Klein</button>
+              <button class="surface-btn" data-topology="rp2" role="radio" aria-checked="false" title="Projective plane: all three pairs twisted">RP²</button>
+            </div>
+            <p id="surface-note" class="margin-note"></p>
+          </section>
+          <section class="setup" aria-label="World">
+            <h2 class="margin-head">World</h2>
+            <div id="world-picker" class="word-picker" role="radiogroup" aria-label="World size, in cells"></div>
+            <p class="margin-note">Cells in the world. A new size starts the run again; zoom in to read a large one.</p>
+          </section>
+        </div>
+        <!-- Counts: Nightingale's rose and the census. #timeseries-panel survives stats-panel rebuilds (stats.js). -->
+        <div class="tab-panel" id="tab-compartments" role="tabpanel">
           <figure id="timeseries-panel" class="rose" aria-label="Rose of the outbreak">
             <canvas id="timeseries-canvas" aria-label="Polar-area diagram of infectious, exposed and deaths by period"></canvas>
             <figcaption class="caption rose-caption"><span class="caption-n">Fig. 2.</span> <span id="rose-caption"></span></figcaption>
           </figure>
         </div>
         <div class="tab-panel" id="tab-strains" role="tabpanel">
-          <p class="panel-hint">The strain list and phylogeny fill in as the outbreak runs.</p>
+          <p class="margin-note">The strain list and phylogeny fill in as the outbreak runs.</p>
         </div>
-        <div class="tab-panel" id="tab-interventions" role="tabpanel">
-          <p class="panel-hint">Choose a brush, then paint on the plate. Strokes land on the copies beyond glued edges too.</p>
-        </div>
-        <div class="tab-panel" id="tab-settings" role="tabpanel">
-          <div id="map-controls-section" class="settings-section settings-map-controls">
-            <div class="toggles-section-header">Map view</div>
-            <div id="viewmode-toggles" class="mode-toggles inline-mode-toggles" role="tablist" aria-label="Map view">
-              <button class="mode-btn active" data-viewmode="compartment" role="tab" aria-selected="true" title="Compartments">State</button>
-              <button class="mode-btn" data-viewmode="strain" role="tab" aria-selected="false" title="Dominant strain, by hatch angle">Strain</button>
-              <button class="mode-btn" data-viewmode="age" role="tab" aria-selected="false" title="Age">Age</button>
-              <button class="mode-btn" data-viewmode="health" role="tab" aria-selected="false" title="Health">Health</button>
-              <button class="mode-btn" data-viewmode="status" role="tab" aria-selected="false" title="Hospital and quarantine">Status</button>
-              <button class="mode-btn" data-viewmode="immunity" role="tab" aria-selected="false" title="Immunity to the selected or dominant strain">Imm.</button>
-            </div>
-          </div>
-        </div>
+        <!-- Model: the compartment diagram, and the parameters of whatever part of it is chosen (model.js). -->
+        <div class="tab-panel" id="tab-model" role="tabpanel"></div>
       </div>
     </aside>
-    <button id="margin-open" class="hair-btn margin-open" title="Show controls (S)" aria-label="Show controls" data-icon="menu" data-icon-size="16" hidden></button>
   </main>
 
   <details class="edu-content">
@@ -327,7 +344,7 @@
       <p>Miasma is an interactive spatial epidemic simulator. Instead of integrating ordinary differential equations on a well-mixed population, it runs a stochastic cellular automaton on a hex-tiled two-dimensional manifold whose topology you choose. Each occupied cell holds one of eight compartments — Susceptible, Exposed, Infectious, Recovered, Deceased, Vaccinated, Maternal-immunity, or Z — with Latent, Chronic-carrier, and Infectious-corpse flags plus Hospitalized/Quarantined status overlays. The result is a system where you can see how the same disease parameters produce dramatically different outbreaks depending on the geometry of the contact network.</p>
 
       <h3>Compartmental models</h3>
-      <p>The compartmental tradition begins with Kermack and McKendrick's 1927 paper, which partitioned a population into Susceptible, Infectious, and Removed and derived the threshold condition that the modern basic reproduction number R<sub>0</sub> formalizes. The SIR core has since been extended in many directions — adding latency (E), demography (births, deaths), vaccination (V), maternal immunity (M), and waning. Miasma's SEIRDV core with M/L/C/F flags and H/Q status overlays is a synthesis of these extensions, made tractable by running each compartment as a discrete state on a finite lattice. Beyond canonical SEIR, recovered and vaccinated cells can be infected again: each cell remembers the antigens it has met, and its protection against a strain falls off with antigenic distance, so reinfection and breakthrough favor strains that have drifted from what the population remembers.</p>
+      <p>The compartmental tradition begins with Kermack and McKendrick's 1927 paper, which partitioned a population into Susceptible, Infectious, and Removed and derived the threshold condition that the modern basic reproduction number R<sub>0</sub> formalizes. The SIR core has since been extended in many directions — adding latency (E), demography (births, deaths), vaccination (V), maternal immunity (M), and waning. Miasma's SEIRDV core with M/L/C/F flags and H/Q status overlays is a synthesis of these extensions, made tractable by running each compartment as a discrete state on a finite lattice. The Model tab draws it as the textbook figure of a compartmental model: each compartment a node carrying its count, each transition an arrow whose weight is the number crossing it each day, with every rate set from the part of the figure it belongs to. Beyond canonical SEIR, recovered and vaccinated cells can be infected again: each cell remembers the antigens it has met, and its protection against a strain falls off with antigenic distance, so reinfection and breakthrough favor strains that have drifted from what the population remembers.</p>
 
       <h3>Latent and chronic carriers</h3>
       <p>Two of the flag overlays correspond to disease classes the canonical SEIR model handles awkwardly. The latent flag (L) marks an exposed cell whose progression to infectious goes through a slow reactivation rate rather than the normal incubation period — a fraction of fresh exposures latch latent on contact, configurable per preset. Tuberculosis is the canonical case: the World Health Organization estimates roughly a quarter of the global population carries latent TB, with only a small per-capita per-year reactivation rate, producing a long-tailed epidemic that the standard E compartment cannot capture. The chronic-carrier flag (C) marks a recovered cell that still transmits at a reduced multiplier of the baseline transmission rate — the right shape for hantavirus-like reservoir dynamics where some recoveries do not clear the infection. Both flags are gated on per-preset seeding probabilities (l_seed and c_seed) so the underlying SEIR model is recoverable by setting them to zero.</p>
@@ -345,10 +362,10 @@
       <p>The Z compartment is interpretation-agnostic. The same state machine reads as two different stories depending on which spawn pathway is active and where the encounter-outcome dials sit. <em>Macroscopic</em>: a zombie pandemic. Cells are people. Infectious corpses reanimate (the F flag is the bridge — only F-flagged deaths can convert to Z, at rate dz_dead per tick). When a zombie meets a human, a single bucketed roll resolves the outcome — clean kill (target → D), kill-with-infection (target → D + F-corpse), expose alive (target → E), or unopposed conversion (target → Z). A separate per-encounter roll handles whether the zombie itself dies in the fight (z_die_fighting), so mutual destruction is on the table. Zombies have a finite lifespan via z_die_natural — decomposition catches up. <em>Microscopic</em>: oncoviral cellular transformation. Cells are cells. The L flag carries the oncovirus latently in the host genome after S→E exposure, and at a small per-tick rate (l_transform) a latently-infected cell transforms into a malignant clone (→ Z). Transformed cells expand by contact-driven conversion (z_convert_unopposed dominates because cells don't fight back). Immune surveillance is represented by a small nonzero z_die_fighting — NK cells and cytotoxic T cells clearing transformed cells. Transformed cells are immortal (telomerase reactivation), so z_die_natural is zero; crowding-driven exhaustion stays on to capture necrotic-core formation in tumor masses where the interior loses access to oxygen. The two readings emerge from the same code with no toggles renamed and no special-case branches — the parameters are the whole story. Intermediate configurations produce intermediate readings, which is often the most pedagogically interesting region.</p>
 
       <h3>Six experiments</h3>
-      <p>Six presets, each an experiment with one knob, a phenomenon to look for and a number measured live in the figure caption. Threshold: below a critical transmission rate an outbreak stays a finite cluster, and just above it the front is ragged and holed; the caption compares β with the critical value from bond percolation on the triangular lattice. Herd immunity: random vaccine coverage stops a wave at about half when contacts are only between neighbours, near the triangular lattice's site-percolation threshold, far below the 82% that the mean-field formula 1 − 1/R₀ gives for the same disease. Antigenic drift: seasonal waves, each led by variants that have drifted from what hosts remember, with a phylogeny that keeps deepening. Spillover: human-to-human transmission too weak to sustain itself, kept going by a chronically infected rodent reservoir; the caption gives human-to-human Re and the reservoir's share of cases. Immunoediting: an oncovirus seeds transformed cells, and immune surveillance eliminates, holds or loses the tumour (the microscopic Z reading). Zombie apocalypse: infectious corpses rise and the living fight back (the macroscopic Z reading). Each was calibrated across at least ten stochastic runs on the default 24,031-cell lattice; the Sandbox keeps every mechanic at its default for free play.</p>
+      <p>Six presets, each an experiment with one knob, a phenomenon to look for and a number measured live in the figure caption. They are the atlas's plates, listed in the Experiments tab, and each knob sits under the plate as a ruler ticked where theory, or the calibration survey, puts its thresholds. Threshold: below a critical transmission rate an outbreak stays a finite cluster, and just above it the front is ragged and holed; the caption compares β with the critical value from bond percolation on the triangular lattice. Herd immunity: random vaccine coverage stops a wave at about half when contacts are only between neighbours, near the triangular lattice's site-percolation threshold, far below the 82% that the mean-field formula 1 − 1/R₀ gives for the same disease. Antigenic drift: seasonal waves, each led by variants that have drifted from what hosts remember, with a phylogeny that keeps deepening. Spillover: human-to-human transmission too weak to sustain itself, kept going by a chronically infected rodent reservoir; the caption gives human-to-human Re and the reservoir's share of cases. Immunoediting: an oncovirus seeds transformed cells, and immune surveillance eliminates, holds or loses the tumour (the microscopic Z reading). Zombie apocalypse: infectious corpses rise and the living fight back (the macroscopic Z reading). Each was calibrated across at least ten stochastic runs on the default 24,031-cell lattice; the Sandbox keeps every mechanic at its default for free play.</p>
 
       <h3>The atlas</h3>
-      <p>The map is drawn as a plate from a nineteenth-century epidemiological atlas, in the line of John Snow's 1854 cholera map. The disease is the red, solid for infectious cells and pale for exposed ones; recovered cells are stipple, vaccinated cells are hatching, deaths are small crosses, and susceptible cells are graphite dots, so the plate survives grayscale. Isochrones contour the day each wave reached each cell every eight days, labeled every twenty-four, and fade as they age, so the plate keeps the outbreak's history while later waves write over it. A Reference cartouche and a scale bar sit on the plate. Six views project the same state: compartments, strains (hatch angle and colour from antigenic position), age, health, hospital and quarantine status, and immunity to a chosen strain, the last three as single-ink ramps. The Immunoediting preset turns the plate into an H&amp;E-stained section, with nuclear size and stain marking normal, latent, infected, transformed and necrotic cells. The Counts tab carries Florence Nightingale's rose of 1858: ten-day wedges whose areas count exposures, recoveries, deaths and, in the Z presets, new zombies or transformed cells.</p>
+      <p>The map is drawn as a plate from a nineteenth-century epidemiological atlas, in the line of John Snow's 1854 cholera map. The disease is the red, solid for infectious cells and pale for exposed ones; recovered cells are stipple, vaccinated cells are hatching, deaths are small crosses, and susceptible cells are graphite dots, so the plate survives grayscale. Isochrones contour the day each wave reached each cell every eight days, labeled every twenty-four, and fade as they age, so the plate keeps the outbreak's history while later waves write over it. A Reference cartouche and a scale bar sit on the plate. Six views project the same state: compartments, strains (hatch angle and colour from antigenic position), age, health, hospital and quarantine status, and immunity to a chosen strain, the last three as single-ink ramps. The Immunoediting preset's state view is an H&amp;E-stained section, with nuclear size and stain marking normal, latent, infected, transformed and necrotic cells. The Counts tab carries Florence Nightingale's rose of 1858: ten-day wedges whose areas count exposures, recoveries, deaths and, in the Z presets, new zombies or transformed cells.</p>
 
       <h3>Interventions</h3>
       <p>The intervention brushes let you paint five modes onto the manifold: seed (place strain α infections), vaccinate (S/E/R/M → V), quarantine (status overlay reducing transmission both ways), sanitize (clear infections and corpses), and cull (force-kill cells, including the zombie compartment). Brush radius scales 1/7/19 hexes, and every stroke goes onto an undo stack until the simulation advances; once time moves, undo is cleared so paint history never rewinds evolved disease state. The geometry of intervention matters: contiguous immune blocks at the herd-immunity threshold suppress outbreaks more reliably than the same fraction scattered randomly, because contiguous immunity blocks percolation paths. The simulator exposes this geometric dependence directly.</p>
@@ -363,7 +380,7 @@
       <p>W. O. Kermack and A. G. McKendrick, <a href="https://doi.org/10.1098/rspa.1927.0118" target="_blank" rel="noopener">"A contribution to the mathematical theory of epidemics"</a>, <em>Proc. R. Soc. A</em> (1927). H. W. Hethcote, <a href="https://doi.org/10.1137/S0036144500371907" target="_blank" rel="noopener">"The Mathematics of Infectious Diseases"</a>, <em>SIAM Review</em> 42(4):599–653 (2000). M. J. Keeling and K. T. D. Eames, <a href="https://doi.org/10.1098/rsif.2005.0051" target="_blank" rel="noopener">"Networks and epidemic models"</a>, <em>J. R. Soc. Interface</em> 2(4):295–307 (2005). R. M. Anderson and R. M. May, <em>Infectious Diseases of Humans: Dynamics and Control</em> (Oxford University Press, 1991).</p>
 
       <h3>Accessibility</h3>
-      <p>Miasma's colophon, surface picker, margin tabs, selectors, sliders, and documented paint-mode shortcuts are keyboard-operable. The plate exposes its purpose via <code>aria-label</code>, but placing brush strokes on particular cells still requires a pointer or touch; phylogeny row selection is also pointer-driven. Controls carry ARIA labels, compartment counts, status counts, the animal census, and observed Re are reported as text in the margin, and a live figure caption under the plate states the current counts and what the surface does. Every state on the plate is a pattern as well as a color. The theme toggle switches between light and dark presentations. Known hazards: continuous change on the lattice during outbreaks, faster at high speed. With reduced motion set, Miasma opens paused on a finished plate; users sensitive to motion can also lower the speed or step the simulation one day at a time.</p>
+      <p>Miasma's colophon, view picker, experiment list, knob, brush rail, surface picker, margin tabs, the parts of the model diagram, sliders, switches, and documented paint-mode shortcuts are keyboard-operable. The plate exposes its purpose via <code>aria-label</code>, but placing brush strokes on particular cells still requires a pointer or touch; phylogeny row selection is also pointer-driven. Controls carry ARIA labels, compartment counts, status counts, the animal census, and observed Re are reported as text in the margin, and a live figure caption under the plate states the current counts and what the surface does. Every state on the plate is a pattern as well as a color. The theme toggle switches between light and dark presentations. Known hazards: continuous change on the lattice during outbreaks, faster at high speed. With reduced motion set, Miasma opens paused on a finished plate; users sensitive to motion can also lower the speed or step the simulation one day at a time.</p>
 
       <p><em>See also: <a href="/worldline">Worldline</a> for particle physics, <a href="/lumen">Lumen</a> for cellular biochemistry, <a href="/shoals">Shoals</a> for options trading.</em></p>
     </article>

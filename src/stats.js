@@ -27,6 +27,9 @@ const COMPARTMENT_LABELS = Object.freeze({
 });
 
 const MIN_REFF_TICKS = 5;
+const NUMBER = new Intl.NumberFormat('en-US');
+// Always listed; the rest of the census shows only what the run has.
+const CORE = new Set(['S', 'E', 'I', 'R', 'D']);
 const _counts = new Uint32Array(9);
 const _statusCounts = new Uint32Array(3);
 const _animalCounts = new Uint32Array(5);
@@ -289,7 +292,7 @@ function updateSubRow(refs, role, count) {
     const valueEl = refs.subValues[role];
     const row = refs.subRows[role];
     if (!valueEl || !row) return;
-    const text = '' + count;
+    const text = NUMBER.format(count);
     if (valueEl.textContent !== text) valueEl.textContent = text;
     if (count === 0) {
         if (row.dataset.zero !== 'true') row.dataset.zero = 'true';
@@ -304,6 +307,7 @@ function appendCompartmentRow(parent, key) {
     const row = document.createElement('div');
     row.className = 'stat-row';
     row.dataset.compartment = key;
+    if (CORE.has(key)) row.dataset.core = 'true';
 
     const label = document.createElement('span');
     label.className = 'stat-label';
@@ -369,6 +373,11 @@ function buildPanelSkeleton(panelEl) {
     // One row per key, all created up-front so we never mutate child set
     // after this point. Sub-rows (Latent/Carrier/Infectious corpse) live
     // inline directly under their parent compartment.
+    const head = document.createElement('h2');
+    head.className = 'margin-head';
+    head.textContent = 'Census';
+    panelEl.appendChild(head);
+
     const list = document.createElement('div');
     list.className = 'stat-group';
     list.dataset.role = 'compartment-list';
@@ -397,30 +406,33 @@ function buildPanelSkeleton(panelEl) {
 
     // Population total + status readouts + summary rows sit below the
     // compartment list — secondary information, not per-compartment counts.
-    refs.population = appendValueRow(panelEl, 'Population', 'population');
+    const figures = document.createElement('div');
+    figures.className = 'stat-group stat-figures';
+    panelEl.appendChild(figures);
+    refs.population = appendValueRow(figures, 'Population', 'population');
     refs.population.textContent = '0';
-    refs.hospital   = appendValueRow(panelEl, 'Hospital',    'hospital');
-    refs.hospital.textContent = '0';
-    refs.quarantine = appendValueRow(panelEl, 'Quarantine',  'quarantine');
-    refs.quarantine.textContent = '0';
-    refs.reff       = appendValueRow(panelEl, 'Observed Re',  'reff');
+    refs.reff       = appendValueRow(figures, 'Observed Re',  'reff');
     refs.reff.textContent = '—';
-    refs.meanAge    = appendValueRow(panelEl, 'Mean age',    'mean-age');
+    refs.hospital   = appendValueRow(figures, 'In hospital', 'hospital');
+    refs.hospital.textContent = '0';
+    refs.quarantine = appendValueRow(figures, 'In quarantine', 'quarantine');
+    refs.quarantine.textContent = '0';
+    refs.meanAge    = appendValueRow(figures, 'Mean age, days', 'mean-age');
     refs.meanAge.textContent = '0';
-    refs.meanHealth = appendValueRow(panelEl, 'Mean health', 'mean-health');
+    refs.meanHealth = appendValueRow(figures, 'Mean health', 'mean-health');
     refs.meanHealth.textContent = '1.00';
 
-    // Animal-reservoir census — Phase 17. The reservoir has its own
-    // demography now (births / aging / death), so it earns a compartment-
-    // style readout. Its own group, headed and visually separated from the
-    // human compartments above.
+    // The animal reservoir, listed only while it has animals: its own
+    // demography and SIR cycle, so a compartment-style readout of its own.
     const animalGroup = document.createElement('div');
     animalGroup.className = 'stat-group stat-animal-group';
     animalGroup.dataset.role = 'animal-list';
+    animalGroup.hidden = true;
+    refs.animalBlock = animalGroup;
 
-    const animalHeading = document.createElement('div');
-    animalHeading.className = 'stat-subhead';
-    animalHeading.textContent = 'Animal reservoir';
+    const animalHeading = document.createElement('h2');
+    animalHeading.className = 'margin-head';
+    animalHeading.textContent = 'Reservoir';
     animalGroup.appendChild(animalHeading);
 
     refs.animalRows = Object.create(null);
@@ -431,12 +443,11 @@ function buildPanelSkeleton(panelEl) {
         refs.animalRows[key] = row;
         refs.animalValues[key] = value;
     }
-    panelEl.appendChild(animalGroup);
-
-    refs.animalTotal   = appendValueRow(panelEl, 'Reservoir total', 'animal-total');
+    refs.animalTotal   = appendValueRow(animalGroup, 'Animals', 'animal-total');
     refs.animalTotal.textContent = '0';
-    refs.animalMeanAge = appendValueRow(panelEl, 'Animal mean age', 'animal-mean-age');
+    refs.animalMeanAge = appendValueRow(animalGroup, 'Mean age, days', 'animal-mean-age');
     refs.animalMeanAge.textContent = '0';
+    panelEl.appendChild(animalGroup);
 
     panelEl._statsRefs = refs;
     panelEl.dataset.statsReady = '1';
@@ -467,7 +478,7 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
     const refs = panelEl._statsRefs;
 
     // Population total.
-    const totalStr = '' + (stats.total | 0);
+    const totalStr = NUMBER.format(stats.total | 0);
     if (refs.population.textContent !== totalStr) refs.population.textContent = totalStr;
 
     // Per-compartment counts.
@@ -476,9 +487,9 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
         const count = stats[key] | 0;
         const valueEl = refs.compartments[key];
         const row = refs.rows[key];
-        const text = '' + count;
+        const text = NUMBER.format(count);
         if (valueEl.textContent !== text) valueEl.textContent = text;
-        // Mark zero-count rows so styles.css can dim them.
+        // Mark zero-count rows so styles.css can dim (core) or hide them.
         if (count === 0) {
             if (row.dataset.zero !== 'true') row.dataset.zero = 'true';
         } else if (row.dataset.zero) {
@@ -496,12 +507,12 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
     // Hospital — "N / M" when capacity is known, else just "N".
     const h = stats.statusH | 0;
     const hospText = (typeof capacity === 'number' && Number.isFinite(capacity))
-        ? (h + ' / ' + (capacity | 0))
-        : ('' + h);
+        ? (NUMBER.format(h) + ' of ' + NUMBER.format(capacity | 0))
+        : NUMBER.format(h);
     if (refs.hospital.textContent !== hospText) refs.hospital.textContent = hospText;
 
     // Quarantine — count only.
-    const quarText = '' + (stats.statusQ | 0);
+    const quarText = NUMBER.format(stats.statusQ | 0);
     if (refs.quarantine.textContent !== quarText) refs.quarantine.textContent = quarText;
 
     // Observed Re.
@@ -510,7 +521,7 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
 
     // Mean age — integer ticks. Bare integer; unit is implicit from the sim clock.
     const a = Number.isFinite(stats.meanAge) ? (stats.meanAge | 0) : 0;
-    const ageText = '' + a;
+    const ageText = NUMBER.format(a);
     if (refs.meanAge.textContent !== ageText) refs.meanAge.textContent = ageText;
 
     // Mean health — 2-decimal float, clamped to [0, 1].
@@ -530,7 +541,7 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
             const valueEl = refs.animalValues[key];
             const row = refs.animalRows[key];
             if (!valueEl || !row) continue;
-            const text = '' + count;
+            const text = NUMBER.format(count);
             if (valueEl.textContent !== text) valueEl.textContent = text;
             if (count === 0) {
                 if (row.dataset.zero !== 'true') row.dataset.zero = 'true';
@@ -538,10 +549,13 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
                 delete row.dataset.zero;
             }
         }
-        const atotText = '' + (stats.animalTotal | 0);
+        const atotText = NUMBER.format(stats.animalTotal | 0);
         if (refs.animalTotal.textContent !== atotText) refs.animalTotal.textContent = atotText;
+        // the reservoir is listed only while it has animals
+        const none = !(stats.animalTotal > 0);
+        if (refs.animalBlock.hidden !== none) refs.animalBlock.hidden = none;
         const aAge = Number.isFinite(stats.animalMeanAge) ? (stats.animalMeanAge | 0) : 0;
-        const aAgeText = '' + aAge;
+        const aAgeText = NUMBER.format(aAge);
         if (refs.animalMeanAge.textContent !== aAgeText) refs.animalMeanAge.textContent = aAgeText;
     }
 }

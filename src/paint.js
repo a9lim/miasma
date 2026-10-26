@@ -576,22 +576,15 @@ export function createPaintController(opts) {
         PaintMode.SANITIZE,   // 5
         PaintMode.CULL        // 6
     ];
+    // The rail's buttons follow a mode or size set from the keyboard.
     function syncModeButtons() {
-        const grid = document.getElementById('paint-mode-grid');
-        if (!grid) return;
-        grid.querySelectorAll('.paint-mode-btn').forEach((b) => {
-            const on = (b.dataset.paint === mode);
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        document.querySelectorAll('#brush-rail .brush-btn').forEach((b) => {
+            b.setAttribute('aria-checked', String(b.dataset.paint === mode));
         });
     }
     function syncBrushButtons() {
-        const group = document.getElementById('brush-size-group');
-        if (!group) return;
-        group.querySelectorAll('.mode-btn').forEach((b) => {
-            const on = (b.dataset.brush === String(brushSize));
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        document.querySelectorAll('#brush-rail .size-btn').forEach((b) => {
+            b.setAttribute('aria-checked', String(b.dataset.brush === String(brushSize)));
         });
     }
 
@@ -656,168 +649,147 @@ export function createPaintController(opts) {
 export { pixelToAxial, hexToPixel };
 
 
-// ─── Interventions tab UI ──────────────────────────────────────────────────
-// Idempotent builder for #tab-interventions. Same pattern as toggles.js and
-// params.js: wipe panel content node-by-node, build via createElement, no
-// innerHTML. The paint controller is passed in so this module can wire mode
-// buttons + brush slider + undo button without re-exporting state.
-//
-// Layout:
-//   [Section header] Paint mode
-//   [Row] Mode buttons: None / Seed / Vaccinate / Quarantine / Sanitize / Cull
-//   [Row] Brush size slider (0/1/2 → 1/7/19 hex)
-//   [Row] Undo button + cell-count readout
+// ─── The brush rail ─────────────────────────────────────────────────────────
+// On the plate's left edge: the six brushes, each swatch the mark the brush
+// leaves (or the ink of its footprint), then the footprint's size drawn as
+// the 1, 7 and 19 hexes it covers, then undo and redo (index.html). No
+// innerHTML: swatches are SVG built by createElementNS.
 
-const MODE_SPECS = [
-    { key: PaintMode.NONE,       label: 'None',       hint: 'Pointer does nothing' },
-    { key: PaintMode.SEED,       label: 'Seed',       hint: 'Click to infect cells with strain α' },
-    { key: PaintMode.VACCINATE,  label: 'Vaccinate',  hint: 'Convert S/E/R/M cells to V' },
-    { key: PaintMode.QUARANTINE, label: 'Quarantine', hint: 'Apply Q status overlay (reduces transmission both ways)' },
-    { key: PaintMode.SANITIZE,   label: 'Sanitize',   hint: 'Cure I/E → R, clear flags, dispose corpses' },
-    { key: PaintMode.CULL,       label: 'Cull',       hint: 'Force-kill cells (S/E/I/R/V/M/Z → D)' }
+const BRUSHES = [
+    { key: PaintMode.NONE,       label: 'Look',       hint: 'No brush: the pointer only looks (1)' },
+    { key: PaintMode.SEED,       label: 'Seed',       hint: 'Infect cells with strain α (2)' },
+    { key: PaintMode.VACCINATE,  label: 'Vaccinate',  hint: 'S, E, R and M cells become vaccinated (3)' },
+    { key: PaintMode.QUARANTINE, label: 'Quarantine', hint: 'Cordon cells: less transmission both ways (4)' },
+    { key: PaintMode.SANITIZE,   label: 'Sanitize',   hint: 'Cure E and I, clear flags, dispose of corpses (5)' },
+    { key: PaintMode.CULL,       label: 'Cull',       hint: 'Kill the cells under the brush (6)' }
+];
+const SIZES = [
+    { value: 0, label: '1 cell' },
+    { value: 1, label: '7 cells' },
+    { value: 2, label: '19 cells' }
 ];
 
-// Brush footprint counts at radius 0/1/2 — mirrors gerry's "1/3/7" pattern
-// but with the hex-radius cell counts (1, 7, 19). Displayed as a three-
-// button mode-group; clicking a button calls setBrushSize directly.
-const BRUSH_SIZE_OPTIONS = [
-    { value: 0, label: '1',  hint: 'Single cell (1 hex)' },
-    { value: 1, label: '7',  hint: 'Small brush (7 hexes)' },
-    { value: 2, label: '19', hint: 'Wide brush (19 hexes)' }
-];
-
-function buildSectionHeader(text) {
-    const hdr = document.createElement('div');
-    hdr.className = 'toggles-section-header';
-    hdr.textContent = text;
-    return hdr;
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(name, attrs, parent) {
+    const e = document.createElementNS(SVGNS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
 }
-
-function buildModeRow(controller, onChange) {
-    // 3×2 grid of buttons. bindModeGroup assumes single-row flexbox with an
-    // absolute-positioned sliding indicator, which breaks when buttons wrap.
-    // We use a plain CSS grid with a per-button .active class instead.
-    const group = document.createElement('div');
-    group.id = 'paint-mode-grid';
-    group.className = 'paint-mode-grid';
-    group.setAttribute('role', 'tablist');
-    group.setAttribute('aria-label', 'Paint mode');
-
-    const initial = controller.getMode();
-    const buttons = [];
-    for (const spec of MODE_SPECS) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'paint-mode-btn' + (spec.key === initial ? ' active' : '');
-        btn.dataset.paint = spec.key;
-        btn.setAttribute('role', 'tab');
-        btn.setAttribute('aria-selected', spec.key === initial ? 'true' : 'false');
-        btn.setAttribute('title', spec.hint);
-        btn.id = `mode-${spec.key}`;
-        btn.textContent = spec.label;
-        group.appendChild(btn);
-        buttons.push(btn);
+// Pointy-top hexagon path of circumradius r at (x, y), like the plate's cells.
+function hexD(x, y, r) {
+    let d = '';
+    for (let k = 0; k < 6; k++) {
+        const a = Math.PI / 6 + k * Math.PI / 3;
+        d += (k ? 'L' : 'M') + (x + r * Math.cos(a)).toFixed(2) + ' ' + (y + r * Math.sin(a)).toFixed(2);
     }
-
-    group.addEventListener('click', (e) => {
-        const btn = e.target.closest('.paint-mode-btn');
-        if (!btn) return;
-        for (const b of buttons) {
-            const on = (b === btn);
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-selected', on ? 'true' : 'false');
-        }
-        controller.setMode(btn.dataset.paint);
-        if (onChange) onChange('mode', btn.dataset.paint);
-    });
-
-    return group;
+    return d + 'Z';
 }
 
-function buildBrushRow(controller, onChange) {
-    // Segmented control with three buttons (1 / 7 / 19) replacing the old
-    // slider. The mode-toggles styling gives us the sliding accent indicator
-    // for free, and matches the topology / viewmode / animal-display rows.
-    const row = document.createElement('div');
-    row.className = 'settings-dd-row animal-display-row';
-    row.dataset.role = 'brush';
-
-    const lbl = document.createElement('span');
-    lbl.className = 'toggle-label';
-    lbl.textContent = 'Brush size';
-    row.appendChild(lbl);
-
-    const group = document.createElement('div');
-    group.id = 'brush-size-group';
-    group.className = 'mode-toggles inline-mode-toggles';
-    group.setAttribute('role', 'tablist');
-    group.setAttribute('aria-label', 'Brush size');
-
-    const initial = controller.getBrushSize();
-    const buttons = [];
-    for (const opt of BRUSH_SIZE_OPTIONS) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'mode-btn' + (opt.value === initial ? ' active' : '');
-        btn.dataset.brush = String(opt.value);
-        btn.setAttribute('role', 'tab');
-        btn.setAttribute('aria-selected', opt.value === initial ? 'true' : 'false');
-        btn.title = opt.hint;
-        btn.textContent = opt.label;
-        group.appendChild(btn);
-        buttons.push(btn);
+/** The swatch for a brush: the mark it leaves on the plate. */
+function brushSwatch(key) {
+    const svg = svgEl('svg', { viewBox: '-8 -8 16 16', 'aria-hidden': 'true', class: 'brush-mark brush-mark-' + key });
+    const clip = 'bclip-' + key;
+    switch (key) {
+        case PaintMode.NONE:
+            svgEl('path', { d: 'M-3.6 -6 L-3.6 4.6 L-0.9 2.1 L1.2 6.4 L3 5.6 L0.9 1.4 L4.5 1.2 Z', class: 'mk-line' }, svg);
+            break;
+        case PaintMode.SEED:
+            svgEl('path', { d: hexD(0, 0, 7), class: 'mk-seed' }, svg);
+            break;
+        case PaintMode.VACCINATE: {
+            const cp = svgEl('clipPath', { id: clip }, svg);
+            svgEl('path', { d: hexD(0, 0, 7) }, cp);
+            const g = svgEl('g', { 'clip-path': `url(#${clip})`, class: 'mk-vax' }, svg);
+            for (let o = -12; o <= 12; o += 3) svgEl('line', { x1: o - 8, y1: -8, x2: o + 8, y2: 8 }, g);
+            break;
+        }
+        case PaintMode.QUARANTINE:
+            svgEl('path', { d: hexD(0, 0, 6.2), class: 'mk-cordon' }, svg);
+            break;
+        case PaintMode.SANITIZE: {
+            const cp = svgEl('clipPath', { id: clip }, svg);
+            svgEl('path', { d: hexD(0, 0, 7) }, cp);
+            const g = svgEl('g', { 'clip-path': `url(#${clip})`, class: 'mk-sanitize' }, svg);
+            for (const [x, y] of [[-3, -3], [2, -4.5], [0, 1], [-4.2, 2.6], [4, 0.6], [1.6, -1], [-1, 4.6], [4.4, -3.4], [3, 4], [-2.4, -0.4]]) {
+                svgEl('circle', { cx: x, cy: y, r: 0.75 }, g);
+            }
+            break;
+        }
+        case PaintMode.CULL:
+            svgEl('path', { d: 'M-4 -4 L4 4 M4 -4 L-4 4', class: 'mk-cross' }, svg);
+            break;
     }
-    group.addEventListener('click', (e) => {
-        const btn = e.target.closest('.mode-btn');
-        if (!btn) return;
-        const v = parseInt(btn.dataset.brush, 10);
-        if (Number.isNaN(v)) return;
-        for (const b of buttons) {
-            const on = (b === btn);
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-selected', on ? 'true' : 'false');
-        }
-        controller.setBrushSize(v);
-        if (onChange) onChange('brush', v);
-    });
-
-    row.appendChild(group);
-    return row;
+    return svg;
 }
 
-function buildHint(text) {
-    const row = document.createElement('div');
-    row.className = 'settings-dd-row';
-    row.dataset.role = 'hint';
-
-    const span = document.createElement('span');
-    span.className = 'panel-hint';
-    span.textContent = text;
-    row.appendChild(span);
-    return row;
+/** The footprint of a brush size: 1, 7 or 19 hexes. */
+function sizeGlyph(size) {
+    const svg = svgEl('svg', { viewBox: '-10 -10 20 20', 'aria-hidden': 'true', class: 'size-mark' });
+    const r = size === 0 ? 3.2 : size === 1 ? 2.9 : 2;
+    const w = Math.sqrt(3) * r;
+    let d = '';
+    for (let dq = -size; dq <= size; dq++) {
+        for (let dr = -size; dr <= size; dr++) {
+            if (Math.abs(dq + dr) > size) continue;
+            d += hexD(w * (dq + dr / 2), 1.5 * r * dr, r * 0.92);
+        }
+    }
+    svgEl('path', { d }, svg);
+    return svg;
 }
 
 /**
- * Build the Interventions tab panel.
- * @param {HTMLElement} panelEl — usually #tab-interventions
- * @param {object} controller — return value of createPaintController
- * @param {(key:string, value:*) => void} [onChange]
+ * Build the rail into `railEl` (#brush-rail), before its history row.
+ * onChange(kind, value) is called with ('mode', key) or ('brush', size).
  */
-export function buildInterventionsPanel(panelEl, controller, onChange) {
-    if (!panelEl || !controller) return;
-    while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
-
-    panelEl.appendChild(buildSectionHeader('Paint mode'));
-    panelEl.appendChild(buildModeRow(controller, onChange));
-    panelEl.appendChild(buildHint(
-        'Click or drag on the plate, or on the faded copies beyond a glued edge. ' +
-        'Seed places strain α infections; Vaccinate, Quarantine, ' +
-        'Sanitize, and Cull act on the cells under the brush. ' +
-        'Undo and redo sit in the run row above, until the next day.'
-    ));
-
-    panelEl.appendChild(buildSectionHeader('Brush'));
-    panelEl.appendChild(buildBrushRow(controller, onChange));
-
-    panelEl.dataset.interventionsReady = '1';
+export function buildBrushRail(railEl, controller, onChange) {
+    if (!railEl || !controller) return;
+    const history = railEl.querySelector('.rail-history');
+    const modes = document.createElement('div');
+    modes.className = 'rail-brushes';
+    modes.setAttribute('role', 'radiogroup');
+    modes.setAttribute('aria-label', 'Brush');
+    for (const spec of BRUSHES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'brush-btn';
+        b.dataset.paint = spec.key;
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(spec.key === controller.getMode()));
+        b.title = spec.hint;
+        const name = document.createElement('span');
+        name.className = 'brush-name';
+        name.textContent = spec.label;
+        b.append(brushSwatch(spec.key), name);
+        b.addEventListener('click', () => {
+            controller.setMode(spec.key);
+            modes.querySelectorAll('.brush-btn').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+            if (onChange) onChange('mode', spec.key);
+        });
+        modes.appendChild(b);
+    }
+    const sizes = document.createElement('div');
+    sizes.className = 'rail-sizes';
+    sizes.setAttribute('role', 'radiogroup');
+    sizes.setAttribute('aria-label', 'Brush size');
+    for (const opt of SIZES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'size-btn';
+        b.dataset.brush = String(opt.value);
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(opt.value === controller.getBrushSize()));
+        b.setAttribute('aria-label', 'Brush of ' + opt.label);
+        b.title = 'Brush of ' + opt.label + ' ([ and ])';
+        b.appendChild(sizeGlyph(opt.value));
+        b.addEventListener('click', () => {
+            controller.setBrushSize(opt.value);
+            sizes.querySelectorAll('.size-btn').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+            if (onChange) onChange('brush', opt.value);
+        });
+        sizes.appendChild(b);
+    }
+    railEl.insertBefore(modes, history);
+    railEl.insertBefore(sizes, history);
 }

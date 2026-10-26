@@ -6,14 +6,14 @@ import { SURFACES } from './topology.js';
 import { strainStyle } from './strain-style.js';
 import { HISTOLOGY_ROWS } from './histology.js';
 import { ISO_STEP } from './isochrones.js';
-import { getPreset } from './presets.js';
+import { getPreset, criticalBeta, meanFieldHerd } from './presets.js';
 import { agDist } from './immunity.js';
 
 const NUMBER = new Intl.NumberFormat('en-US');
 const fmt = (n) => NUMBER.format(Math.round(n));
 
 // One sentence per surface on what its edges do.
-const SURFACE_NOTE = {
+export const SURFACE_NOTE = {
     plane: 'On the plane every edge is a shore, so the wave stops where the world ends.',
     torus: 'On the torus every pair of edges is glued straight, so a wave that leaves one edge comes back from its partner.',
     klein: 'On the Klein bottle the one- and two-chevron pairs are glued with a twist, so their copies are mirrored; the circled corners are cone points.',
@@ -22,22 +22,7 @@ const SURFACE_NOTE = {
 
 const BRUSH_CELLS = [1, 7, 19];
 
-// Bond percolation threshold of the triangular lattice, the hex cells'
-// adjacency graph.
-const P_C = 2 * Math.sin(Math.PI / 18);
 const pct = (x) => `${Math.round(100 * x)}%`;
-
-/** Chance an infectious cell infects a given neighbour before leaving I (geometric stay). */
-export function edgeT(beta, exit) {
-    return 1 - exit * (1 - beta) / (1 - (1 - exit) * (1 - beta));
-}
-
-/** β at which edgeT reaches the percolation threshold, for exit rate `exit`. */
-export function criticalBeta(exit) {
-    let lo = 0, hi = 1;
-    for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (edgeT(m, exit) < P_C) lo = m; else hi = m; }
-    return lo;
-}
 
 /**
  * The running preset's measured sentence (presets.js `measure`), or ''. ctx:
@@ -53,9 +38,8 @@ export function presetMeasure(sim, s, ctx) {
             return `β ${P.beta.toFixed(3)}, ${(P.beta / bc).toFixed(1)}× the critical β of about ${bc.toFixed(3)}; ${pct(ctx.reached / ctx.active)} of cells reached.`;
         }
         case 'herd': {
-            const r0 = 6 * edgeT(P.beta, P.gamma + P.mu);
             const reached = ctx.unvax0 ? Math.min(1, ctx.reached / ctx.unvax0) : 0;
-            return `Coverage ${pct(P.vax_coverage)}, against a lattice threshold near 50% and ${pct(1 - 1 / r0)} by 1 − 1/R₀; ${pct(reached)} of the unvaccinated reached.`;
+            return `Coverage ${pct(P.vax_coverage)}, against a lattice threshold near 50% and ${pct(meanFieldHerd(P))} by 1 − 1/R₀; ${pct(reached)} of the unvaccinated reached.`;
         }
         case 'drift': {
             const prev = ctx.prevalence(), reg = ctx.strains;

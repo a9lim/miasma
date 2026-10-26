@@ -21,7 +21,7 @@ Preview from the parent root with `node docs/sim-overhaul/serve.mjs <port>` (ser
 seeding, mutation, and recombination); `?mi=plane|torus|klein|rp2` opens on a surface
 (a retired name such as `cylinder` or `mobius` falls back to the default);
 `?view=<view mode>` opens on a view; `?r=<radius>` opens on a world of that radius
-(16–239; Settings offers 59, 89, 119 and 179); `?canvas2d` forces the Canvas fallback.
+(16–239; the Experiments tab offers 59, 89, 119 and 179); `?canvas2d` forces the Canvas fallback.
 `docs/sim-overhaul/check.mjs` screenshots the page headless and reports console errors,
 overflow and frame rate.
 
@@ -46,9 +46,9 @@ comm -3 \
   <(rg -No 'id="([^"]+)"' index.html --replace '$1' | sort -u)
 ```
 
-The clean output is four lines: `brush-size-group` and `paint-mode-grid` (built by
-`paint.js`) on the JS side, `canvas-controls` and `sim-container` (CSS hooks) on the
-HTML side. Anything else is a broken lookup.
+The clean output is two lines, both on the HTML side: `sim-container` (a CSS hook) and
+`tab-experiments` (found by `shared/tabs.js` from its button's `data-tab`). Anything
+else is a broken lookup.
 
 The dynamics modules import cleanly in Node for headless runs (`Grid` →
 `initializeGrid` → `createRegistry(params)` → `tick`), but `strains.js` and `prng.js` call
@@ -66,7 +66,7 @@ preset is screenshotted without editing `presets.js`.
 ## Layout
 
 ```
-index.html               page shell, SEO/JSON-LD, edu content, colophon, plate figure, margin
+index.html               page shell, SEO/JSON-LD, edu content, colophon, plate figure and its tools, margin
 main.js                  init, opening scene, rAF loop, DOM cache, reset/preset wiring, zoom/pan, shortcuts
 colors.js                --epi-* compartment colors (the accent and inks) over the shared palette
 styles.css               layout, hairline controls, census swatches drawn as the plate's marks
@@ -84,10 +84,11 @@ src/strains.js           registry (genome, antigen, lineage, generation), mutati
 src/strain-extinction.js periodic sweep: tombstone, reclaim dead branches, splice under pressure
 src/strain-style.js      a strain's mark from its antigen: hatch angle × OKLCH hue
 src/antigenic-map.js     Fig. 3, the antigenic map (Strains tab)
-src/presets.js           six experiment presets, applyPreset, the experiment strip
-src/params.js            Advanced-parameters sliders (sim-wide) and STRAIN_GENOME_LAYOUT
-src/toggles.js           compartment, flag, and automatic-response toggles; animal-display group
-src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), Paint tab
+src/presets.js           six experiment presets, applyPreset, the theory their knobs are ticked with, the list of plates, the knob
+src/params.js            the params object, STRAIN_GENOME_LAYOUT, the slider row (Model tab, genome editor)
+src/model.js             the Model tab: Fig. 5, the compartment diagram, and each part's switches and sliders
+src/toggles.js           the toggles object and the switch row
+src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), the brush rail
 src/camera.js            zoom/pan over the fitted plate
 src/isochrones.js        latest-wave arrival day per cell, smoothed, contoured and faded on the lattice
 src/isochrones-worker.js the isochrone build off the main thread
@@ -101,7 +102,7 @@ src/stats.js             census and observed Re (Counts tab)
 src/lineage.js           strain prevalence, Strains tab (figures, rows, vaccine match), phylogeny, genome editor
 src/history.js           per-tick ring buffer: transitions, spillovers, the Z census
 src/prng.js              ?seed= RNG; rare per-cell rolls by skipping
-src/ui.js                surface picker (glyphs), map view, Settings assembly, about panel
+src/ui.js                wires the controls: view picker, surface glyphs, world, plates, knob, Model, rail, about
 src/topology.test.mjs    topology tests
 src/immunity.test.mjs    immunity, registry and sweep tests
 tools/presets-survey.mjs the six presets at their default knobs across seeds
@@ -123,7 +124,7 @@ Storage is a (2R + 2)-square axial rhombus of hexes (pointy-top on screen: `x = 
 compartment counts over it always sum to `grid.activeCount`. `topology.hexBounds`
 recomputes the same center and radius independently, so the two formulas must agree.
 R is 89 by default (180×180 storage, 24,031 cells, `DEFAULTS.R`; 59 and 10,621 cells
-until 2026-10-25); Settings → World offers `WORLD_RADII` (59, 89, 119, 179: 10,621 to
+until 2026-10-25); the Experiments tab's World row offers `WORLD_RADII` (59, 89, 119, 179: 10,621 to
 96,661 cells) and `?r=` any radius in `WORLD_R_RANGE`. Everything sized by the world
 reads `hexBounds`; the opening's seeds (`OPENING_SEEDS`) are offsets on the default
 world and scale by R / `DEFAULTS.R` (on the 59 world they round to the old (30, −42) and
@@ -181,8 +182,8 @@ rates, the Z rates, health impact, and animal β/γ/μ) live in registry arrays,
 tick reads them off a cell's slot-0 strain through the `*Of(i)` resolvers, falling back
 to `params` only when there is no strain. `createRegistry(params)` copies the current
 params into strain α on every reset and preset apply, so changing a genome field in
-`params` mid-run does nothing; the experiment strip's knob writes it onto every strain
-(main.js `onKnob`). `z_exhaust_threshold` stays sim-wide because it is an integer
+`params` alone does nothing mid-run; the knob and the Model tab write it onto every
+strain (main.js `setGenome`). `z_exhaust_threshold` stays sim-wide because it is an integer
 count. `season_amp` scales every human-to-human β by `1 + A·cos(2πt/365)`.
 
 ### Transmission and transitions
@@ -383,8 +384,9 @@ dipping there, so no strain reads as the disease. Age, health and immunity are
 single-ink ramps in eight steps; the immunity view shades each cell's protection
 against the strain selected in the Strains tab (else the dominant one; main.js
 `immunityTarget`). The status view mutes all but H and Q. Animals are small triangles
-off the cell center. The Immunoediting preset (`sim.presetKey`) draws the lattice as an
-H&E section (`histology.js`).
+off the cell center. The Immunoediting preset (`sim.presetKey`) reads the lattice as
+tissue: its State view is an H&E section (`histology.js`, main.js `histology()`), its
+other views draw as everywhere, and its scale bar is in µm whatever the view (`tissue()`).
 
 Isochrones: `isochrones.js` stamps each cell with the tick it last became E, I or Z. A
 cell that was not E/I/Z at the previous `record` and is now is stamped if it never was or
@@ -422,7 +424,8 @@ draws the marks procedurally in the world's frame, so hatching runs on unbroken 
 mirrored on a mirrored copy), then on the 2D canvas above it the edges (thin rule with
 one, two or three chevrons per glued pair, agreeing for a translation and opposed for a
 twist; a heavy rule with hachures for a shore), cone-point circles with their angles, the
-title (top right; one plate numeral per view), the Reference cartouche (bottom left;
+title (top right; the experiment's plate numeral and name, the surface and the view, from
+`plateTitle`; the sandbox has no numeral), the Reference cartouche (bottom left;
 rows from `caption.js`), the scale bar (cells; µm on the slide) and the isochrone labels
 (every 24 days, only while the level's fade is at least 0.5 and on lines at least 6 cells
 long, so a spillover-driven run's small loops carry no number; the text is drawn at the
@@ -446,31 +449,60 @@ handler marks the tile, rose, strain and census panels dirty.
 
 ### UI
 
-The colophon (`shared/colophon.js`) holds play, step, theme and help; the figure
-caption under the plate is live (`caption.js`, through `_colophon.caption`, throttled,
-and forced when the loop goes idle). The plate fills the left; the margin on the right
-(under the plate below 760 px) holds the surface picker, whose glyphs are each
-surface's fundamental polygon drawn from `SURFACES` and `cornerCones`, the run row
-(speed, reset, undo, redo, map view, hide), the experiment strip (`presets.js`
-`buildExperimentStrip`: the preset picker, which applies on choice, with Sandbox for the
-defaults; the preset's one knob; its line of description), and four tabs: Counts
-(Nightingale's rose, census, observed Re, reservoir census), Strains (Fig. 3 the
-antigenic map with "Match the vaccine to …", Fig. 4 the phylogeny, top strains, genome
-editor), Paint, and Settings (map view, toggles, advanced parameters). The zoom cluster
-sits at the plate's top left. `ui.js` assembles the strip and Settings (map view, World, toggles, advanced
-parameters) and returns `{ resetUI, showAbout, showPreset }`. World sets the radius:
-a new size rebuilds the world with the params and toggles as they are, gives the
-coverage, and seeds the opening's two cases (main.js `setWorld`).
+What acts on the plate sits on it; the margin holds the atlas's apparatus.
+
+- **Over the plate** (`.plate-head`): the view picker (State, Strain, Age, Health,
+  Status, Immunity; `M` cycles it) and the run tools: speed, Restart, and Controls,
+  which shows the margin again once it is hidden. The colophon (`shared/colophon.js`)
+  holds play, step, theme and help.
+- **On the plate**: the brush rail down the left edge (`paint.js` `buildBrushRail`):
+  Look and the five brushes, each swatch the mark the brush leaves, the three footprint
+  sizes drawn as the 1, 7 and 19 hexes they cover, and undo and redo. The zoom sits
+  beside the scale bar it changes. Labels avoid the rail, the zoom and the view picker
+  (main.js `overlayRects`, passed to the plate as `avoid`), and the world is fitted
+  clear of the rail (`--plate-left`, `computeViewport`).
+- **Under the plate** (`.figure-bar`): the live figure caption (`caption.js`, through
+  `_colophon.caption`, throttled, and forced when the loop goes idle) and beside it the
+  experiment's one knob (`presets.js` `buildKnob`), a ruler ticked where theory puts its
+  threshold (critical β, the lattice and mean-field herd thresholds, 1 AU) or, for the
+  Z presets, the regimes the survey found (each preset's `marks`). The knob is hidden in
+  the sandbox.
+- **The margin** (under the plate below 760 px), four tabs: **Experiments** (the
+  default): the list of plates (`buildExperimentList`: the six experiments by plate
+  numeral, then the Sandbox; choosing one applies it, and a changed model shows
+  "Changed in the Model tab. Restore"), the surface picker (each surface's fundamental
+  polygon drawn from `SURFACES` and `cornerCones`, and a line on what its edges do) and
+  the World row. **Counts**: Nightingale's rose, the census (S, E, I, R and D always,
+  the rest only while they have cells), the figures (population, observed Re, beds,
+  quarantine, mean age and health) and the reservoir while it has animals. **Strains**:
+  Fig. 3 the antigenic map with "Match the vaccine to …", Fig. 4 the phylogeny, top
+  strains, genome editor. **Model** (`model.js`): Fig. 5, the model as a compartment
+  diagram. The chain S → E → I → R runs down the left, V, Z and D beside it, births,
+  the reservoir and cleared cells round the edges; each node is a chip with the plate's
+  mark and its count, each arrow's weight its flux (main.js `flux`, ten-day smoothing of
+  the tick's counters, `FLUX_KEYS`), the core rates are written on their arrows, and a
+  part that is switched off or at rate zero fades. Choosing a node, an arrow, or one of
+  the topics under the figure (Hospital and quarantine, Evolution) shows that part's
+  switches and sliders (`PARTS`); a row with `needs` dims while its switch is off.
+
+`ui.js` wires all of it and returns `{ model, resetUI, showAbout, showPreset }`. World
+sets the radius: a new size rebuilds the world with the params and toggles as they are,
+gives the coverage, and seeds the opening's two cases (main.js `setWorld`).
 
 The page opens on a living frame: `openScene` applies `OPENING_PRESET` (Threshold on
 the torus, or the `?mi=` surface), seeds two cases (one near a glued edge), warms up for
 the preset's `warmup` (300 days, when the wave has reached about 30% of the default
 world and crossed a glued edge), and plays; under reduced motion it warms up 120 days
-longer and stays paused. Applying a preset (`applyScene`) rebuilds the world, gives
-`vax_coverage`, and seeds the same two cases, so the plate is never empty. Reset
-restarts the running experiment with its knob where it is; in the Sandbox it restores
-every default. A knob on a genome field writes that rate onto every strain live; a knob
-marked `reset` (coverage) re-applies the preset.
+longer and stays paused. Applying a preset (`applyScene`) puts its params, toggles and
+surface in place, rebuilds the world, gives `vax_coverage`, and seeds the same two
+cases, so the plate is never empty. **Restart** (`restart`) runs the model as it stands
+(the experiment, its knob and whatever the Model tab changed) again on a fresh world;
+**Restore** (Model tab, or the note in the list) re-applies the experiment's own values,
+or the defaults in the sandbox (`modelChanged` decides whether the note shows; it leaves
+out the knob and the vaccine's antigen). A knob on a genome field writes that rate onto
+every strain live; a knob marked `reset` (coverage) restarts with its value. A Model
+row for a value given at the start (coverage, the reservoir's density and seed) takes
+effect on the next Restart.
 
 The figure caption carries the running preset's measured sentence (`caption.js`
 `presetMeasure`, from `measureCtx()` in main.js) in place of the surface note.
@@ -504,7 +536,11 @@ Strains and rose panels redraw at most every `PANEL_MS` and the caption and the
 cartouche's rows every `CAPTION_MS` (250 ms); paused, everything catches up at once.
 
 `camera.getEffectiveViewport()` returns one shared object, mutated on every call; its
-`frame` (the canvas below the colophon band) is measured on resize. The paint
+`frame` (the canvas below `--plate-top`, above `--plate-bottom`, with the rail's
+`--plate-left`, all read off `.plate-stage`) is measured on resize. A plate narrower
+than 860 px (a container query) moves the view picker under the run tools and deepens
+`--plate-top`; on phones the rail runs along the plate's foot (`--plate-bottom`) and
+the view picker gets a row of its own. The paint
 controller hit-tests through `pickAt`, which the plate answers, so a stroke on a faded
 copy lands on the world cell it shows. Pinch suppresses painting through
 `setSuppressed`, and pan is unclamped (reset recovers).
@@ -544,8 +580,8 @@ false`) so the about panel shows them without a second handler firing.
   mechanic is visible, and Z is off. `applyPreset` resets params and toggles to the
   defaults before merging, so a preset must set every key it needs and turn off what its
   experiment doesn't use (`QUIET_TOGGLES`, `NO_ANIMALS`, `NO_DEMOGRAPHY`, `NO_EVOLUTION`
-  in `presets.js`); it also forces `vax_rollout` off when V is off. The only
-  `_forms.bindDeps` dependency is V → auto-vaccinate rollout (`toggles.js`).
+  in `presets.js`); it also forces `vax_rollout` off when V is off, and so does the
+  Model tab's V switch. Dependencies between controls are the Model rows' `needs`.
 - A preset earns its place as an experiment: one knob, a phenomenon to look for, a
   measured number in the caption, a predicted number where theory gives one, and a
   survey across at least ten seeds before it ships (`docs/ROADMAP.md` §2.3).

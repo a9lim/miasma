@@ -115,12 +115,16 @@ export function computeViewport(canvas, grid, frame) {
     const f = frame || { x: 0, y: 0, w: cssWidth, h: cssHeight };
     const { cq, cr, R } = hexBounds(grid.W, grid.H);
     const narrow = f.w < 600;
-    const apo = Math.max(40, Math.min(f.h * (narrow ? 0.45 : 0.415), f.w * (narrow ? 0.475 : 0.43) * SQRT3 / 2));
+    const padL = f.padL || 0;
+    const apo = Math.max(40, Math.min(f.h * (narrow ? 0.45 : 0.415), (f.w - padL) * (narrow ? 0.475 : 0.43) * SQRT3 / 2));
     const hexSize = apo / (1.5 * (R + 0.5));
     // Shift right into any spare width so the Reference cartouche (bottom
     // left) clears the world's south-west edge.
     const slack = f.w - 2 * apo * 2 / SQRT3;
-    const cx = f.x + f.w / 2 + (narrow ? 0 : Math.max(0, Math.min(80, slack / 2 - 30))), cy = f.y + f.h / 2 + (narrow ? 4 : 10);
+    let cx = f.x + f.w / 2 + (narrow ? 0 : Math.max(0, Math.min(80, slack / 2 - 30)));
+    // and keep the world's west corner clear of the brush rail
+    cx = Math.max(cx, f.x + padL + 2 * apo / SQRT3 + 8);
+    const cy = f.y + f.h / 2 + (narrow ? 4 : 10);
     const [ox, oy] = axialToPx(cq, cr, hexSize);
     return { cssWidth, cssHeight, hexSize, originX: cx - ox, originY: cy - oy, frame: f };
 }

@@ -1,17 +1,23 @@
-// ui.js — the margin's controls.
+// ui.js — wires the controls around the plate and in its margin.
+//
+// On the plate: the view picker and the run tools over it, the brush rail on
+// its left (paint.js), the zoom beside the scale bar (main.js), and under it
+// the experiment's knob beside the caption (presets.js). In the margin:
+// Experiments (the list of plates, the surface, the world), Counts, Strains
+// and Model (model.js).
+//
 // The surface picker draws each surface as a topology textbook draws a
 // fundamental polygon: the world hexagon with chevrons on glued edges
 // (one, two or three per pair; agreeing for a translation, opposed for a
 // twist), hachured shores on open ones and circles at cone points, from the
-// same tables the plate uses. Settings holds presets, the map view, the
-// toggles and the advanced parameters; the transport row's eye jumps there.
+// same tables the plate uses.
 
 import { topoFromString, topoToString, ViewMode, WORLD_RADII, worldCells } from './config.js';
 import { SURFACES, cornerCones } from './topology.js';
-import { buildSettingsPanel, syncSliders } from './params.js';
-import { buildTogglesPanel, syncToggles } from './toggles.js';
-import { buildInterventionsPanel } from './paint.js';
-import { buildExperimentStrip } from './presets.js';
+import { buildBrushRail } from './paint.js';
+import { buildExperimentList, buildKnob, getPreset, modelChanged } from './presets.js';
+import { buildModel } from './model.js';
+import { SURFACE_NOTE } from './caption.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -69,112 +75,107 @@ export function surfaceGlyph(topology) {
 }
 
 /**
- * Wire the margin's controls. `$` is main.js's DOM cache; `sim` is mutated
- * by the callbacks. Returns { resetUI, showAbout }.
+ * A group of role="radio" buttons: clicking one checks it, arrow keys move
+ * the choice. `pick(button)` is called on a change. Returns set(match).
  */
-export function setupUI($, sim, hooks) {
-    hooks = hooks || {};
-
-    // ── Surface picker ──
-    const surfaceBtns = $.topologyToggles ? [...$.topologyToggles.querySelectorAll('.surface-btn')] : [];
-    function syncSurface() {
-        const key = topoToString(sim.topology);
-        surfaceBtns.forEach((b) => {
-            const on = b.dataset.topology === key;
-            b.setAttribute('aria-checked', String(on));
-            b.tabIndex = on ? 0 : -1;
-        });
-    }
-    surfaceBtns.forEach((b, i) => {
-        b.prepend(surfaceGlyph(topoFromString(b.dataset.topology)));
+function radioGroup(btns, pick) {
+    const set = (match) => btns.forEach((b) => {
+        const on = match(b);
+        b.setAttribute('aria-checked', String(on));
+        b.tabIndex = on ? 0 : -1;
+    });
+    btns.forEach((b, i) => {
         b.addEventListener('click', () => {
-            const t = topoFromString(b.dataset.topology);
-            if (t === sim.topology) return;
-            sim.topology = t;
-            syncSurface();
-            if (typeof _haptics !== 'undefined') _haptics.trigger('selection');
-            if (hooks.onTopologyChange) hooks.onTopologyChange(t);
+            if (b.getAttribute('aria-checked') === 'true') return;
+            set((x) => x === b);
+            pick(b);
         });
         b.addEventListener('keydown', (e) => {
             const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
             if (!d) return;
             e.preventDefault();
-            const next = surfaceBtns[(i + d + surfaceBtns.length) % surfaceBtns.length];
+            const next = btns[(i + d + btns.length) % btns.length];
             next.focus();
             next.click();
         });
     });
-    syncSurface();
+    return set;
+}
 
-    // ── Map view ──
-    if ($.viewModeToggles) {
-        window._forms.bindModeGroup($.viewModeToggles, 'viewmode', (val) => {
-            sim.viewMode = val || ViewMode.COMPARTMENT;
-            if (hooks.onViewModeChange) hooks.onViewModeChange(sim.viewMode);
-        });
-    }
+/**
+ * Wire the controls. `$` is main.js's DOM cache; `sim` is mutated by the
+ * callbacks. Returns { resetUI, showAbout, showPreset, model }.
+ */
+export function setupUI($, sim, hooks) {
+    hooks = hooks || {};
+    const haptic = (k) => { if (typeof _haptics !== 'undefined') _haptics.trigger(k); };
 
-    const mapControlsEl = $.mapControls || null;
-
-    // ── The experiment strip: preset, knob, description ──
-    const strip = buildExperimentStrip(document.getElementById('experiment'), {
-        onApply: (key) => { if (hooks.onApplyPreset) hooks.onApplyPreset(key); },
-        onKnob: (key, value, knob) => { if (hooks.onKnob) hooks.onKnob(key, value, knob); }
+    // ── Surface picker (Experiments) ──
+    const surfaceBtns = $.topologyToggles ? [...$.topologyToggles.querySelectorAll('.surface-btn')] : [];
+    surfaceBtns.forEach((b) => b.prepend(surfaceGlyph(topoFromString(b.dataset.topology))));
+    const setSurface = radioGroup(surfaceBtns, (b) => {
+        sim.topology = topoFromString(b.dataset.topology);
+        syncSurfaceNote();
+        haptic('selection');
+        if (hooks.onTopologyChange) hooks.onTopologyChange(sim.topology);
     });
-
-    // ── Settings: presets, map view, toggles, parameters ──
-    let togglesEl = null, paramsEl = null;
-    const panelEl = hooks.settingsPanelEl;
-    if (panelEl) {
-        while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
-        const section = (cls) => { const d = document.createElement('div'); d.className = 'settings-section ' + cls; panelEl.appendChild(d); return d; };
-        if (mapControlsEl) panelEl.appendChild(mapControlsEl);
-        buildWorldPicker(section('settings-world'));
-        togglesEl = section('settings-toggles');
-        paramsEl = section('settings-params');
-        if (hooks.toggles) buildTogglesPanel(togglesEl, hooks.toggles, (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); });
-        if (hooks.params) buildSettingsPanel(paramsEl, hooks.params, hooks.onParamChange);
+    function syncSurfaceNote() {
+        if ($.surfaceNote) $.surfaceNote.textContent = SURFACE_NOTE[topoToString(sim.topology)] || '';
+    }
+    function syncSurface() {
+        const key = topoToString(sim.topology);
+        setSurface((b) => b.dataset.topology === key);
+        syncSurfaceNote();
     }
 
-    // ── World size: cells in the world; a new size starts the run again ──
-    function buildWorldPicker(el) {
-        const head = document.createElement('div');
-        head.className = 'toggles-section-header';
-        head.textContent = 'World';
-        const group = document.createElement('div');
-        group.className = 'mode-toggles inline-mode-toggles';
-        group.setAttribute('role', 'group');
-        group.setAttribute('aria-label', 'World size, in cells');
+    // ── Map view, over the plate ──
+    const viewBtns = $.viewModeToggles ? [...$.viewModeToggles.querySelectorAll('.view-btn')] : [];
+    const setView = radioGroup(viewBtns, (b) => {
+        sim.viewMode = b.dataset.viewmode || ViewMode.COMPARTMENT;
+        haptic('selection');
+        if (hooks.onViewModeChange) hooks.onViewModeChange(sim.viewMode);
+    });
+    const syncView = () => setView((b) => b.dataset.viewmode === (sim.viewMode || ViewMode.COMPARTMENT));
+
+    // ── World size (Experiments): a new size starts the run again ──
+    const worldBtns = [];
+    if ($.worldPicker) {
         for (const R of WORLD_RADII) {
             const b = document.createElement('button');
-            b.className = 'mode-btn' + (R === sim.R ? ' active' : '');
+            b.type = 'button';
+            b.className = 'word-btn';
+            b.setAttribute('role', 'radio');
             b.dataset.world = String(R);
             b.textContent = worldCells(R).toLocaleString('en-US');
             b.title = worldCells(R).toLocaleString('en-US') + ' cells, ' + R + ' from the centre to an edge';
-            group.appendChild(b);
+            $.worldPicker.appendChild(b);
+            worldBtns.push(b);
         }
-        const hint = document.createElement('p');
-        hint.className = 'panel-hint';
-        hint.textContent = 'Cells in the world. A new size starts the run again; zoom in to read a large one.';
-        el.append(head, group, hint);
-        window._forms.bindModeGroup(group, 'world', (val) => {
-            if (hooks.onWorldChange) hooks.onWorldChange(parseInt(val, 10));
-        });
     }
+    const setWorld = radioGroup(worldBtns, (b) => { if (hooks.onWorldChange) hooks.onWorldChange(parseInt(b.dataset.world, 10)); });
+    const syncWorld = () => setWorld((b) => b.dataset.world === String(sim.R));
 
-    // The transport eye opens Settings at the map view.
-    if ($.viewModeBtn) {
-        $.viewModeBtn.addEventListener('click', () => {
-            if ($.atlas && $.atlas.classList.contains('margin-closed') && $.marginOpen) $.marginOpen.click();
-            const tab = $.dashboard ? $.dashboard.querySelector('.tab-btn[data-tab="settings"]') : null;
-            if (tab && !tab.classList.contains('active')) tab.click();
-            if (mapControlsEl) requestAnimationFrame(() => mapControlsEl.scrollIntoView({ block: 'nearest' }));
-        });
-    }
+    // ── The list of plates, and the knob under the plate ──
+    const list = buildExperimentList($.experimentList, {
+        onApply: (key) => { if (hooks.onApplyPreset) hooks.onApplyPreset(key); },
+        onRestore: () => { if (hooks.onRestore) hooks.onRestore(); }
+    });
+    const knob = buildKnob($.knob, {
+        onKnob: (key, value, k) => { if (hooks.onKnob) hooks.onKnob(key, value, k); }
+    });
 
-    if (hooks.interventionsPanelEl && hooks.paintController) {
-        buildInterventionsPanel(hooks.interventionsPanelEl, hooks.paintController, hooks.onPaintChange || null);
-    }
+    // ── Model ──
+    const model = buildModel($.modelPanel, {
+        params: hooks.params, toggles: hooks.toggles,
+        presetLabel: () => { const p = getPreset(sim.presetKey); return p ? p.label : null; },
+        onParam: (key, value, spec) => { if (hooks.onParam) hooks.onParam(key, value, spec); },
+        onToggle: (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); },
+        onDisplay: (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); },
+        onRestore: () => { if (hooks.onRestore) hooks.onRestore(); }
+    });
+
+    // ── Brushes, on the plate ──
+    if ($.brushRail && hooks.paintController) buildBrushRail($.brushRail, hooks.paintController, hooks.onPaintChange || null);
 
     if ($.resetBtn && hooks.onReset) $.resetBtn.addEventListener('click', () => hooks.onReset());
 
@@ -185,43 +186,36 @@ export function setupUI($, sim, hooks) {
             title: 'Miasma',
             description:
                 'A stochastic epidemic on a hexagonal world, drawn as a plate from an epidemiological atlas. ' +
-                'Glue the world\'s edges into a plane, torus, Klein bottle or projective plane, seed cases, ' +
-                'paint interventions, and read the outbreak in its isochrones, Nightingale\'s rose and the phylogeny of its strains.',
+                'Run six experiments, each with one knob and a measured number; glue the world\'s edges into a plane, torus, Klein bottle or projective plane; ' +
+                'paint interventions; and read the outbreak in its isochrones, Nightingale\'s rose, the phylogeny of its strains and the diagram of its model.',
             controls: [
-                { label: 'Seed or paint', value: 'Click or drag on the plate, the faded copies included' },
+                { label: 'Seed or paint', value: 'Choose a brush on the plate\'s left, then click or drag, the faded copies included' },
                 { label: 'Zoom', value: 'Scroll, pinch, or = - 0' },
                 { label: 'Pan', value: 'Two-finger drag' },
                 { label: 'Undo', value: 'Ctrl+Z / Ctrl+Shift+Z, until the next day' }
             ],
             shortcuts: sim._shortcuts || [],
             repo: 'https://github.com/a9lim/a9lim.github.io',
-            lastUpdated: '2026-10-25'
+            lastUpdated: '2026-10-26'
         });
     }
 
     return {
+        model,
         showAbout() { if (about && about.show) about.show(); },
-        // Show the preset the plate is running (null: the sandbox defaults).
+        // Show the experiment the plate is running (null: the sandbox), and
+        // whether its model has been changed.
         showPreset(key) {
-            strip.show(key, hooks.params);
+            list.show(key, modelChanged(key, hooks.params, hooks.toggles));
+            knob.show(key, hooks.params);
         },
-        // Re-sync the controls to the live params, toggles, surface and view
-        // after a reset or a preset.
+        // Re-sync the controls to the live params, toggles, surface, view and
+        // world after a restart or an experiment.
         resetUI() {
-            if (togglesEl && hooks.toggles) syncToggles(togglesEl, hooks.toggles);
-            if (paramsEl && hooks.params) syncSliders(paramsEl, hooks.params);
+            model.sync();
             syncSurface();
-            if ($.viewModeToggles) {
-                let active = null;
-                $.viewModeToggles.querySelectorAll('.mode-btn').forEach((b) => {
-                    const on = b.dataset.viewmode === (sim.viewMode || ViewMode.COMPARTMENT);
-                    b.classList.toggle('active', on);
-                    b.setAttribute('aria-selected', String(on));
-                    if (on) active = b;
-                });
-                const ind = $.viewModeToggles.querySelector('.mode-indicator');
-                if (ind && active) { ind.style.width = active.offsetWidth + 'px'; ind.style.transform = 'translateX(' + (active.offsetLeft - 3) + 'px)'; }
-            }
+            syncView();
+            syncWorld();
         }
     };
 }

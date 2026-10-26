@@ -14,7 +14,7 @@
 // complete plate.
 //
 // Shared globals (from <script> tags in index.html): _colophon, _forms,
-// _dropdown, initShortcuts, initAboutPanel, resizeCanvasDPR, showToast,
+// initShortcuts, initAboutPanel, resizeCanvasDPR, showToast,
 // _haptics, _loadTextFonts, _themePalette, _FONT.
 
 import { Grid } from './src/grid.js';
@@ -33,6 +33,7 @@ import { initTimeseries } from './src/rose.js';
 import { createRegistry, getStrain, GENOME_FIELDS } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
+import { FLUX_KEYS } from './src/model.js';
 import { applyPreset, getPreset } from './src/presets.js';
 import { createCamera, ZOOM_STEP_BTN, ZOOM_STEP_WHEEL } from './src/camera.js';
 import { createTransitionHistory } from './src/history.js';
@@ -46,11 +47,13 @@ function cacheDOM() {
     return {
         canvas: $('sim-canvas'), playBtn: $('play-btn'), stepBtn: $('step-btn'), resetBtn: $('reset-btn'),
         speedBtn: $('speed-btn'), themeBtn: $('theme-btn'), menuBtn: $('menu-btn'), marginOpen: $('margin-open'),
-        aboutBtn: $('about-btn'), topologyToggles: $('topology-toggles'), viewModeToggles: $('viewmode-toggles'),
-        viewModeBtn: $('viewmode-btn'), mapControls: $('map-controls-section'), statsPanel: $('tab-compartments'),
-        settingsPanel: $('tab-settings'), dashboard: $('margin'), atlas: document.querySelector('.atlas'),
+        aboutBtn: $('about-btn'), topologyToggles: $('topology-toggles'), surfaceNote: $('surface-note'),
+        worldPicker: $('world-picker'), viewModeToggles: $('viewmode-toggles'), experimentList: $('experiment-list'),
+        knob: $('knob'), brushRail: $('brush-rail'), zoom: $('canvas-controls'), stage: document.querySelector('.plate-stage'),
+        plateHead: document.querySelector('.plate-head'), statsPanel: $('tab-compartments'), modelPanel: $('tab-model'),
+        dashboard: $('margin'), atlas: document.querySelector('.atlas'),
         timeseriesPanel: $('timeseries-panel'), timeseriesCanvas: $('timeseries-canvas'), roseCaption: $('rose-caption'),
-        strainPanel: $('tab-strains'), interventionsPanel: $('tab-interventions'), caption: $('plate-caption'),
+        strainPanel: $('tab-strains'), caption: $('plate-caption'),
         zoomInBtn: $('zoom-in-btn'), zoomOutBtn: $('zoom-out-btn'), zoomResetBtn: $('zoom-reset-btn'),
         zoomIndicator: $('zoom-indicator'), undoBtn: $('undo-btn'), redoBtn: $('redo-btn')
     };
@@ -107,12 +110,22 @@ export default function init(dom) {
         markTile();
     });
 
-    // The plate frame: the canvas below the colophon band. Measured on resize.
-    let frameCache = null;
+    // The plate frame: the canvas below the band over it (the colophon and
+    // the view picker) and above the phone's brush rail; `padL` is the brush
+    // rail's width, which the world keeps clear of. Measured on resize, with
+    // the rectangles of the controls over the plate, which labels avoid.
+    let frameCache = null, overlayRects = [];
     function plateFrame() {
         const r = canvas.getBoundingClientRect();
-        const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--plate-top')) || 58;
-        frameCache = { x: 0, y: top, w: r.width, h: Math.max(80, r.height - top) };
+        const cs = getComputedStyle($.stage || document.body);
+        const top = parseFloat(cs.getPropertyValue('--plate-top')) || 58;
+        const bottom = parseFloat(cs.getPropertyValue('--plate-bottom')) || 0;
+        const padL = parseFloat(cs.getPropertyValue('--plate-left')) || 0;
+        frameCache = { x: 0, y: top, w: r.width, h: Math.max(80, r.height - top - bottom), padL };
+        overlayRects = [$.brushRail, $.zoom, $.plateHead].filter(Boolean).map((e) => {
+            const b = e.getBoundingClientRect();
+            return b.width ? [b.left - r.left - 6, b.top - r.top - 6, b.right - r.left + 6, b.bottom - r.top + 6] : null;
+        }).filter(Boolean);
         return frameCache;
     }
     const camera = createCamera({
@@ -152,7 +165,8 @@ export default function init(dom) {
     function updateStats() {
         if (!$.statsPanel) return;
         const reff = computeReff(history, params);
-        const capacity = Math.floor((params.h_capacity_frac || 0) * sim.grid.activeIndices.length);
+        // beds exist only while hospitals admit
+        const capacity = toggles.auto_hospital ? Math.floor((params.h_capacity_frac || 0) * sim.grid.activeIndices.length) : undefined;
         renderStatsPanel($.statsPanel, stats(), reff, capacity);
     }
 
@@ -181,11 +195,16 @@ export default function init(dom) {
         requestFrame();
     }
 
+    // Transitions a day along each of the model figure's arrows, smoothed over
+    // about ten days.
+    const flux = Object.fromEntries(FLUX_KEYS.map((k) => [k, 0]));
+
     function tickOnce() {
         if (paintController) paintController.clearUndo();
         const counts = tick(sim.grid, params, toggles, sim.topology, rng, strains, sim.tick + 1);
         sim.tick++;
         lastCounts = counts;
+        for (const k of FLUX_KEYS) flux[k] += 0.1 * ((counts[k] || 0) - flux[k]);
         statsStale = prevStale = true;
         history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, counts.zPop);
         if (ts) ts.push(sim.tick, counts);
@@ -213,7 +232,11 @@ export default function init(dom) {
 
     const setCaption = window._colophon ? window._colophon.caption($.caption, 250) : () => {};
     const setRoseCaption = window._colophon ? window._colophon.caption($.roseCaption, 1000) : () => {};
-    const histology = () => sim.presetKey === 'immunoediting';
+    // The Immunoediting preset reads the lattice as tissue: its scale is in
+    // µm, and its State view is an H&E-stained section (the other views draw
+    // as they do everywhere).
+    const tissue = () => sim.presetKey === 'immunoediting';
+    const histology = () => tissue() && sim.viewMode === ViewMode.COMPARTMENT;
 
     function drawPlate() {
         const vp = getEffectiveViewport();
@@ -234,8 +257,8 @@ export default function init(dom) {
             grid: sim.grid, vp, topology: sim.topology, mode: sim.viewMode,
             dpr: canvas.width / Math.max(1, vp.cssWidth),
             contours: iso.contours, field: iso, histology: histology(),
-            legend,
-            scaleUnit: histology() ? { per: 12, name: 'µm' } : null,
+            legend, avoid: overlayRects, presetKey: sim.presetKey,
+            scaleUnit: tissue() ? { per: 12, name: 'µm' } : null,
             tileOpts: {
                 mode: sim.viewMode,
                 animalDisplay: toggles.animalDisplay || 'dots',
@@ -294,8 +317,8 @@ export default function init(dom) {
         }
         if ((statsDirty || tsDirty || strainsDirty) && (!sim.playing || now - lastPanels >= PANEL_MS)) {
             lastPanels = now;
-            if (statsDirty) { updateStats(); statsDirty = false; }
-            if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(histology())); tsDirty = false; }
+            if (statsDirty) { updateStats(); if (ui) ui.model.update(stats(), flux); statsDirty = false; }
+            if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(tissue())); tsDirty = false; }
             if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         }
         if (renderDirty) { drawPlate(); renderDirty = false; }
@@ -303,7 +326,7 @@ export default function init(dom) {
             // the caption is throttled; going idle, write the latest one for sure
             if (captionStale) { lastCaption = captionText(getEffectiveViewport()); captionStale = false; }
             setCaption(lastCaption, true);
-            if (ts) setRoseCaption(ts.caption(histology()), true);
+            if (ts) setRoseCaption(ts.caption(tissue()), true);
             running = false; rafId = null; return;
         }
         rafId = requestAnimationFrame(frame);
@@ -332,6 +355,7 @@ export default function init(dom) {
         iso.clear();
         accumulator = 0;
         if (ts) ts.clear();
+        for (const k of FLUX_KEYS) flux[k] = 0;
         strains = createRegistry(params);
         sim.selectedStrain = null;
         cachedStats = cachedPrev = null;
@@ -361,7 +385,7 @@ export default function init(dom) {
     // isochrones. Called at boot and by reset.
     function openScene(still) {
         const p = getPreset(OPENING_PRESET);
-        applyScene(p, null, qs.has('mi') ? topoFromString(qs.get('mi')) : null);
+        applyScene(p, qs.has('mi') ? topoFromString(qs.get('mi')) : null);
         const n = (p.warmup || OPENING_WARMUP) + (still ? OPENING_STILL_EXTRA : 0);
         for (let k = 0; k < n; k++) tickOnce();
     }
@@ -402,14 +426,27 @@ export default function init(dom) {
         if (typeof showToast === 'function') showToast('World of ' + worldCells(sim.R).toLocaleString('en-US') + ' cells');
     }
 
-    // Reset restarts the running experiment, keeping its knob where it is;
-    // in the sandbox it restores every default.
+    // Restart runs the model as it stands (the experiment, its knob and any
+    // change made in the Model tab) again on a fresh world: its coverage and
+    // the opening's two cases. Restore, in the Model tab, puts back the
+    // experiment's own values.
+    function restart() {
+        resetGridOnly();
+        applyCoverage();
+        seedOpening(OPENING_SEEDS);
+        requestFrame();
+    }
     function reset() {
+        restart();
         const p = getPreset(sim.presetKey);
-        if (p) applyScene(p, { [p.knob.key]: params[p.knob.key] });
-        else applySandbox();
-        if (typeof showToast === 'function') showToast(p ? 'Restarted: ' + p.label : 'Simulation reset');
+        if (typeof showToast === 'function') showToast('Restarted: ' + (p ? p.label : 'Sandbox'));
         if (typeof _haptics !== 'undefined') _haptics.trigger('warning');
+    }
+    function restore() {
+        const p = getPreset(sim.presetKey);
+        if (p) applyScene(p);
+        else applySandbox();
+        if (typeof showToast === 'function') showToast('Restored: ' + (p ? p.label : 'the defaults'));
     }
 
     function applySandbox() {
@@ -447,12 +484,12 @@ export default function init(dom) {
     const shortcuts = [
         { key: 'space', group: 'Simulation', label: 'Play / pause', action: () => togglePlay() },
         { key: '.', group: 'Simulation', label: 'Step one day', action: () => stepOnce() },
-        { key: 'r', group: 'Simulation', label: 'Reset simulation', action: () => { if ($.resetBtn) $.resetBtn.click(); } },
+        { key: 'r', group: 'Simulation', label: 'Restart on a fresh world', action: () => { if ($.resetBtn) $.resetBtn.click(); } },
         // about.js binds ? and the help button itself; listed here for the panel
         { key: '?', group: 'View', label: 'Toggle about panel', when: () => false, action: () => {} },
-        { key: 'm', group: 'View', label: 'Show map view controls', action: () => { if ($.viewModeBtn) $.viewModeBtn.click(); } },
+        { key: 'm', group: 'View', label: 'Next map view', action: () => cycleView() },
         { key: 't', group: 'View', label: 'Toggle theme', action: () => { if ($.themeBtn) $.themeBtn.click(); } },
-        { key: 's', group: 'View', label: 'Show or hide the controls', action: () => toggleMargin() },
+        { key: 's', group: 'View', label: 'Show or hide the margin', action: () => toggleMargin() },
         { key: '=', group: 'View', label: 'Zoom in', action: () => camera.zoomAtCenter(1) },
         { key: '+', group: 'View', label: 'Zoom in', action: () => camera.zoomAtCenter(1) },
         { key: '-', group: 'View', label: 'Zoom out', action: () => camera.zoomAtCenter(-1) },
@@ -463,8 +500,8 @@ export default function init(dom) {
         { key: 'Ctrl+Shift+Z', group: 'History', label: 'Redo last stroke', when: () => false, action: () => {} }
     ];
     const paintDocsEntries = [
-        ['1', 'none'], ['2', 'seed'], ['3', 'vaccinate'], ['4', 'quarantine'], ['5', 'sanitize'], ['6', 'cull']
-    ].map(([key, m]) => ({ key, group: 'Paint', label: 'Paint mode: ' + m, when: () => false, action: () => {} }))
+        ['1', 'look'], ['2', 'seed'], ['3', 'vaccinate'], ['4', 'quarantine'], ['5', 'sanitize'], ['6', 'cull']
+    ].map(([key, m]) => ({ key, group: 'Paint', label: 'Brush: ' + m, when: () => false, action: () => {} }))
         .concat([
             { key: '[', group: 'Paint', label: 'Brush size down', when: () => false, action: () => {} },
             { key: ']', group: 'Paint', label: 'Brush size up', when: () => false, action: () => {} }
@@ -476,19 +513,20 @@ export default function init(dom) {
         onTopologyChange: () => { iso.markDirty(); markTile(); },
         onWorldChange: (R) => setWorld(R),
         onViewModeChange: () => markTile(),
-        onParamChange: () => invalidateDerived({ stats: true, strains: true }),
-        onTogglesChange: () => { markTile(); statsDirty = true; },
-        onStep: () => stepOnce(),
+        // A slider in the Model tab has set params[key]. A genome field lives
+        // on every strain, so it is written onto all of them; the knob and
+        // its marks follow.
+        onParam: (key) => { setGenome(key, params[key]); if (ui) ui.showPreset(sim.presetKey); invalidateDerived({ stats: true, strains: true }); },
+        onTogglesChange: () => { if (ui) ui.showPreset(sim.presetKey); markTile(); statsDirty = true; },
         onReset: () => reset(),
+        onRestore: () => restore(),
         params, toggles,
-        settingsPanelEl: $.settingsPanel,
         paintController,
-        interventionsPanelEl: $.interventionsPanel,
         onPaintChange: (kind, value) => {
             markTile();
             if (typeof showToast === 'function') {
                 if (kind === 'mode') {
-                    const labels = { none: 'Pointer (no paint)', seed: 'Seed brush', vaccinate: 'Vaccinate brush', quarantine: 'Quarantine brush', sanitize: 'Sanitize brush', cull: 'Cull brush' };
+                    const labels = { none: 'Look (no brush)', seed: 'Seed brush', vaccinate: 'Vaccinate brush', quarantine: 'Quarantine brush', sanitize: 'Sanitize brush', cull: 'Cull brush' };
                     showToast(labels[value] || ('Mode: ' + value));
                 } else if (kind === 'brush') {
                     showToast('Brush: ' + (['1 cell', '7 cells', '19 cells'][value] || (value + ' cells')));
@@ -502,26 +540,35 @@ export default function init(dom) {
             else applySandbox();
             if (typeof _haptics !== 'undefined') _haptics.trigger('medium');
         },
+        // The knob acts live, or (coverage) restarts the run with its value.
         onKnob: (key, value, knob) => {
-            const p = getPreset(sim.presetKey);
-            if (knob.reset && p) { applyScene(p, { [key]: value }); return; }
             params[key] = value;
-            // A genome field lives on every strain: the knob sets it on all of them.
-            const field = GENOME_FIELDS.find(f => f.key === key);
-            if (field) {
-                const v = Math.min(field.max, Math.max(field.min, value));
-                for (let id = 0; id < strains.ids.length; id++) strains[key][id] = v;
-            }
+            if (ui) ui.model.refresh();
+            if (knob.reset) { restart(); return; }
+            setGenome(key, value);
             invalidateDerived({ stats: true, strains: true });
         }
     });
 
-    // Apply a preset object: params, toggles and surface, then `overrides`
-    // (a knob's value) and `topology`, a fresh world, its coverage, and the
-    // opening's two cases.
-    function applyScene(p, overrides, topology) {
+    // Write a genome field's value onto every strain (a no-op for a sim-wide key).
+    function setGenome(key, value) {
+        const field = GENOME_FIELDS.find(f => f.key === key);
+        if (!field) return;
+        const v = Math.min(field.max, Math.max(field.min, value));
+        for (let id = 0; id < strains.ids.length; id++) strains[key][id] = v;
+    }
+
+    const VIEWS = [ViewMode.COMPARTMENT, ViewMode.STRAIN, ViewMode.AGE, ViewMode.HEALTH, ViewMode.STATUS, ViewMode.IMMUNITY];
+    function cycleView() {
+        const next = VIEWS[(VIEWS.indexOf(sim.viewMode) + 1) % VIEWS.length];
+        const b = $.viewModeToggles && $.viewModeToggles.querySelector(`[data-viewmode="${next}"]`);
+        if (b) b.click();
+    }
+
+    // Apply a preset object: params, toggles and surface (or `topology`), a
+    // fresh world, its coverage, and the opening's two cases.
+    function applyScene(p, topology) {
         applyPreset(p, params, toggles, sim);
-        if (overrides) Object.assign(params, overrides);
         if (topology != null) sim.topology = topology;
         sim.presetKey = p.key || null;
         resetGridOnly();
@@ -633,8 +680,12 @@ export default function init(dom) {
         const open = force !== undefined ? force : $.atlas.classList.contains('margin-closed');
         $.atlas.classList.toggle('margin-closed', !open);
         if ($.menuBtn) $.menuBtn.setAttribute('aria-expanded', String(open));
-        if ($.marginOpen) $.marginOpen.hidden = open;
+        const had = document.activeElement;
+        if ($.marginOpen) { $.marginOpen.hidden = open; $.marginOpen.setAttribute('aria-expanded', String(open)); }
         requestAnimationFrame(() => { resize(); wakeRenders(); });
+        // a button that hides itself hands the focus to its counterpart
+        if (!open && had === $.menuBtn && $.marginOpen) $.marginOpen.focus();
+        if (open && had === $.marginOpen && $.menuBtn) $.menuBtn.focus();
     }
     if ($.menuBtn) $.menuBtn.addEventListener('click', () => toggleMargin(false));
     if ($.marginOpen) $.marginOpen.addEventListener('click', () => toggleMargin(true));

@@ -29,6 +29,7 @@ sessions, and parallel lanes fit a whole version in one.
 | 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance, so drift never runs off the map and can recycle old antigens. **Strain marks encode the position directly:** one axis is hatch angle (0–180°), the other hue (0–360°), on an OKLCH wheel fitted like the inks and squeezed near the accent (§2.2). |
 | 2026-10-24 | **Isochrones fade** (a9's call): a cell's arrival is re-stamped when a new wave reaches it, contours fade with their age measured against the newest arrival, and contours never cross the cliff between waves (§2.2). |
 | 2026-10-25 | **The world's size is a setting** (Settings → World, `?r=`): 10,621 to 96,661 cells. **The default is 24,031** (a9's call): the presets were re-surveyed at that size and the opening's warm-up lengthened to keep its composition. |
+| 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it (the view picker over it, the brush rail down its left edge, the zoom by the scale bar, the knob beside the caption as a ruler ticked at the theory's threshold), and the margin is the atlas's apparatus: the experiments as its numbered plates, Counts, Strains, and the Model tab, the model drawn as a compartment diagram whose parts hold every switch and rate. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
 
 ### Open
 
@@ -388,6 +389,10 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
   carries the ramp value. The strain view's new marks need `w`.
 - `applyPreset` resets params and toggles to the defaults before merging, so a preset
   sets every key it needs.
+- Every param a mechanic reads needs a row in a Model part (`model.js` `PARTS`), or it
+  can't be set outside a preset; a genome field also needs its row in
+  `STRAIN_GENOME_LAYOUT`. A new transition counter the figure should weigh goes in
+  `FLUX_KEYS` and on its arrow.
 - The extinction sweep must count every reference to a strain (active slots, memory slot
   0 on M, R+C and D+F, and `animal_strain`) before it tombstones or reclaims.
 - Headless runs need `globalThis.mulberry32` and `gaussian`; `tools/*.mjs` show how.

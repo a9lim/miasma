@@ -37,37 +37,43 @@ paint.
   just above it), Herd immunity (about half coverage stops a wave on a lattice, not the
   textbook 82%), Antigenic drift (seasonal waves of drifting variants), Spillover (a
   rodent reservoir keeping subcritical human chains going), Immunoediting (surveillance
-  eliminating, holding or losing a tumour), and Zombie apocalypse. Each has one knob in
-  the margin and a measured number in the figure caption; the Sandbox has every
-  mechanic at its default.
+  eliminating, holding or losing a tumour), and Zombie apocalypse. They are the atlas's
+  plates, listed in the Experiments tab; each has one knob under the plate, ticked
+  where theory puts its threshold, and a measured number in the figure caption. The
+  Sandbox has every mechanic at its default.
 - **The atlas**: the map is a plate in the line of John Snow's 1854 cholera map:
   the disease in red, recovery as stipple, vaccination as hatching, deaths as
   crosses, and isochrones of the day each wave arrived, fading as they age. Views for
   compartment, strain (a strain's hatch angle and colour are its antigenic
   position), age, health, status, and immunity to a chosen strain; the Immunoediting
-  preset becomes an H&E-stained section. Nightingale's rose and observed Re sit in the
-  Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
+  preset's state view is an H&E-stained section. Nightingale's rose and observed Re sit
+  in the Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
   strains by prevalence, a vaccine-matching control and a per-strain genome editor.
-- **Intervention painting**: seed, vaccinate, quarantine, sanitize, and cull, with three
-  brush sizes. Undo and redo work until the simulation advances.
+- **The model as a figure**: the Model tab draws the compartment diagram of the model
+  the plate runs, with each compartment's count and each arrow's daily flux; choosing a
+  part of it shows that part's switches and rates.
+- **Intervention painting**: seed, vaccinate, quarantine, sanitize, and cull, from the
+  brush rail on the plate's left edge, with three brush sizes. Undo and redo work until
+  the simulation advances.
 
 ## Controls
 
 Click or drag on the map to paint; the default brush seeds an infection. Scroll or pinch
-to zoom.
+to zoom. Restart runs the model again on a fresh world, keeping any change made in the
+Model tab; Restore puts back the experiment's own values.
 
 | Key | Action |
 |---|---|
 | Space | Play / pause |
 | `.` | Step one tick |
-| `R` | Reset |
-| `1`–`6` | Paint mode: none, seed, vaccinate, quarantine, sanitize, cull |
+| `R` | Restart |
+| `1`–`6` | Brush: look, seed, vaccinate, quarantine, sanitize, cull |
 | `[` / `]` | Brush size down / up |
 | Ctrl/⌘+Z | Undo stroke |
 | Ctrl/⌘+Shift+Z, Ctrl/⌘+Y | Redo stroke |
 | `=` / `-` / `0` | Zoom in / out / reset |
-| `M` | Map controls |
-| `S` | Sidebar |
+| `M` | Next map view |
+| `S` | Show or hide the margin |
 | `T` | Theme |
 | `?` | About |
 

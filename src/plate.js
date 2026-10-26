@@ -19,23 +19,29 @@ import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, stra
 import { createGpuPlate } from './gpu-plate.js';
 import { wheelParams } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
+import { getPreset, plateNumeral } from './presets.js';
 
-const NUMERALS = { compartment: 'I', strain: 'II', age: 'III', health: 'IV', status: 'V', immunity: 'VI', histology: 'VII' };
-
-/** Plate title for a view, surface and width; `immunity` names the immunity view's strain. */
-export function plateTitle(mode, topology, histology, narrow, immunity) {
-    const S = SURFACES[topology], key = histology ? 'histology' : mode;
-    const n = 'Plate ' + NUMERALS[key] + '.';
-    if (narrow) return n;
+/**
+ * Plate title: the experiment (its plate numeral and name; the sandbox has
+ * neither), the surface, and what the view draws; shorter on a 'medium'
+ * plate, the numeral alone on a 'narrow' one. `immunity` names the immunity
+ * view's strain.
+ */
+export function plateTitle(mode, topology, histology, width, immunity, presetKey) {
+    const S = SURFACES[topology], p = getPreset(presetKey), numeral = plateNumeral(presetKey);
+    const n = numeral ? `Plate ${numeral}.` : 'Sandbox.';
+    if (width === 'narrow') return numeral ? n : '';
+    if (width === 'medium') return p ? `${n} ${p.label}` : n;
+    const subject = p ? p.label : 'The outbreak';
     const on = 'on a ' + (S.key === 'rp2' ? 'projective plane' : S.name);
-    switch (key) {
-        case 'histology': return `${n} Section through transformed tissue, stained with haematoxylin and eosin`;
-        case ViewMode.STRAIN: return `${n} Strains ${on}, by hatching`;
-        case ViewMode.AGE: return `${n} Age of the population ${on}`;
-        case ViewMode.HEALTH: return `${n} Health of the population ${on}`;
-        case ViewMode.STATUS: return `${n} Hospital beds and quarantine ${on}`;
-        case ViewMode.IMMUNITY: return `${n} Immunity to strain ${(immunity && immunity.name) || 'α'} ${on}`;
-        default: return `${n} The outbreak ${on}, by day of arrival`;
+    if (histology) return `${n} ${subject}: a section stained with haematoxylin and eosin`;
+    switch (mode) {
+        case ViewMode.STRAIN: return `${n} ${subject} ${on}, by strain`;
+        case ViewMode.AGE: return `${n} ${subject} ${on}, by age`;
+        case ViewMode.HEALTH: return `${n} ${subject} ${on}, by health`;
+        case ViewMode.STATUS: return `${n} ${subject} ${on}: hospital beds and quarantine`;
+        case ViewMode.IMMUNITY: return `${n} ${subject} ${on}, by immunity to strain ${(immunity && immunity.name) || 'α'}`;
+        default: return `${n} ${subject} ${on}, by day of arrival`;
     }
 }
 
@@ -132,7 +138,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     function overlay(s, t, G, S, frame) {
         drawEdges(t, G, S);
         placed.length = 0;
-        const furniture = drawFurniture(t, s, G, frame);
+        const furniture = drawFurniture(t, s, G, frame).concat(s.avoid || []);
         if (S.closed) drawCones(t, G, cornerCones(s.topology, G.R), frame);
         if (!s.histology || s.mode !== ViewMode.COMPARTMENT) drawIsoLabels(t, s, G, frame, furniture);
     }
@@ -279,11 +285,13 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         const rects = [], narrow = f.w < 600;
         // title
         ctx.font = font(narrow ? 13.5 : 14.5, true); ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
-        const title = plateTitle(s.mode, s.topology, s.histology, narrow || f.w < 760, s.tileOpts && s.tileOpts.immunity);
-        const tw = ctx.measureText(title).width, tx = f.x + f.w - (narrow ? 12 : 22), ty = f.y + (narrow ? 62 : 32);
-        ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(tx - tw - 8, ty - 17, tw + 14, 24);
-        ctx.fillStyle = t.muted; ctx.fillText(title, tx, ty);
-        rects.push([tx - tw - 8, ty - 17, tx + 6, ty + 7]);
+        const title = plateTitle(s.mode, s.topology, s.histology, narrow ? 'narrow' : f.w < 820 ? 'medium' : 'wide', s.tileOpts && s.tileOpts.immunity, s.presetKey);
+        if (title) {
+            const tw = ctx.measureText(title).width, tx = f.x + f.w - (narrow ? 12 : 22), ty = f.y + (narrow ? 18 : 24);
+            ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(tx - tw - 8, ty - 17, tw + 14, 24);
+            ctx.fillStyle = t.muted; ctx.fillText(title, tx, ty);
+            rects.push([tx - tw - 8, ty - 17, tx + 6, ty + 7]);
+        }
         // scale bar
         const cell = SQRT3 * G.rc, nice = [1, 2, 5, 10, 20, 50];
         let per = nice.find(v => v * cell >= (narrow ? 26 : 34)) || 50;

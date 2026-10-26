@@ -510,7 +510,7 @@ function phyloRows(registry, prevalence) {
 function renderPhylogeny(canvas, registry, prevalence, selectedId, tick) {
     const rows = phyloRows(registry, prevalence);
     const rowH = rows.length > 30 ? 7 : rows.length > 18 ? 10 : 13;
-    const cssH = Math.max(120, Math.min(420, rows.length * rowH + 52));
+    const cssH = Math.max(64, Math.min(420, rows.length * rowH + (_phylo.hidden ? 52 : 38)));
     if (Math.abs(canvas.clientHeight - cssH) > 1) canvas.style.height = cssH + 'px';
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = canvas.clientWidth || 300, h = cssH;
@@ -783,10 +783,9 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick, 
         if (!last || last.count !== row.count || last.fraction !== row.fraction) {
             const pct = row.fraction * 100;
             const pctStr = pct >= 10 ? pct.toFixed(0) : pct.toFixed(1);
-            // Counts are load-weighted floats now (coinfection apportioned by
-            // load). Show one decimal so the fractional shape is visible
-            // without rendering trailing-FP noise like "1497.30000000001".
-            const countStr = row.count.toFixed(1);
+            // Counts are load-weighted (coinfection apportioned by load), so
+            // they round to whole carriers.
+            const countStr = row.count < 0.5 ? '<1' : Math.round(row.count).toLocaleString('en-US');
             rec.prev.textContent = countStr + ' · ' + pctStr + '%';
             rec.fill.style.width = pct.toFixed(2) + '%';
             if (last) { last.count = row.count; last.fraction = row.fraction; }
