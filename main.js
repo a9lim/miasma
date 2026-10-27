@@ -23,7 +23,7 @@ import { createPlate } from './src/plate.js';
 import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells, OPENING_SEEDS } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
-import { initializeGrid, initializeAnimals } from './src/initialization.js';
+import { initializeGrid, seedPopulation } from './src/initialization.js';
 import { computeStats, computeReff, renderStatsPanel } from './src/stats.js';
 import { makeParams } from './src/params.js';
 import { DEFAULT_PARAMS } from './src/default-params.js';
@@ -97,7 +97,7 @@ export default function init(dom) {
     const toggles = makeToggles();
     let strains = createRegistry(params);
     const rng = makeRngFromLocation(window.location);
-    initializeAnimals(sim.grid, params, rng);
+    seedPopulation(sim.grid, params, rng);
     const history = createTransitionHistory(HISTORY_CAP);
     // the isochrones build in a worker; a result redraws the plate
     const iso = createIsochrones({ worker: true, onBuilt: () => markTile() });
@@ -349,7 +349,7 @@ export default function init(dom) {
     function resetGridOnly() {
         sim.grid = new Grid(sim.W, sim.H);
         initializeGrid(sim.grid);
-        initializeAnimals(sim.grid, params, rng);
+        seedPopulation(sim.grid, params, rng);
         sim.tick = 0;
         history.clear();
         iso.clear();

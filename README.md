@@ -22,9 +22,10 @@ paint.
   distance from them. Reinfection and breakthrough therefore favor drifted strains,
   within-host competition favors strains that escape the host, and a vaccine matched to
   one strain loses ground as the virus drifts.
-- **Population dynamics**: aging, births into empty land (children of recovered parents
-  start with maternal antibodies), health that degrades during infection, and
-  age-driven mortality.
+- **Population dynamics**: aging (a new world starts at the steady-state ages of its
+  death rates), births into empty land (children of recovered parents start with
+  maternal antibodies), health that degrades during infection, and age-driven
+  mortality.
 - **Animal reservoir**: its own births, aging, and per-strain SIR dynamics, passing
   infections to and from the human layer.
 - **Zombies**: one state machine with two readings. It can run a zombie outbreak where

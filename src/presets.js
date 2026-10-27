@@ -141,9 +141,9 @@ export const PRESETS = Object.freeze([
         // against the threshold's 0.35; no chronic human carriers, which
         // would transmit for life), so every human chain dies out on its own.
         // The rodents carry the infection chronically (recovery 0.01 a day,
-        // lifespan about 800 days), 5% of them infected at the start, and
-        // about 20% stay infected. Ten seeds, days 1,000–3,000: spillover
-        // 0.01 gives human Re 0.47 and 53% of human cases from the
+        // old age at 800 days, a mean life of about 415), 5% of them infected
+        // at the start, and about 20% stay infected. Ten seeds, days
+        // 1,000–3,000: spillover 0.01 gives human Re 0.48 and 53% of human cases from the
         // reservoir, 0.02 gives 0.38 and 62%, 0.04 0.31 and 69%, 0.08 0.26
         // and 74% (the same on the 10,621-cell world: these do not depend on
         // its size).

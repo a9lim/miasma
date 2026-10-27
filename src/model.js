@@ -122,13 +122,13 @@ const PARTS = {
     },
     births: {
         title: 'Births and age', sym: '',
-        what: 'An empty cell is born into when enough of its neighbours are alive. Everyone ages, and natural death rises with age.',
+        what: 'An empty cell is born into when enough of its neighbours are alive. Natural death rises with age until old age and holds there; old age is also where age raises susceptibility and μ in full. A new world starts at the ages these rates settle into.',
         rows: [
             { key: 'birth_rate', label: 'Birth rate, per living neighbour', min: 0, max: 0.2, step: 0.005, digits: 3 },
             { key: 'birth_threshold', label: 'Living neighbours needed', min: 1, max: 6, step: 1, digits: 0 },
             { key: 'mortality_baseline', label: 'Natural death, newborn', min: 0, max: 0.01, step: 0.0001, digits: 4 },
-            { key: 'mortality_age_max', label: 'Natural death, oldest', min: 0, max: 0.05, step: 0.0005, digits: 4 },
-            { key: 'mortality_max_age', label: 'Lifespan, days', min: 100, max: 20000, step: 100, digits: 0 }
+            { key: 'mortality_age_max', label: 'Natural death, old age', min: 0, max: 0.05, step: 0.0005, digits: 4 },
+            { key: 'mortality_max_age', label: 'Old age, days', min: 100, max: 20000, step: 100, digits: 0 }
         ],
         on: (P) => P.birth_rate > 0 || P.mortality_baseline > 0 || P.mortality_age_max > 0
     },
@@ -147,8 +147,8 @@ const PARTS = {
             { key: 'animal_birth_rate', label: 'Birth rate', min: 0, max: 0.2, step: 0.005, digits: 3 },
             { key: 'animal_birth_threshold', label: 'Neighbours needed', min: 1, max: 6, step: 1, digits: 0 },
             { key: 'animal_mortality_baseline', label: 'Natural death, newborn', min: 0, max: 0.01, step: 0.0001, digits: 4 },
-            { key: 'animal_mortality_age_max', label: 'Natural death, oldest', min: 0, max: 0.05, step: 0.0005, digits: 4 },
-            { key: 'animal_max_age', label: 'Lifespan, days', min: 100, max: 20000, step: 100, digits: 0 },
+            { key: 'animal_mortality_age_max', label: 'Natural death, old age', min: 0, max: 0.05, step: 0.0005, digits: 4 },
+            { key: 'animal_max_age', label: 'Old age, days', min: 100, max: 20000, step: 100, digits: 0 },
             { key: 'animal_d_disposal', label: 'Carcass cleared a day', min: 0, max: 1, step: 0.01, digits: 2 },
             { display: 'animalDisplay', label: 'On the plate' }
         ],

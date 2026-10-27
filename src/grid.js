@@ -19,7 +19,7 @@ export class Grid {
         this.health      = new Float32Array(N);
         // Phase 9: per-cell animal state (vector/reservoir layer). Orthogonal
         // to the human compartment — same indexing, independent dynamics.
-        // VOID = 0 means no animal in this cell. initialization.initializeAnimals()
+        // VOID = 0 means no animal in this cell. initialization.seedPopulation()
         // seeds S animals at density. mask=0 cells must remain VOID.
         this.animal = new Uint8Array(N);
         this.animal.fill(Animal.VOID);

@@ -10,7 +10,7 @@ globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () {
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
 const M = new URL('../src/', import.meta.url).href;
 const { Grid } = await import(M + 'grid.js');
-const { initializeGrid, initializeAnimals } = await import(M + 'initialization.js');
+const { initializeGrid, seedPopulation } = await import(M + 'initialization.js');
 const { createRegistry, countLiving } = await import(M + 'strains.js');
 const { tick } = await import(M + 'dynamics.js');
 const { PRESETS, applyPreset } = await import(M + 'presets.js');
@@ -40,7 +40,7 @@ for (const R of radii) {
         if (key !== 'sandbox') applyPreset(PRESETS.find(p => p.key === key), params, toggles, sim);
         const grid = new Grid(W, W); initializeGrid(grid);
         const rng = mulberry32(SEED);
-        initializeAnimals(grid, params, rng);
+        seedPopulation(grid, params, rng);
         const reg = createRegistry(params);
         const mem = memoryOf(grid);
         for (const i of grid.activeIndices) {

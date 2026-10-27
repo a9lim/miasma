@@ -72,7 +72,7 @@ colors.js                --epi-* compartment colors (the accent and inks) over t
 styles.css               layout, hairline controls, census swatches drawn as the plate's marks
 src/config.js            enums (Compartment, Status, Flag, Animal, Topology, ViewMode, MemoryKind), DEFAULTS, ANTIGENIC_SIZE, MEMORY_SLOTS, HEX_DIRS
 src/grid.js              Grid (structure-of-arrays cell state), axial ↔ pixel math
-src/initialization.js    applyHexMask, fresh human and animal seeding (animal_seed starts some infected)
+src/initialization.js    applyHexMask; seedPopulation: steady-state ages for people and animals, the reservoir (animal_seed starts some infected)
 src/topology.js          the four surfaces as edge gluings: slot table, edge isometries, cone points
 src/dynamics.js          tick(): steps 1–9, buffer swap, transition counters
 src/dynamics-animal.js   step 10: reservoir demography, animal SIR, spillover
@@ -224,6 +224,22 @@ D, Z, or EMPTY) with probability `1 − (1 − birth_rate)^k`. A uniformly picke
 that is R, with `t.M` on, makes an M newborn carrying that parent's strain memory;
 otherwise the newborn is S. A birth forgets the cell's memory.
 
+Age counts days. Step 1 adds one to every cell occupied at the start of the tick and
+still occupied; a cell that was or becomes EMPTY reads 0, so a newborn starts at 0. Three
+things read it, all through `aN = min(1, age / mortality_max_age)` (old age, the Model
+tab's "Old age, days"): step 8's natural death, linear from `mortality_baseline` at
+birth to `mortality_age_max` at old age and flat after; susceptibility, × `1 +
+(age_susceptibility_mult − 1)·aN` on every human-to-human roll (spillover ignores age);
+and μ on leaving I, × `1 + (age_severity_mult − 1)·aN`. At the defaults old age (4,500
+days) lies far past the mean life (1,030 days; 2 in 100,000 live to it), so across the
+population the two multipliers average about 1.06–1.10 and 1.13–1.19, not 1.6 and 2.2.
+A new world starts at the steady state of the natural-death rates (`initialization.js`
+`steadyAge`: the share alive at age a is the chance of surviving to it), not as one
+newborn cohort that would die off together around day 1,000. Where nothing dies there
+is no steady state: everyone starts at 0 and no draw is made, so the four presets
+without natural death keep their fingerprints. The reservoir does the same with its own
+rates (10d).
+
 The hospital pre-pass (`t.auto_hospital`) assigns H row-major to non-Q I cells up to
 `floor(h_capacity_frac · active cells)` beds. Turning it off strips every H and removes the
 overflow penalty. Auto-quarantine (`t.auto_quarantine`) traces I cells and living
@@ -278,8 +294,8 @@ in 10c and 10d, and a 10c death is not recounted in 10d. There is no toggle:
 0.12, with `animal_seed` (0.005) of them infected at the start; among presets only
 Spillover keeps a reservoir, and seeds 5% infected so it starts where the disease
 lives. A reservoir that burns through its animals dies out: a self-sustaining one needs
-chronic animal infection and turnover (Spillover: recovery 0.01 a day, lifespan about
-800 days).
+chronic animal infection and turnover (Spillover: recovery 0.01 a day, old age at 800
+days, a mean life of about 415).
 
 Animal β/γ/μ are per strain, looked up through `animal_strain`. Every animal S → I
 write sets `animal_strain`, and recovery, death, disposal, and birth reset it to
@@ -667,14 +683,15 @@ view held 60 fps at 96,661 cells in drift, unthrottled, on 2026-10-27), and `rec
 Six experiments (`presets.js`); each preset's comment records the calibration behind
 its values. `tools/presets-survey.mjs` reproduces the facts below (ten seeds, 3,000 days,
 the default knob, the opening's two seeds, the default 24,031-cell world; surveyed
-2026-10-25, when the default grew from 10,621 cells). Its fifth argument sweeps a
+2026-10-25, when the default grew from 10,621 cells, and Drift and Spillover again on
+2026-10-27, when worlds began starting at steady-state ages). Its fifth argument sweeps a
 preset's knob, as the presets' comments record.
 
 | Preset | Knob (default) | Measured in the caption | Ten seeds, 3,000 days |
 |---|---|---|---|
 | Threshold (opening) | β (0.11, 1.8× critical) | β against the critical β (≈ 0.061, independent edges); share of cells reached | takes off 10/10, reaches the edge by day 193, peak 782 E+I, ends by day 840, reaches 97% (30% by day 300, the opening) |
 | Herd immunity | coverage (0.48, reset) | coverage against the lattice threshold (near 50%) and 1 − 1/R₀ (82%); share of the unvaccinated reached | peak 179, ends by day 1,874, reaches 66% of the unvaccinated (10% at 0.50) |
-| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends, peak 4,500, 146 living strains at the end, waves locked to the season |
+| Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends, peak 4,620, 154 living strains at the end, waves locked to the season |
 | Spillover | spillover rate (0.02) | human-to-human Re over 30 days; reservoir share of human cases | never ends, human Re 0.38, 62% of human cases from the reservoir (the same at any size) |
 | Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 843 transformed cells at day 1,000, 1,693 at the end; escape at 0.25 (6,782), shrinking from 0.32 |
 | Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 3,327 zombies at day 1,000, 3,238 at the end, against 1,809 and 1,617 living; burns out in 0/10 (5/10 at 0.03) |

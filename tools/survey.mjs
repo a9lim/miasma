@@ -8,7 +8,7 @@ globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () {
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
 const M = new URL('../src/', import.meta.url).href;
 const { Grid } = await import(M + 'grid.js');
-const { initializeGrid, initializeAnimals } = await import(M + 'initialization.js');
+const { initializeGrid, seedPopulation } = await import(M + 'initialization.js');
 const { createRegistry, strainCount, getStrain, countLiving } = await import(M + 'strains.js');
 const { tick } = await import(M + 'dynamics.js');
 const { PRESETS, applyPreset } = await import(M + 'presets.js');
@@ -25,7 +25,7 @@ for (const key of keys) {
   if (process.env.SEED) globalThis.__seed = +process.env.SEED;
   const grid = new Grid(120, 120); initializeGrid(grid);
   const rng = mulberry32(globalThis.__seed || 12345);
-  initializeAnimals(grid, params, rng);
+  seedPopulation(grid, params, rng);
   const reg = createRegistry(params);
   const { cq, cr } = hexBounds(120, 120);
   for (const [dq, dr] of [[30, -42], [-24, 10]]) for (const [a, b] of [[0,0],[1,0],[0,1],[-1,0],[0,-1],[1,-1],[-1,1]]) {
