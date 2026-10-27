@@ -555,6 +555,7 @@ life-years as the score.
 | The refresh | 2026-10-27 | `5419af3` | This roadmap, rewritten from the audit; `tools/spirals.mjs`, the recurring-wave prototype on the real gluing. |
 | 2.2 M1 | 2026-10-27 | `31f5ce6` | Infection lineages (`src/descent.js`): every infection's source, edge and parent case, open and closed cases, trees, Re by count beside observed Re; the Descent view, a drainage map of who infected whom drawn through the gluing; 101 lineage tests; every fingerprint unchanged. |
 | 2.2 M2 | 2026-10-27 | `d0d6be1` | Fig. 3, space against time along the centre row A–A′ from the lineage log (a Λ for Threshold's front, bands for Drift's seasons, strain marks in the Strain view); every strain's birthplace, and the trunk on the map through them in the Strain view; the antigenic map, phylogeny and model renumbered Figs. 4–6. |
+| 2.2 M3 | 2026-10-27 | `551b64a` | Spillover as emergence (human β the knob, the reservoir starting every chain, chains lengthening through the lattice threshold, none taking over); Fig. 4 chains by size with a −3/2 guide; a transformation founds a clone, and Immunoediting's equilibrium is critical (cleared clones as s^−1.49); growth rings tried and dropped (multifocal); Drift in its Strain view with a season-long fade; trees kept per cell past the window; each plate opens in its view. |
 
 ## 11. Gotchas
 
