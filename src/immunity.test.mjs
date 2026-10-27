@@ -4,11 +4,11 @@
 globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
 
-const { ANTIGENIC_SIZE, MEMORY_SLOTS, MemoryKind, Compartment, Topology } = await import('./config.js');
+const { ANTIGENIC_SIZE, MEMORY_SLOTS, MemoryKind, Compartment, Topology, Animal, Flag } = await import('./config.js');
 const { agDelta, agDist, agMid, agWrap, susceptibility, remember, forget, memoryOf } = await import('./immunity.js');
 const { Grid } = await import('./grid.js');
 const { initializeGrid } = await import('./initialization.js');
-const { createRegistry, registerStrain, mutateStrain, recombineStrains, getStrain, strainCount, bornCount, countLiving } = await import('./strains.js');
+const { createRegistry, registerStrain, mutateStrain, recombineStrains, getStrain, strainCount, bornCount, countLiving, hostMean, hostPick, isMixed, EMPTY_STRAIN } = await import('./strains.js');
 const { runExtinctionSweep, EXTINCTION_SWEEP_INTERVAL } = await import('./strain-extinction.js');
 const { tick } = await import('./dynamics.js');
 const { DEFAULT_PARAMS } = await import('./default-params.js');
@@ -196,6 +196,115 @@ function world() {
     const rng2 = mulberry32(5);
     for (let t = 1; t <= 10; t++) tick(g2, p2, t2, Topology.TORUS, rng2, reg2, t);
     check('no incumbent advantage at equal fitness', near(g2.strain_loads[j * 4], 0.65, 1e-5), g2.strain_loads[j * 4]);
+}
+
+// ─── A coinfected host as a mixture ───
+{
+    const E = EMPTY_STRAIN;
+    const ids = Uint16Array.from([0, E, 1, E]), loads = Float32Array.from([0.75, 0, 0.25, 0]);
+    const vals = [0.2, 0.6], ws = [1, 3];
+    const v = (s) => vals[s], w = (s) => ws[s];
+    check('slot 0 alone is not mixed', !isMixed(Uint16Array.from([0, E, E, E]), Float32Array.from([1, 0, 0, 0]), 0, 4));
+    check('two strains are mixed', isMixed(ids, loads, 0, 4));
+    check('one strain past slot 0 is mixed', isMixed(Uint16Array.from([E, E, 1, E]), Float32Array.from([0, 0, 1, 0]), 0, 4));
+    check('an id without load does not count', !isMixed(Uint16Array.from([0, 1, E, E]), Float32Array.from([1, 0, 0, 0]), 0, 4));
+    check('mean by load', near(hostMean(ids, loads, 0, 4, v, null), 0.75 * 0.2 + 0.25 * 0.6, 1e-7));
+    check('mean by load × weight', near(hostMean(ids, loads, 0, 4, v, w), (0.75 * 0.2 + 0.25 * 3 * 0.6) / (0.75 + 0.25 * 3), 1e-7));
+    check('one strain gives its value exactly', hostMean(Uint16Array.from([E, E, 1, E]), Float32Array.from([0, 0, 1, 0]), 0, 4, v, null) === 0.6);
+    check('shared values come back exactly', hostMean(ids, loads, 0, 4, () => 0.1, w) === 0.1);
+    check('zero weights fall back to the first strain', hostMean(ids, loads, 0, 4, v, () => 0) === 0.2);
+    check('no strain → NaN', Number.isNaN(hostMean(Uint16Array.from([E, E, E, E]), new Float32Array(4), 0, 4, v, null)));
+    const swapped = Uint16Array.from([1, E, E, 0]), swappedLoads = Float32Array.from([0.25, 0, 0, 0.75]);
+    check('slot order does not matter', near(hostMean(swapped, swappedLoads, 0, 4, v, w), hostMean(ids, loads, 0, 4, v, w), 1e-12));
+    // u sweeps [0, 1): each strain's share of it is its load × weight share.
+    const share = (I, L, wf) => { let n0 = 0; const N = 10000; for (let k = 0; k < N; k++) if (hostPick(I, L, 0, 4, wf, (k + 0.5) / N) === 0) n0++; return n0 / N; };
+    check('pick by load', near(share(ids, loads, null), 0.75, 1e-3));
+    check('pick by load × weight', near(share(ids, loads, w), 0.75 / (0.75 + 0.75), 1e-3));
+    check('pick ignores slot order', near(share(swapped, swappedLoads, w), share(ids, loads, w), 1e-3));
+    check('a zero weight is never picked', share(ids, loads, (s) => (s === 0 ? 0 : 1)) === 0);
+}
+{
+    // The tick reads every I cell's strains as a mixture. Each test fills the
+    // world with I cells carrying two strains at equal β, so nothing new
+    // enters a host and within-host loads stay put.
+    function mixedWorld(setup) {
+        const { grid, params, toggles } = world();
+        const reg = createRegistry(params);
+        const b = registerStrain(reg, params, 0, 0, null, 3, 0);
+        // The registry clamps γ to its range; zero both strains' exits here.
+        for (const s of [0, b]) { reg.gamma[s] = 0; reg.mu[s] = 0; }
+        setup(params, toggles, reg, b);
+        let k = 0;
+        for (const i of grid.activeIndices) {
+            grid.compartment[i] = Compartment.I;
+            for (let s = 0; s < 4; s++) { grid.strain_ids[i * 4 + s] = EMPTY_STRAIN; grid.strain_loads[i * 4 + s] = 0; }
+            // Half the cells hold the pair in slots 0 and 1, half in 3 and 2.
+            const [sa, sb] = k++ % 2 ? [0, 1] : [3, 2];
+            grid.strain_ids[i * 4 + sa] = 0; grid.strain_loads[i * 4 + sa] = 0.5;
+            grid.strain_ids[i * 4 + sb] = b; grid.strain_loads[i * 4 + sb] = 0.5;
+        }
+        return { grid, params, toggles, reg, b };
+    }
+    const halves = (grid, test) => {
+        let n = [0, 0], hit = [0, 0], k = 0;
+        for (const i of grid.activeIndices) { const h = k++ % 2; n[h]++; if (test(i)) hit[h]++; }
+        return [hit[0] / n[0], hit[1] / n[1]];
+    };
+
+    // Recovery at the load-weighted γ: α never recovers, b always would.
+    {
+        const { grid, params, toggles, reg } = mixedWorld((p, t, reg, b) => { reg.gamma[b] = 1; });
+        tick(grid, params, toggles, Topology.TORUS, mulberry32(3), reg, 1);
+        const [h0, h1] = halves(grid, (i) => grid.compartment[i] === Compartment.R);
+        check('recovery at the load-weighted γ', near(h0, 0.5, 0.06) && near(h1, 0.5, 0.06), [h0, h1]);
+    }
+    // A carrier keeps the strain whose c_seed made it one.
+    {
+        const { grid, params, toggles, reg, b } = mixedWorld((p, t, reg, b) => {
+            t.C = true; reg.gamma[0] = 1; reg.gamma[b] = 1; reg.c_seed[0] = 0; reg.c_seed[b] = 1;
+        });
+        tick(grid, params, toggles, Topology.TORUS, mulberry32(4), reg, 1);
+        const carrier = (i) => (grid.flags[i] & Flag.CARRIER) !== 0;
+        const [h0, h1] = halves(grid, carrier);
+        check('carriers at the γ-weighted c_seed', near(h0, 0.5, 0.06) && near(h1, 0.5, 0.06), [h0, h1]);
+        check('a carrier keeps the strain that made it one', grid.activeIndices.every((i) => !carrier(i) || grid.strain_ids[i * 4] === b));
+    }
+    // An F-corpse keeps the strain that killed it.
+    {
+        const { grid, params, toggles, reg, b } = mixedWorld((p, t, reg, b) => { t.F = true; reg.mu[b] = 1; });
+        tick(grid, params, toggles, Topology.TORUS, mulberry32(5), reg, 1);
+        const dead = grid.activeIndices.filter((i) => grid.compartment[i] === Compartment.D);
+        check('deaths at the load-weighted μ', near(dead.length / grid.activeIndices.length, 0.5, 0.06), dead.length);
+        check('an F-corpse keeps the strain that killed it', dead.every((i) => grid.strain_ids[i * 4] === b));
+    }
+    // A new Z carries the strain whose dz_alive made it.
+    {
+        const { grid, params, toggles, reg, b } = mixedWorld((p, t, reg, b) => { t.Z = true; reg.dz_alive[0] = 0; reg.dz_alive[b] = 1; });
+        tick(grid, params, toggles, Topology.TORUS, mulberry32(6), reg, 1);
+        const z = grid.activeIndices.filter((i) => grid.compartment[i] === Compartment.Z);
+        check('I → Z at the load-weighted dz_alive', near(z.length / grid.activeIndices.length, 0.5, 0.06), z.length);
+        check('a new Z carries the strain that made it', z.every((i) => grid.strain_ids[i * 4] === b));
+    }
+    // A host whose one strain sits past slot 0 is that strain's host, for
+    // its rates and for a spillover into an animal.
+    {
+        const { grid, params, toggles } = world();
+        params.gamma = 0; params.reverse_spillover_rate = 1;
+        const reg = createRegistry(params);
+        const b = registerStrain(reg, params, 0, 0, null, 3, 0);
+        reg.gamma[b] = 1;
+        const i = grid.activeIndices[Math.floor(grid.activeIndices.length / 2)];
+        const j = grid.activeIndices[Math.floor(grid.activeIndices.length / 3)];
+        for (const c of [i, j]) {
+            grid.compartment[c] = Compartment.I;
+            for (let s = 0; s < 4; s++) { grid.strain_ids[c * 4 + s] = EMPTY_STRAIN; grid.strain_loads[c * 4 + s] = 0; }
+            grid.strain_ids[c * 4 + 2] = b; grid.strain_loads[c * 4 + 2] = 1;
+        }
+        grid.animal[j] = Animal.S;
+        tick(grid, params, toggles, Topology.TORUS, mulberry32(7), reg, 1);
+        check('a strain past slot 0 sets the rates', grid.compartment[i] === Compartment.R);
+        check('and spills over into an animal', grid.animal[j] === Animal.I && grid.animal_strain[j] === b, [grid.animal[j], grid.animal_strain[j]]);
+    }
 }
 
 console.log(`immunity.test: ${pass} passed, ${fail} failed`);

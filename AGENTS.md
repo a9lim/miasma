@@ -27,11 +27,11 @@ overflow and frame rate.
 
 ```bash
 node src/topology.test.mjs        # 2510 checks: gluing, χ, orientability, cone points
-node src/immunity.test.mjs        # 45 checks: antigenic torus, memory, σ, within-host selection, reclamation
+node src/immunity.test.mjs        # 69 checks: antigenic torus, memory, σ, within-host selection, reclamation, the coinfected host as a mixture
 ```
 
 Run the first after touching `topology.js` and the second after touching immunity,
-strains, the sweep, or the tick's infection rolls. The topology test checks bounds, PLANE nulls, TORUS
+strains, the sweep, the tick's infection rolls, or how an I cell reads its strains. The topology test checks bounds, PLANE nulls, TORUS
 translation round-trips, then treats each surface's slot table as a cell complex and
 checks neighbor symmetry, χ, orientability, the cone points, six distinct neighbors on
 the torus (and on the Klein bottle everywhere but its 240° cone point), the edge
@@ -80,7 +80,7 @@ src/dynamics-scratch.js  next-state buffers, stamps and index lists recycled bet
 src/default-params.js    DEFAULT_PARAMS (sim-wide knobs plus the seed genome)
 src/default-toggles.js   DEFAULT_TOGGLES
 src/immunity.js          the antigenic torus (distance, midpoint) and per-cell memory: susceptibility, remember, forget
-src/strains.js           registry (genome, antigen, lineage, generation), mutation, recombination, reclamation
+src/strains.js           registry (genome, antigen, lineage, generation), mutation, recombination, reclamation, a coinfected host as a mixture
 src/strain-extinction.js periodic sweep: tombstone, reclaim dead branches, splice under pressure
 src/strain-style.js      a strain's mark from its antigen: hatch angle × OKLCH hue
 src/antigenic-map.js     Fig. 3, the antigenic map (Strains tab)
@@ -180,7 +180,9 @@ difference beyond noise.
 Most rates are per strain. The 26 `GENOME_FIELDS` (β σ γ μ, the maternal and flag
 rates, the Z rates, health impact, and animal β/γ/μ) live in registry arrays, and the
 tick reads them off a cell's slot-0 strain through the `*Of(i)` resolvers, falling back
-to `params` only when there is no strain. `createRegistry(params)` copies the current
+to `params` only when there is no strain. A coinfected I cell (two strains or more, or
+its one strain outside slot 0: `isMixed`) is read instead as a mixture of its strains
+(Coinfection below). `createRegistry(params)` copies the current
 params into strain α on every reset and preset apply, so changing a genome field in
 `params` alone does nothing mid-run; the knob and the Model tab write it onto every
 strain (main.js `setGenome`). `z_exhaust_threshold` stays sim-wide because it is an integer
@@ -211,7 +213,7 @@ strain's `l_seed` (needs `t.L`), CARRIER on I → R with `c_seed` (needs `t.C`).
 progresses at `l_reactivate` instead of σ. Without those rolls, `l_reactivate` and
 `c_transmit_mult` do nothing.
 
-I leaves at γ_eff + μ_eff, modified by H (`h_recover_mult`, `h_mortality_mult`), Q or
+I leaves at γ_eff + μ_eff (a coinfected cell's γ and μ are its mixture's), modified by H (`h_recover_mult`, `h_mortality_mult`), Q or
 hospital overflow (`h_overflow_mortality_mult`, only while `t.auto_hospital`), age, and
 health. Recovery remembers the antigen of every carried strain. A disease death gets F_CORPSE
 when `t.F`; natural deaths, culls, and Z deaths never do. Plain D disposes to EMPTY at
@@ -239,8 +241,8 @@ built (main.js `applyCoverage`, before the opening's seeds).
 
 Step 9 is gated wholesale on `t.Z` (off by default). Spawn pathways: D+F_CORPSE → Z
 (`dz_dead`), I → Z (`dz_alive`), and latent E → Z (`l_transform`, also needs `t.L`). A
-new Z carries its source strain at slot 0 with load 1, and every Z rate reads off that
-strain. L → Z lives in step 9 rather than step 5 so the "Z wins" overwrite applies to it.
+new Z carries its source strain at slot 0 with load 1 (from a coinfected I cell, one
+drawn by load × `dz_alive`), and every Z rate reads off that strain. L → Z lives in step 9 rather than step 5 so the "Z wins" overwrite applies to it.
 
 Each Z first rolls natural decay (`z_die_natural`), then exhaustion when at least
 `z_exhaust_threshold` neighbors are Z (`z_exhaust`). Then, for each neighbor that is not
@@ -284,7 +286,8 @@ write sets `animal_strain`, and recovery, death, disposal, and birth reset it to
 `EMPTY_STRAIN`; otherwise the lookup silently falls back to `params`. Spillover is
 co-located (same cell index): an infectious animal can expose a susceptible human with
 its own strain (`spillover_rate`, scaled by the human's susceptibility to it), and an infectious human can
-infect a susceptible animal with its slot-0 strain (`reverse_spillover_rate`).
+infect a susceptible animal with its strain, one drawn by load when it carries several
+(`reverse_spillover_rate`).
 Animal-to-animal spread runs over neighbors; on infection the strain comes from one of
 the transmitting neighbours, uniformly.
 
@@ -309,6 +312,37 @@ The vaccine has an antigen (`vax_ag_x`, `vax_ag_y`, α's by default) that the va
 brush and the rollout write into memory, so a drifted strain meets reduced vaccine
 efficacy. The Strains tab's "Match the vaccine to …" sets it to the selected (or
 dominant) strain's position.
+
+### Coinfection
+
+An I cell that stays I rolls for another strain through the same `pickIncomingStrain`
+as a first infection. A strain it already carries is skipped; a new one takes an empty
+slot, or evicts the lowest load, entering at `coinfection_load_delta` while the others
+scale down to make room. Memory is written only on recovery, so the infection a host
+carries gives it no cross-protection: only the same id is refused. Competition and
+pruning are step 3 (Immunity above), recombination is under Strains.
+
+Every other read of a coinfected I cell treats it as a load-weighted mixture of
+single-strain hosts (`strains.js` `hostMean`, `hostPick`). Its γ, μ, health damage,
+`c_seed` and `dz_alive` are its strains' means by load (the health multiplier by load ×
+μ, `c_seed` by load × γ, so each outcome's chance is exactly the mixture's). An outcome
+that keeps one strain credits it in proportion to load × the rate behind the outcome: an
+F-corpse keeps a strain by μ × its health factor, a carrier by γ × `c_seed`, a new Z by
+`dz_alive`, and an animal infected by reverse spillover by load alone. The pick reuses
+the uniform that rolled the outcome (u / p), so a mixed cell draws no more often than a
+single-strain one. Transmission and the prevalence census already weight by load, so no
+read of an I cell depends on the slot a strain sits in.
+
+A cell whose one strain sits at slot 0 takes the slot-0 resolvers unchanged, and
+`hostMean` returns a value its strains share exactly, so a run whose strains share one
+genome reads as it did when only slot 0 counted: every preset keeps its
+`tools/bench.mjs` fingerprints (five never mutate, and drift mutates only the antigen).
+In the Sandbox, where mutation varies every rate, the mixture changes the run (a new
+fingerprint) but not its statistics. Over 100 seeds of 3,000 days on the default world
+(2026-10-27), no measure differed from reading slot 0 alone: peak, deaths, case
+fatality, coinfections, carriers, F-corpses, living strains, and the carriers' mean β,
+γ, μ and `c_seed` (every rank-sum p above 0.05). Coinfection is rare on the lattice,
+under 1% of infected cell-days, because neighbours mostly carry the same lineage.
 
 ### Strains
 

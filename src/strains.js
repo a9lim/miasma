@@ -1,4 +1,5 @@
-// strains.js — strain registry, point mutation, recombination, reclamation.
+// strains.js — strain registry, point mutation, recombination, reclamation,
+// and a coinfected host read as a mixture of its strains.
 //
 // Data model:
 //   - The registry is a single mutable object owned by main.js (one per sim).
@@ -558,4 +559,78 @@ export function recombineStrains(reg, idA, idB, rng, birthTick) {
     return registerStrain(reg, newParams, idA, birthTick, idB,
         agMid(a.agX, b.agX) + AG_RECOMBINATION_JITTER * gaussian(r),
         agMid(a.agY, b.agY) + AG_RECOMBINATION_JITTER * gaussian(r));
+}
+
+// ─── A host's strains as a mixture ──────────────────────────────────────────
+//
+// A coinfected host acts, each tick, as a load-weighted mixture of
+// single-strain hosts. A rate is Σ x_s·w_s·v_s / Σ x_s·w_s over its slots (x
+// the load), and an outcome that keeps one strain (a carrier, an F-corpse, a
+// new Z, a spillover into an animal) is credited to a strain in proportion to
+// its load times the rate that produced the outcome. Only slots with an id and
+// a positive load count, so the slot a strain sits in never matters.
+
+/**
+ * True when a host has to be read as a mixture: two or more counted slots, or
+ * its one strain somewhere other than slot 0, which is the same as any counted
+ * slot past slot 0. Otherwise slot 0 speaks for it.
+ */
+export function isMixed(ids, loads, base, n) {
+    for (let s = 1; s < n; s++) {
+        if (ids[base + s] !== EMPTY_STRAIN && loads[base + s] > 0) return true;
+    }
+    return false;
+}
+
+/**
+ * The mean of value(sid) over a host's counted slots, weighted by load times
+ * weight(sid) (load alone when weight is null). It is computed as
+ * v₀ + Σ x_s·w_s·(v_s − v₀) / Σ x_s·w_s from the first counted slot's value v₀,
+ * so strains that share a value give it back exactly. Returns v₀ when every
+ * weight is zero, and NaN when no slot counts.
+ */
+export function hostMean(ids, loads, base, n, value, weight) {
+    let v0 = NaN, first = true, num = 0, den = 0;
+    for (let s = 0; s < n; s++) {
+        const sid = ids[base + s];
+        const x = loads[base + s];
+        if (sid === EMPTY_STRAIN || !(x > 0)) continue;
+        const v = value(sid);
+        if (first) { v0 = v; first = false; }
+        const w = weight ? x * weight(sid) : x;
+        num += w * (v - v0);
+        den += w;
+    }
+    return den > 0 ? v0 + num / den : v0;
+}
+
+/**
+ * The strain a host's outcome is credited to, drawn in proportion to load
+ * times weight(sid) (load alone when weight is null) by u, uniform on [0, 1).
+ * A caller that has just rolled u′ < p for the outcome passes u′ / p, so the
+ * pick costs no draw of its own. Returns the first counted strain when every
+ * weight is zero, and EMPTY_STRAIN when no slot counts.
+ */
+export function hostPick(ids, loads, base, n, weight, u) {
+    let total = 0, first = EMPTY_STRAIN;
+    for (let s = 0; s < n; s++) {
+        const sid = ids[base + s];
+        const x = loads[base + s];
+        if (sid === EMPTY_STRAIN || !(x > 0)) continue;
+        if (first === EMPTY_STRAIN) first = sid;
+        total += weight ? x * weight(sid) : x;
+    }
+    if (!(total > 0)) return first;
+    let left = u * total, last = first;
+    for (let s = 0; s < n; s++) {
+        const sid = ids[base + s];
+        const x = loads[base + s];
+        if (sid === EMPTY_STRAIN || !(x > 0)) continue;
+        const w = weight ? x * weight(sid) : x;
+        if (!(w > 0)) continue;
+        last = sid;
+        left -= w;
+        if (left < 0) return sid;
+    }
+    return last;
 }

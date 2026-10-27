@@ -109,7 +109,7 @@ What follows from it:
    filter, so every mutant, however small the change, is completely novel to every
    host. Escape is binary and costs nothing, so no lineage holds an antigenic
    advantage long enough to build a trunk. Within a host, selection ignores the
-   genome too: the incumbent strain always wins (see B). Without tracing, COVID-like registers
+   genome too: the incumbent strain always wins (see B; fixed in 2.1). Without tracing, COVID-like registers
    about 12,000 strains by day 600 (2,400 living), so a long run at high incidence
    would reach the 65,535 cap.
 5. **"Observed Re ≈ 1" while the outbreak grows.** The opening plate reads Re 0.86
@@ -185,14 +185,17 @@ s to the nearest memory. Storage is about 340 KB at K = 4.
   more transmissible pathogen burns out its local hosts and dies out (Rand, Keeling &
   Wilson 1995) **[standard]**. Every preset already sits in that over-exploiting
   regime, so this plate is closer than it looks.
-- Fix first: within-host selection ignores the genome. Step 3 updates each slot as
-  `old · (1 + k·(old − 1/n))` (`src/dynamics.js:460`), so a strain's fitness is its
-  own current load. The incumbent always grows, and a coinfecting strain that enters
-  at `coinfection_load_delta` = 0.35 always loses, whatever its genome. That is
-  frequency-dependent positive feedback, not replicator dynamics. Fitness should come
-  from a genome field, such as a within-host replication rate, which is also where a
-  nested within-host/between-host trade-off would live. (Codex spotted it; confirmed
-  here.)
+- Fixed in 2.1 M1: within-host selection ignored the genome. Step 3 updated each
+  slot as `old · (1 + k·(old − 1/n))`, so a strain's fitness was its own current
+  load. The incumbent always grew, and a coinfecting strain that entered at
+  `coinfection_load_delta` = 0.35 always lost, whatever its genome. That is
+  frequency-dependent positive feedback, not replicator dynamics. (Codex spotted it;
+  confirmed here.) Fitness is now β × the host's susceptibility to the strain, and
+  since 2026-10-27 every other rate of a coinfected host is the load-weighted mixture
+  of its strains' (`AGENTS.md`, Coinfection), where before only the strain in slot 0
+  counted. Fitness still has no term tied to virulence: a within-host replication
+  rate that raised both β and μ is where a nested within-host/between-host trade-off
+  would live.
 
 ### C. Time that recurs
 
@@ -380,8 +383,8 @@ an epidemic you want to win.
 6. Hospital capacity is `h_capacity_frac · W · H` (14,400 cells) rather than the
    active count (10,621), so the stated fraction is off by 36%. It is documented, but
    probably not intended.
-7. Within-host competition is genome-blind, and the incumbent always wins
-   (`src/dynamics.js:460`; see B).
+7. Within-host competition is genome-blind, and the incumbent always wins (see B;
+   fixed in 2.1 M1).
 
 ## A possible order
 

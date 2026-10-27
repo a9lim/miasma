@@ -46,6 +46,9 @@ import { runAnimalDynamics } from './dynamics-animal.js';
 import { ensureTickScratch, recycleTickScratch } from './dynamics-scratch.js';
 import {
     EMPTY_STRAIN,
+    hostMean,
+    hostPick,
+    isMixed,
     mutateStrain,
     recombineStrains
 } from './strains.js';
@@ -281,6 +284,22 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         const v = reg.l_seed[pickId];
         return v > 1 ? 1 : (v < 0 ? 0 : v);
     };
+    // A coinfected I cell (two strains or more, or its one strain outside slot
+    // 0) is read as a load-weighted mixture of its strains (strains.js
+    // hostMean, hostPick): every rate the I cell rolls is the mixture's, and
+    // an outcome that keeps one strain draws it by load × the rate behind it,
+    // from the same uniform that rolled the outcome, so no draw is added. A
+    // cell whose one strain sits at slot 0 takes the resolvers above.
+    const mixedAt = (i) => useStrains && !!strain_ids && isMixed(strain_ids, strain_loads, i * MAX_ACTIVE, MAX_ACTIVE);
+    const mixMean = (i, value, weight) => hostMean(strain_ids, strain_loads, i * MAX_ACTIVE, MAX_ACTIVE, value, weight);
+    const mixPick = (i, weight, u) => hostPick(strain_ids, strain_loads, i * MAX_ACTIVE, MAX_ACTIVE, weight, u);
+    const gammaV = (s) => reg.gamma[s];
+    const muV = (s) => reg.mu[s];
+    const hMortV = (s) => reg.health_mortality_mult[s];
+    const cSeedV = (s) => { const v = reg.c_seed[s]; return v > 1 ? 1 : (v < 0 ? 0 : v); };
+    const carrierW = (s) => reg.gamma[s] * cSeedV(s);
+    const degradeV = (s) => reg.health_degrade_per_tick[s];
+    const dzAliveV = (s) => reg.dz_alive[s];
 
     let sToE = 0;
     let eToI = 0;
@@ -935,17 +954,23 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 // Combined iLeaveRate = γ_eff + μ_eff*age_factor*health_factor,
                 // clamped to ≤ 1. After leaving I, H clears; Q persists.
                 //
-                // Phase A: γ, μ, health_mortality_mult are read from
-                // the cell's slot-0 strain when present. The status-
-                // pre-pass-derived modifiers (iLeaveHGamma etc) were
-                // computed against sim-wide γ/μ — instead of
-                // precomputing them we now derive H/Q/baseline branches
-                // from per-strain γ/μ inline. Slightly more work per
-                // I cell but the modifier branch is already cold.
-                const sidI = sidOf(i);
-                const gammaSrc = sidI >= 0 ? reg.gamma[sidI] : gamma;
-                const muSrc    = sidI >= 0 ? reg.mu[sidI]    : mu;
-                const hMortMult = sidI >= 0 ? reg.health_mortality_mult[sidI] : health_mortality_mult;
+                // γ, μ and health_mortality_mult are the slot-0 strain's,
+                // or for a coinfected cell the mixture's: γ and μ by load,
+                // the health multiplier by load × μ, so that μ × health
+                // factor is the mixture's too. The H, Q and overflow
+                // branches below scale them per cell, after the strain.
+                const mixI = mixedAt(i);
+                let gammaSrc, muSrc, hMortMult;
+                if (mixI) {
+                    gammaSrc = mixMean(i, gammaV, null);
+                    muSrc = mixMean(i, muV, null);
+                    hMortMult = mixMean(i, hMortV, muV);
+                } else {
+                    const sidI = sidOf(i);
+                    gammaSrc = sidI >= 0 ? reg.gamma[sidI] : gamma;
+                    muSrc    = sidI >= 0 ? reg.mu[sidI]    : mu;
+                    hMortMult = sidI >= 0 ? reg.health_mortality_mult[sidI] : health_mortality_mult;
+                }
                 const ns = nextStatus[i];
                 let gammaEff, muEff;
                 if (ns === Status.H) {
@@ -965,7 +990,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 }
                 const aNorm = Math.min(1, age[i] / safeMaxAge);
                 const ageFactor = 1 + ageSevDelta * aNorm;
-                const hFactor = 1 + (hMortMult - 1) * (1 - health[i]);
+                const sick = 1 - health[i];
+                const hFactor = 1 + (hMortMult - 1) * sick;
                 muEff = muEff * ageFactor * hFactor;
 
                 let leaveRate = gammaEff + muEff;
@@ -973,33 +999,39 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 const recoverShare = leaveRate > 0 ? gammaEff / (gammaEff + muEff) : 0;
 
                 if (r() < leaveRate) {
-                    if (r() < recoverShare) {
+                    // Below recoverShare the cell recovers, above it dies;
+                    // a coinfected death credits its strain from the rest.
+                    const uLeave = r();
+                    if (uLeave < recoverShare) {
                         next[i] = Compartment.R;
-                        // Carrier roll: per-strain c_seed read from
-                        // the strain at slot 0. A fraction of
+                        // Carrier roll: per-strain c_seed, for a
+                        // coinfected cell weighted by load × γ (the
+                        // strains it recovered from). A fraction of
                         // recoveries leave with the C (chronic carrier)
                         // flag set, making them low-rate transmission
                         // sources via cTransmitMultOf in
                         // pickIncomingStrain. Gated on t.C so toggle-
                         // off disables the mechanic entirely.
-                        const cSeedHere = cSeedOf(i);
-                        const becameCarrier = (t.C && cSeedHere > 0 && r() < cSeedHere);
+                        const cSeedHere = mixI ? mixMean(i, cSeedV, gammaV) : cSeedOf(i);
+                        let uC = 1;
+                        const becameCarrier = (t.C && cSeedHere > 0 && (uC = r()) < cSeedHere);
                         if (becameCarrier) {
                             nextFlags[i] = nextFlags[i] | Flag.CARRIER;
                         }
                         // Recovery remembers the antigen of every strain
                         // the cell was carrying, then clears loads + ids.
                         //
-                        // If the cell became a CARRIER, the strain at slot
-                        // 0 is RETAINED with load=0 so cTransmitMultOf can
-                        // read its per-strain transmit multiplier at the
-                        // source side. Immune memory is independent of
-                        // carrier memory.
+                        // If the cell became a CARRIER, the strain it
+                        // carries is RETAINED at slot 0 with load=0 so
+                        // cTransmitMultOf can read its per-strain transmit
+                        // multiplier at the source side: slot 0's, or for a
+                        // coinfected cell one drawn by load × γ × c_seed.
+                        // Immune memory is independent of carrier memory.
                         if (useStrains) {
                             const slot0 = i * MAX_ACTIVE;
-                            const carrierStrain = becameCarrier && strain_ids
-                                ? strain_ids[slot0]
-                                : EMPTY_STRAIN;
+                            const carrierStrain = !becameCarrier || !strain_ids
+                                ? EMPTY_STRAIN
+                                : mixI ? mixPick(i, carrierW, uC / cSeedHere) : strain_ids[slot0];
                             if (strain_ids) {
                                 for (let s = 0; s < MAX_ACTIVE; s++) {
                                     const sid = strain_ids[slot0 + s];
@@ -1039,13 +1071,18 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         // strain that killed them (load=0 memory) so
                         // fTransmitMultOf, fDecayOf, and dzDeadOf can
                         // all resolve to the right strain at the
-                        // F-corpse source side. Non-F deaths wipe
-                        // slot 0 (natural corpses carry no payload).
+                        // F-corpse source side: slot 0's, or for a
+                        // coinfected cell one drawn by load × μ × health
+                        // factor. Non-F deaths wipe slot 0 (natural
+                        // corpses carry no payload).
                         if (useStrains) {
                             const slot0 = i * MAX_ACTIVE;
-                            const fStrain = becameFCorpse && strain_ids
-                                ? strain_ids[slot0]
-                                : EMPTY_STRAIN;
+                            const fStrain = !becameFCorpse || !strain_ids
+                                ? EMPTY_STRAIN
+                                : mixI
+                                    ? mixPick(i, (s) => reg.mu[s] * (1 + (reg.health_mortality_mult[s] - 1) * sick),
+                                        recoverShare < 1 ? (uLeave - recoverShare) / (1 - recoverShare) : 0)
+                                    : strain_ids[slot0];
                             for (let s = 0; s < MAX_ACTIVE; s++) {
                                 nextStrainIds[slot0 + s] = EMPTY_STRAIN;
                                 nextStrainLoads[slot0 + s] = 0;
@@ -1130,12 +1167,13 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     }
                 }
                 // Step 7: health. An I cell that stays I loses its strain's
-                // health_degrade_per_tick (read off the start-of-tick slot 0),
+                // health_degrade_per_tick (read off the start-of-tick slot 0,
+                // or the load-weighted mean of a coinfected cell's strains),
                 // clamped to 0; a cell that recovered keeps its health, and
                 // one that died was set to 0 above. Different strains can
                 // damage hosts at very different rates (HIV vs flu).
                 if (next[i] === Compartment.I) {
-                    const degrade = healthDegradeOf(i);
+                    const degrade = mixI ? mixMean(i, degradeV, null) : healthDegradeOf(i);
                     if (degrade > 0) {
                         let h = health[i] - degrade;
                         if (h < 0) h = 0;
@@ -1599,9 +1637,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     }
                 } else if (c === Compartment.I) {
                     // (b) Spontaneous live zombification. Per-strain
-                    // dz_alive; Z inherits the I cell's strain.
-                    if (r() < dzAliveOf(i)) {
-                        const srcStrain = slot0Read(i);
+                    // dz_alive; Z inherits the I cell's strain. A
+                    // coinfected cell rolls the load-weighted dz_alive and
+                    // passes on a strain drawn by load × dz_alive.
+                    const mixZ = mixedAt(i);
+                    const pZ = mixZ ? mixMean(i, dzAliveV, null) : dzAliveOf(i);
+                    const uZ = r();
+                    if (uZ < pZ) {
+                        const srcStrain = mixZ ? mixPick(i, dzAliveV, uZ / pZ) : slot0Read(i);
                         next[i] = Compartment.Z;
                         setZStrain(i, srcStrain);
                         iToZ++;
@@ -1754,6 +1797,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         animal_strain,
         compartment,
         strain_ids,
+        strain_loads,
         mem,
         next,
         nextAnimal,

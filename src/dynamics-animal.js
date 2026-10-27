@@ -5,7 +5,7 @@
 // tick orchestrator keeps the global step order visible.
 
 import { Animal, Compartment } from './config.js';
-import { EMPTY_STRAIN } from './strains.js';
+import { EMPTY_STRAIN, hostPick, isMixed } from './strains.js';
 import { susceptibility } from './immunity.js';
 import { nextSuccess } from './prng.js';
 
@@ -32,6 +32,7 @@ export function runAnimalDynamics(ctx) {
         animal_strain,
         compartment,
         strain_ids,
+        strain_loads,
         mem,
         next,
         nextAnimal,
@@ -147,13 +148,19 @@ export function runAnimalDynamics(ctx) {
         if (a === Animal.S) {
             let infected = false;
             if (revSpillP > 0 && compartment[i] === Compartment.I) {
+                // The human's strain: slot 0's, or for a coinfected human
+                // one drawn by load from the uniform that rolled the spill.
                 let humanSid = 0;
                 let hasStrain = true;
+                let mixed = false;
                 if (useStrains && strain_ids) {
                     humanSid = strain_ids[i * maxActive];
-                    hasStrain = humanSid !== EMPTY_STRAIN;
+                    mixed = isMixed(strain_ids, strain_loads, i * maxActive, maxActive);
+                    hasStrain = mixed || humanSid !== EMPTY_STRAIN;
                 }
-                if (hasStrain && rng() < revSpillP) {
+                const u = hasStrain ? rng() : 1;
+                if (u < revSpillP) {
+                    if (mixed) humanSid = hostPick(strain_ids, strain_loads, i * maxActive, maxActive, null, u / revSpillP);
                     nextAnimal[i] = Animal.I;
                     nextAnimalStrain[i] = humanSid;
                     reverseSpillovers++;
