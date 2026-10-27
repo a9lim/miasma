@@ -25,7 +25,7 @@ parallel lanes fit a whole version in one.
 
 | Date | Decision |
 |---|---|
-| 2026-10-24 | **The versions:** 2.1 is immunity by antigenic distance and six presets that work. 3.0 is the game, not before the following week's usage window. (3.0's form is reopened in Open 1.) |
+| 2026-10-24 | **The versions:** 2.1 is immunity by antigenic distance and six presets that work. 3.0 is the game, not before the following week's usage window. |
 | 2026-10-24 | **Fewer, better presets** (Worldline's rule): a preset earns its place as an experiment with one knob, not as coverage. The cut presets' mechanics stay reachable from the Model tab. |
 | 2026-10-24 | **Antigenic memory replaces the bloom filter outright.** Miasma persists no state, so there is nothing to migrate and no compatibility reader to keep. |
 | 2026-10-24 | **2.0, the atlas:** the plate in the line of Snow's map, the inks, four surfaces that glue every edge or none (`58a3d09`). |
@@ -35,6 +35,7 @@ parallel lanes fit a whole version in one.
 | 2026-10-25 | **The world's size is a setting** (Experiments → World, `?r=`): 10,621 to 96,661 cells. **The default is 24,031** (a9's call). |
 | 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it, and the margin is the atlas's apparatus. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
 | 2026-10-27 | **WebGPU is the one plate renderer** (`b7082e3`); a browser without it sees a notice while the margin runs. |
+| 2026-10-27 | **3.0 is tactical** (a9's call, against a proposal to reframe it as an inference game): you direct measures on the map itself, drawing where the doses go, cordoning, tracing a case's contacts, sampling strains. It is not points spent on abstract policies over a background simulation, as in strategic, global-level games like *Plague Inc: The Cure*. Claude's follow-on: inference pays through where the orders land, so there is no separate findings layer (§7.3). |
 
 Rows that only scheduled 2.1 (built in one session; 3.0 to wait until it could be done
 properly) are in git history.
@@ -43,13 +44,9 @@ properly) are in git history.
 
 Each has a recommendation; a9 decides.
 
-1. **3.0's core verb** (§7): *the Inquiry*, where the player reads partial reports, works
-   out the cause and files findings that are scored when the truth is revealed
-   (recommended), or *containment*, the reverse Plague Inc of the first sketch. Ndemic's
-   *Plague Inc: The Cure* (2020) already ships containment: patient-zero hunts, contact
-   tracing, lockdowns with public compliance, a vaccine pipeline. Inference is what
-   Miasma's hidden spatial truth, antigenic adversary and counterfactual twins are
-   uniquely placed to make a game of.
+1. **3.0's orders** (§7.2): shapes as the main verbs (a ring around a case, a belt drawn
+   as a line, a lassoed cordon, trace and sample by click), with the brushes for fine work
+   (recommended), or the sandbox's brushes alone.
 2. **Spillover's experiment** (§4.5): emergence, with human transmissibility as the knob
    and chain sizes as the measure (recommended), or the spillover rate as now.
 3. **The transmission record's view** (§4.2): Descent as a seventh view (recommended), or
@@ -60,8 +57,8 @@ Each has a recommendation; a9 decides.
    other.
 6. **3.0's clock:** weekly turns around the Weekly Return (recommended) or real time with
    pause.
-7. **3.0's mode:** the sandbox and the plates stay the front door and the Inquiry is a
-   mode (recommended), or the Inquiry becomes the front door.
+7. **3.0's mode:** the sandbox and the plates stay the front door and the game is a mode
+   (recommended), or the game becomes the front door.
 
 ## 1. Where Miasma stands
 
@@ -69,7 +66,7 @@ Each has a recommendation; a9 decides.
 measured live in the caption and, where theory gives one, a predicted number ticked on the
 knob's ruler. The plate is drawn after Snow on four glued surfaces up to 96,661 cells at
 60 fps; immunity works by antigenic distance; the Model tab draws the whole state machine
-as a figure whose parts hold every rate. The audit of 2026-10-27 found five things.
+as a figure whose parts hold every rate. The audit of 2026-10-27 found four things.
 
 1. **Half the plates read only in their captions.** Threshold, Herd immunity and Zombie
    apocalypse show their phenomenon on the plate: a ragged front; one pale channel the
@@ -88,15 +85,14 @@ as a figure whose parts hold every rate. The audit of 2026-10-27 found five thin
    `about.md` opens on appears nowhere as a number.
 4. **Only Drift recurs, and as an endemic soup.** Immunity never wanes, so every other
    run has one act.
-5. **The 3.0 sketch is close to a shipped game** (Open 1).
 
 ## 2. The thesis
 
 The next step gives the plate **cause and time**: who infected whom, drawn on the map, and
 what happened where, drawn against time. Then it widens what the plate can show (contact
-beyond the neighbours, waves that come back). Last, it hands the reader the
-epidemiologist's real job, which is inference: in 3.0 you read reports, work out the cause
-and act on it, and the truth is revealed at the end.
+beyond the neighbours, waves that come back). Last, 3.0 hands the reader the map itself:
+a tactical game in which you direct measures on the plate against a pathogen that evolves
+on its own, seeing only what is reported, with the truth revealed at the end.
 
 The thread through all of it is one new record. Once each infection keeps its source, the
 Descent view draws the outbreak's tree, the caption counts Re instead of estimating it,
@@ -110,7 +106,7 @@ epilogue reveals the true tree under the reported plate.
 | **2.2** | Cause and time | the transmission record and the Descent view, a space–time figure, the trunk on the map, the three weak plates rebuilt, a counter-based RNG and recipe links (§4) | M–L |
 | **2.3** | Beyond the neighbours | the mixing dial, the ghost of the ODE, roads, two new plates: the ghost and the front (§5) | M |
 | **2.4** | Time that recurs | waning that holds then lapses, the phase view with spiral cores and their charges, the year rose, the spirals plate (§6) | M |
-| **3.0** | The Inquiry | reports instead of truth, inquiries and orders on a budget, findings scored against the hidden truth, twins (§7) | L |
+| **3.0** | The game | tactical: orders drawn on the map on a weekly budget, reports instead of truth, an evolving adversary, scored against twins (§7) | L |
 
 2.2 comes first: it repairs the half of the atlas that doesn't read, and its record and RNG
 are 3.0's substrate. 2.3 and 2.4 touch different parts of the tick (transmission for 2.3,
@@ -323,42 +319,50 @@ or flee them is a question the literature can't answer and the plate can [specul
 Once runs recur, the rose becomes Nightingale's own form: twelve thirty-day wedges, with
 last year dashed, so a seasonal plate draws a lopsided rose. S.
 
-## 7. 3.0: the Inquiry
+## 7. 3.0: the game
 
-A game of reading the plate under partial information, in Snow's position: the plate
-shows what was reported, the cause is hidden, and you have a week's budget to find it out
-and act. The truth, the true transmission tree and the world you didn't touch are
-revealed at the end. Open 1 decides whether this is the frame; the first sketch's
-containment game is in git history.
+A tactical epidemic game on the plate (a9's sketch, 2026-10-24). The pathogen evolves on
+its own through 2.1's machinery, and you contain it as the world's Medical Officer of
+Health by directing measures on the map itself: drawing where the doses go, cordoning,
+tracing a case's contacts, sampling strains. You see only what is reported, doses and
+staff are finite, and nothing is instant. Every order is a place on the lattice, and the
+lattice is the world it acts on; that is what sets it apart from strategic, global-level
+games such as *Plague Inc: The Cure*, where points buy policies applied to a background
+simulation of countries.
 
 ### 7.1 The week
 
 The run proceeds in weeks around the Weekly Return (Open 6): a plate of reported deaths
-and notified cases in Snow's manner, a short table, a headline in the caption. Snow noticed
-the table on the South London water companies in the Registrar General's Weekly Return of
-19 November 1853, and Farr's Return of 14 October 1854 summarized the registrars' inquiry
-into each household's water supply [standard]. Each week you:
+and notified cases in Snow's manner, a short table, a headline in the caption. It is
+historically exact: Snow noticed the table on the South London water companies in the
+Registrar General's Weekly Return of 19 November 1853, and Farr's Return of 14 October
+1854 summarized the registrars' inquiry into each household's water supply [standard].
+Each week you read the Return, issue orders on the plate, and the world runs seven days.
 
-- **Read** the Return.
-- **Inquire**, spending effort: *test* an area (reveals the true state under the brush,
-  today); *trace* a reported case (reveals its parent and children in the true tree, one
-  generation per order: 2.2's record); *sample* a case (reveals its strain's mark and
-  antigenic position). During a case, Fig. 3 and Fig. 4 show only sampled strains:
-  genomic surveillance as a budget.
-- **Act**: vaccinate, cordon, close a pump or a road, bury safely, cull. Each costs
-  something and takes time; vaccine immunity starts after a delay.
-- **Find**: file a finding when you think you know. A finding names the cause in the
-  case's own terms: this pump; the reservoir, not people; strain ω13 has escaped the
-  vaccine; this world is a Klein bottle.
+### 7.2 Orders are shapes on the map [synthesis] (Open 1)
 
-### 7.2 Authority follows evidence [synthesis]
+A weekly budget of money and staff, and a dose supply that ramps with production. Every
+order is placed on the plate, costs something and takes time:
 
-Strong orders need a finding on file. Closing a pump needs a finding that names it,
-updating the vaccine needs a sampled strain, a wide cordon needs reported cases inside it.
-In September 1854 Snow persuaded the parish's Board of Guardians to remove the Broad
-Street pump's handle by presenting his evidence [standard; verify the date before it
-reaches `about.md`]. It makes inference the core loop rather than a side panel: a wrong
-finding costs weeks.
+- **Ring:** click a case and drag the radius to vaccinate around it. It spends doses;
+  immunity begins after a delay and uses the current vaccine antigen.
+- **Belt:** draw a line for a vaccinated firebreak of a chosen width. Murray, Stanley &
+  Brown 1986 estimated the width that stops a fox-rabies front [standard].
+- **Cordon:** lasso a region into quarantine, costed per cell-day. Compliance fatigues,
+  so a long cordon leaks.
+- **Test:** brush an area to reveal its true state today.
+- **Trace:** click a reported case to reveal its parent and children in the true
+  transmission tree (2.2's record), one generation per order, up to tracer capacity.
+- **Sample:** click a case to reveal its strain's mark and antigenic position. During a
+  game, Fig. 3 and Fig. 4 show only sampled strains, so the phylogeny is the surveillance
+  you paid for.
+- **Close** a pump or a road (§5.4). **Bury safely, cull, sanitize:** corpses and the
+  reservoir.
+- **Update the vaccine** to match a sampled strain. It takes weeks, and the virus keeps
+  drifting meanwhile: the flu-shot decision, built on 2.1's vaccine antigen.
+
+The brushes stay for fine work. Shapes keep a week to a handful of decisions on a
+24,000-cell world, which is the density a tactical turn wants.
 
 ### 7.3 Reports, not truth
 
@@ -366,6 +370,11 @@ Detection is a process. Deaths are reported, cases only sometimes and after a de
 tests reveal the truth where they are spent. Shoals' rule carries over: the reported path
 never reads hidden state except through detection, and a test asserts it. This retires
 the omniscient auto-quarantine the sandbox still runs.
+
+Inference pays through where the orders land. Knowing the cause matters because it says
+where to draw: the pump to close, the seam the wave will come back through, the strain to
+match. A separate layer of declared findings was considered on 2026-10-27 and dropped; on
+top of placed orders it would be the game telling rather than showing.
 
 ### 7.4 The adversary
 
@@ -379,11 +388,12 @@ transmission happens before symptoms [standard], which latency (the L flag) mode
 
 When you issue an order, the untouched world runs alongside as a twin with common random
 numbers (§4.6), so the twins differ only by your orders. The score is deaths averted
-against the twins per unit spent, with a band from several twins, plus each finding's
-correctness and the day it was filed. The epilogue overlays reported against true cases,
-draws the true tree in Descent, hatches your cordons, and dashes the twin's isochrones.
-Endings: eradication (no cases through a certification window under active surveillance),
-an endemic equilibrium, or collapse. The last Weekly Return is the epilogue.
+against the twins per unit spent, with a band from several twins. On a stochastic world the
+twins are also what make tactics legible: an order's effect is the gap between your world
+and its twin. The epilogue overlays reported against true cases, draws the true tree in
+Descent, hatches your cordons, and dashes the twin's isochrones. Endings: eradication (no
+cases through a certification window under active surveillance), an endemic equilibrium,
+or collapse. The last Weekly Return is the epilogue.
 
 ### 7.6 Cases
 
@@ -391,18 +401,19 @@ an endemic equilibrium, or collapse. The last Weekly Return is the epilogue.
   point sources, each cell drinking from its nearest by lattice distance, an infected
   source infecting its drinkers (Tien & Earn 2010's SIWR shape) [standard]. Snow's 1855
   map drew the boundary of equal walking distance around the pump [standard]; the plate
-  draws the same boundaries, through the gluing on the closed surfaces. The finding names
-  the pump; the order removes the handle.
+  draws the same boundaries, through the gluing on the closed surfaces. Removing the
+  handle is the inference: the wrong pump costs a week.
 - **The ring:** few doses, reports only. A ring around each report or doses spread
   evenly, as in Foege's surveillance-containment from the December 1966 Ogoja outbreak
   [standard].
 - **The season:** drift. Sample, choose the vaccine antigen each year, and live with the
   months it takes.
-- **The reservoir:** emergence (§4.5). Is it people or the animals? The finding decides
-  whether culling or cordons are the right spend.
-- **The unknown country:** the plate hides its chevrons and glued-edge copies, and the
-  finding names the surface from where the wave comes back, mirrored or not; in 2.4,
-  from a spiral whose turning flips. Only Miasma could set this case.
+- **The reservoir:** emergence (§4.5). Are the chains people's or the animals'? It
+  decides whether culling or cordons are the right spend.
+- **The unknown country:** the plate hides its chevrons and glued-edge copies. Read the
+  gluing from where the wave comes back, mirrored or not, and cordon the seam before it
+  arrives; in 2.4, a spiral whose turning flips gives it away. Only Miasma could set this
+  case.
 - **The cure:** oncolytic virotherapy on the H&E section, an epidemic you want to win
   (`VISION.md` H; Wodarz et al. 2012) [standard].
 - **Zombie defense,** for fun.
@@ -414,12 +425,17 @@ an endemic equilibrium, or collapse. The last Weekly Return is the epilogue.
 1. 2.2's record and RNG (tracing, twins, the epilogue, the daily case).
 2. The tick in a worker (§8): twins multiply the tick's cost.
 3. The detection and report layer (§7.3). M.
-4. Inquiries, orders, findings, budgets and the weekly loop with the Return. M–L.
+4. Orders as shapes, budgets and delays (§7.2), and the weekly loop with the Return. M–L.
 5. Twins, scoring and the epilogue. M.
 6. Per case: the water route for Broad Street, roads (§5.4) if closing them is an order.
 
 The game stays inside the design system: the Return is editorial (Newsreader and
 hairlines, no game chrome), the red stays the disease, and your orders are inks.
+
+### 7.8 Open within 3.0
+
+One budget, or separate doses, staff and money. How deep compliance goes. Deaths or
+life-years as the score.
 
 ## 8. Engine
 
@@ -522,4 +538,4 @@ Also see `VISION.md` for the first round's list.
 - Wallinga, J. & Teunis, P. (2004). Different epidemic curves for severe acute respiratory syndrome reveal similar impacts of control measures. *Am. J. Epidemiol.* 160, 509–516. doi:10.1093/aje/kwh255
 - Wodarz, D. et al. (2012). Complex spatial dynamics of oncolytic viruses in vitro: mathematical and experimental approaches. *PLOS Comput. Biol.* 8, e1002547. doi:10.1371/journal.pcbi.1002547
 - Foege, W. H. and colleagues: surveillance-containment in eastern Nigeria from the December 1966 Ogoja outbreak; see `VISION.md`.
-- Ndemic Creations, *Plague Inc: The Cure* (2020), the expansion in which the player stops a pandemic.
+- Ndemic Creations, *Plague Inc: The Cure* (2020): a strategic, global-level expansion in which the player stops a pandemic by spending points on policies; the contrast for §7.
