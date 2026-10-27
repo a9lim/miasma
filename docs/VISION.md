@@ -9,7 +9,9 @@ preset rework are 2.1, which landed on 2026-10-24 (with seasonality from C, and 
 of 3.0, the game. On 2026-10-27 Claude refreshed the roadmap from an audit and proposed
 A as 2.3, C and G as 2.4 (waning, the phase view, the spirals plate, measured with
 `tools/spirals.mjs`), D and E as the core of 3.0, the tactical game, Plate I as its
-first case and H as another; a9 ratifies them through the roadmap's Open items. The measurements below describe the build before 2.1. Claims carry a tag: **[standard]** for an established result,
+first case and H as another; a9 ratifies them through the roadmap's Open items. Rewind,
+replay and shareable runs (E, and I1 except for 3.0's twins) were set aside the same day:
+Miasma is a live, causal, observational sandbox, not a record. The measurements below describe the build before 2.1. Claims carry a tag: **[standard]** for an established result,
 **[synthesis]** for a connection drawn here, **[speculation]** for a guess still to
 test. Codex checked every citation against a retrieved source (several claims were
 corrected), Crossref confirmed every DOI, and Codex adversarially checked the

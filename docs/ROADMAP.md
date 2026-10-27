@@ -36,6 +36,7 @@ parallel lanes fit a whole version in one.
 | 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it, and the margin is the atlas's apparatus. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
 | 2026-10-27 | **WebGPU is the one plate renderer** (`b7082e3`); a browser without it sees a notice while the margin runs. |
 | 2026-10-27 | **3.0 is tactical** (a9's call, against a proposal to reframe it as an inference game): you direct measures on the map itself, drawing where the doses go, cordoning, tracing a case's contacts, sampling strains. It is not points spent on abstract policies over a background simulation, as in strategic, global-level games like *Plague Inc: The Cure*. Claude's follow-on: inference pays through where the orders land, so there is no separate findings layer (§7.3). |
+| 2026-10-27 | **Lineages, not records** (a9's call): 2.2 tracks infection lineages because the live sim draws, measures and traces them, and builds no checkpoints, replay or recipe links. Miasma is a live, causal, observational sandbox; record artifacts kept for their own sake distract from it, and sharing runs isn't worth the work. The counter-based RNG moves to 3.0, where the twins need it. |
 
 Rows that only scheduled 2.1 (built in one session; 3.0 to wait until it could be done
 properly) are in git history.
@@ -49,7 +50,7 @@ Each has a recommendation; a9 decides.
    (recommended), or the sandbox's brushes alone.
 2. **Spillover's experiment** (§4.5): emergence, with human transmissibility as the knob
    and chain sizes as the measure (recommended), or the spillover rate as now.
-3. **The transmission record's view** (§4.2): Descent as a seventh view (recommended), or
+3. **The lineage view** (§4.2): Descent as a seventh view (recommended), or
    a layer drawn over the State view.
 4. **Geography** (§5.4): a road brush in 2.3, painted routes that carry long-range
    contact (recommended), or the world stays a bare hexagon.
@@ -94,7 +95,8 @@ beyond the neighbours, waves that come back). Last, 3.0 hands the reader the map
 a tactical game in which you direct measures on the plate against a pathogen that evolves
 on its own, seeing only what is reported, with the truth revealed at the end.
 
-The thread through all of it is one new record. Once each infection keeps its source, the
+The thread through all of it is one new piece of live state. Once each infection keeps its
+source, the
 Descent view draws the outbreak's tree, the caption counts Re instead of estimating it,
 Spillover measures stuttering chains, a trace order in 3.0 follows real edges, and the
 epilogue reveals the true tree under the reported plate.
@@ -103,23 +105,25 @@ epilogue reveals the true tree under the reported plate.
 
 | Version | Theme | Contents | Size |
 |---|---|---|---|
-| **2.2** | Cause and time | the transmission record and the Descent view, a space–time figure, the trunk on the map, the three weak plates rebuilt, a counter-based RNG and recipe links (§4) | M–L |
+| **2.2** | Cause and time | infection lineages and the Descent view, a space–time figure, the trunk on the map, the three weak plates rebuilt (§4) | M |
 | **2.3** | Beyond the neighbours | the mixing dial, the ghost of the ODE, roads, two new plates: the ghost and the front (§5) | M |
 | **2.4** | Time that recurs | waning that holds then lapses, the phase view with spiral cores and their charges, the year rose, the spirals plate (§6) | M |
 | **3.0** | The game | tactical: orders drawn on the map on a weekly budget, reports instead of truth, an evolving adversary, scored against twins (§7) | L |
 
-2.2 comes first: it repairs the half of the atlas that doesn't read, and its record and RNG
-are 3.0's substrate. 2.3 and 2.4 touch different parts of the tick (transmission for 2.3,
+2.2 comes first: it repairs the half of the atlas that doesn't read, and its lineages are
+what 3.0's trace order follows. 2.3 and 2.4 touch different parts of the tick (transmission for 2.3,
 memory for 2.4) and different figures, so they can run as parallel lanes in worktrees,
 with `presets.js` and `model.js` merged by hand (Open 5). The engine track (§8) runs
 alongside.
 
 ## 4. 2.2: cause and time
 
-### 4.1 The transmission record [synthesis]
+### 4.1 Infection lineages [synthesis]
 
-Every →E records its source. `pickIncomingStrain` already picks the edge, so the cost is
-the write:
+Every →E keeps its source. `pickIncomingStrain` already picks the edge, so the cost is the
+write. The lineages are live state, kept only as long as the plate draws them and the
+caption measures from them, on the same fading clock as the isochrones; they are not an
+archive, and nothing is exported or replayed.
 
 - **Per cell:** `src` (Int32: the source cell; a distinct code for paint, the opening's
   seeds and spillover from the cell's animal) and `t_inf` (the tick). Nothing a neighbour
@@ -202,25 +206,15 @@ space; this shows where it went on the world. S.
 Each rebuilt plate is re-surveyed across ten seeds (`tools/presets-survey.mjs`) before it
 ships.
 
-### 4.6 The record: a counter-based RNG and recipes
-
-- **A counter-based RNG**, `u = hash(seed, tick, cell, stream)`, replaces the sequential
-  `mulberry32` stream (`VISION.md`, I1). It underlies 3.0's twins (common random numbers:
-  twins differ only by the orders), replay from a checkpoint, and seeded cases. Every
-  `?seed=` run and fingerprint changes, so the presets are re-surveyed. S–M.
-- **Recipes:** one link encodes the plate, knob, surface, world, seed, the Model tab's
-  edits and the paint log, so any plate a reader makes can be sent to someone. S–M.
-
-### 4.7 Order and receipts
+### 4.6 Order and receipts
 
 | Milestone | Contents | Size | Depends on |
 |---|---|---|---|
-| **M1** | the record, Descent, Re by counting | M | — |
+| **M1** | infection lineages, Descent, Re by counting | M | — |
 | **M2** | the space–time figure, the trunk on the map | S–M | — |
 | **M3** | the three plates rebuilt, surveyed | M | M1 (Spillover), M2 (Drift) |
-| **M4** | the counter-based RNG, recipes | S–M | — |
 
-M1, M2 and M4 can run as parallel lanes. Receipts: tests that every event's source was a
+M1 and M2 can run as parallel lanes. Receipts: tests that every event's source was a
 transmitter at the start of its tick and that descendant counts equal subtree sizes;
 `tools/bench.mjs` per milestone; screenshots in light, dark and phone widths; docs
 (`AGENTS.md`, `about.md` with a bumped `updated`, `index.html`'s text).
@@ -352,7 +346,7 @@ order is placed on the plate, costs something and takes time:
   so a long cordon leaks.
 - **Test:** brush an area to reveal its true state today.
 - **Trace:** click a reported case to reveal its parent and children in the true
-  transmission tree (2.2's record), one generation per order, up to tracer capacity.
+  transmission tree (2.2's lineages), one generation per order, up to tracer capacity.
 - **Sample:** click a case to reveal its strain's mark and antigenic position. During a
   game, Fig. 3 and Fig. 4 show only sampled strains, so the phylogeny is the surveillance
   you paid for.
@@ -386,8 +380,10 @@ transmission happens before symptoms [standard], which latency (the L flag) mode
 
 ### 7.5 Scoring
 
-When you issue an order, the untouched world runs alongside as a twin with common random
-numbers (§4.6), so the twins differ only by your orders. The score is deaths averted
+When you issue an order, the untouched world runs alongside as a twin. A counter-based
+RNG, `u = hash(seed, tick, cell, stream)` in place of the sequential `mulberry32` stream
+(`VISION.md`, I1), gives the twins common random numbers, so they differ only by your
+orders; without it the same band needs more twins. The score is deaths averted
 against the twins per unit spent, with a band from several twins. On a stochastic world the
 twins are also what make tactics legible: an order's effect is the gap between your world
 and its twin. The epilogue overlays reported against true cases, draws the true tree in
@@ -417,12 +413,12 @@ or collapse. The last Weekly Return is the epilogue.
 - **The cure:** oncolytic virotherapy on the H&E section, an epidemic you want to win
   (`VISION.md` H; Wodarz et al. 2012) [standard].
 - **Zombie defense,** for fun.
-- **The daily case:** one seeded case a day, the same for everyone, sent as a recipe link
-  (§4.6).
 
 ### 7.7 What it needs first
 
-1. 2.2's record and RNG (tracing, twins, the epilogue, the daily case).
+1. 2.2's lineages (tracing, the epilogue) and the counter-based RNG (the twins). Every
+   `?seed=` run and bench fingerprint changes with the RNG, so the presets are re-surveyed.
+   S–M.
 2. The tick in a worker (§8): twins multiply the tick's cost.
 3. The detection and report layer (§7.3). M.
 4. Orders as shapes, budgets and delays (§7.2), and the weekly loop with the Return. M–L.
@@ -507,7 +503,7 @@ life-years as the score.
 - The extinction sweep must count every reference to a strain (active slots, memory slot
   0 on M, R+C and D+F, `animal_strain`, and 2.2's event log if it keeps strain ids)
   before it tombstones or reclaims.
-- The counter-based RNG changes every seeded run: re-survey the presets and re-record
+- 3.0's counter-based RNG changes every seeded run: re-survey the presets and re-record
   the bench fingerprints in the same commit.
 - Calibration and model ideation for Miasma trip vendor biology filters on Sonnet lanes
   and Codex; keep them in the main loop. Rendering, UI and pure-math lanes delegate fine.

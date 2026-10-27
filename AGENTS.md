@@ -701,12 +701,12 @@ preset's knob, as the presets' comments record.
 ## Open work
 
 `docs/ROADMAP.md` is the plan, refreshed on 2026-10-27 from an audit of the build: 2.2
-gives the plate cause and time (the transmission record and its Descent view, a
+gives the plate cause and time (infection lineages and their Descent view, a
 space–time figure, the three plates that read only in their captions rebuilt), 2.3
 widens contact beyond the neighbours, 2.4 adds waning and the spirals plate, and 3.0 is
-the tactical game, its orders drawn on the map. When an item lands, move it to the roadmap's Landed
-table and update this file. `docs/VISION.md` holds the first ideation round and the
-measurements behind it.
+the tactical game, its orders drawn on the map. When an item lands, move it to the
+roadmap's Landed table and update this file. `docs/VISION.md` holds the first ideation
+round and the measurements behind it.
 
 - Antigenic drift, Spillover and Immunoediting show their phenomenon only in the
   caption: their plates are a snapshot of state, and the phenomenon lives in time or in
