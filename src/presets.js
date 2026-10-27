@@ -198,9 +198,10 @@ export const PRESETS = Object.freeze([
         // cells one clone holds at the end are 361 at 0.25, 120 at 0.29, 15
         // at 0.32 and 8 at 0.35. At 0.29 the sizes of the clones surveillance
         // clears fall as s^−1.49 over sizes 2–512 (four seeds, 4,753 clones),
-        // the critical branching process's −3/2: equilibrium holds the clones
-        // at criticality. At 0.32 the slope is −1.88, at 0.35 −2.03, and at
-        // 0.25 hardly any clone is cleared.
+        // the critical branching process's −3/2: the setting where the tumour
+        // holds sits near the critical point (new transformations feed clones
+        // in, so holding does not force it there). At 0.32 the slope is
+        // −1.88, at 0.35 −2.03, and at 0.25 hardly any clone is cleared.
         key: 'immunoediting',
         label: 'Immunoediting',
         topology: Topology.TORUS,

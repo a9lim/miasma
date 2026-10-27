@@ -249,7 +249,9 @@ space; this shows where it went on the world. S.
   tree (a clone) in the lineage log, and Fig. 4 shows clone sizes: at equilibrium (0.29)
   cleared clones fall as s^−1.49 over sizes 2–512, the critical branching process's
   −3/2; at 0.32 and 0.35 the slope steepens to −1.88 and −2.03; under escape hardly any
-  clone is cleared. Surveillance holds the clones at criticality. The caption adds the
+  clone is cleared. The setting where the tumour holds sits near the critical point; with
+  new transformations feeding clones in, holding doesn't force it there (a homeostatic
+  tissue without inflow must be exactly critical: Klein & Simons 2011). The caption adds the
   cleared clones' mean size and the largest clone's living cells (361, 120, 15, 8 across
   the regimes).*
 - *The trees themselves moved off the event ring: a tree's size and open cases, and each
@@ -603,6 +605,7 @@ Also see `VISION.md` for the first round's list.
 - Greenberg, J. M. & Hastings, S. P. (1978). Spatial patterns for discrete models of diffusion in excitable media. *SIAM J. Appl. Math.* 34, 515–523. doi:10.1137/0134040
 - Hadfield, J. et al. (2018). Nextstrain: real-time tracking of pathogen evolution. *Bioinformatics* 34, 4121–4123. doi:10.1093/bioinformatics/bty407
 - Hovmöller, E. (1949). The trough-and-ridge diagram. *Tellus* 1, 62–66. doi:10.3402/tellusa.v1i2.8498
+- Klein, A. M. & Simons, B. D. (2011). Universal patterns of stem cell fate in cycling adult tissues. *Development* 138, 3103–3111. doi:10.1242/dev.060103
 - Lloyd-Smith, J. O., Schreiber, S. J., Kopp, P. E. & Getz, W. M. (2005). Superspreading and the effect of individual variation on disease emergence. *Nature* 438, 355–359. doi:10.1038/nature04153
 - Lloyd-Smith, J. O. et al. (2009). Epidemic dynamics at the human-animal interface. *Science* 326, 1362–1367. doi:10.1126/science.1177345
 - Mollison, D. (1977). Spatial contact models for ecological and epidemic spread. *J. R. Stat. Soc. B* 39, 283–326. doi:10.1111/j.2517-6161.1977.tb01627.x
