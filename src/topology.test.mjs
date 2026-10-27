@@ -5,12 +5,13 @@
 // lattice geometry (bounds, PLANE nulls, TORUS translation round-trips), then
 // treat each glued table as a cell complex (cells, cell-edges, cell-vertices)
 // and check symmetry, χ, orientability and the cone points at the corners,
-// on W=H=12 (R=5) and 120×120 (R=59). The last block re-checks
+// on W=H=12 (R=5) and 120×120 (R=59). A later block re-checks
 // the lemma behind the Klein fallback: the hexagon of cells tiles the plane
-// by translation in exactly two (mirror-image) ways.
+// by translation in exactly two (mirror-image) ways. The last checks that the
+// neighbor table's back directions pair its slots.
 
 import { Topology, HEX_DIRS } from './config.js';
-import { wrap, neighbors, hexBounds, inHex, buildComplex, edgeGluings, SURFACES } from './topology.js';
+import { wrap, neighbors, hexBounds, inHex, buildComplex, edgeGluings, SURFACES, getNeighborTable } from './topology.js';
 
 let pass = 0, fail = 0;
 function check(label, cond) {
@@ -327,6 +328,30 @@ for (const R of [2, 3, 5, 8]) {
     check(`R=${R} the two coverings share no offset`, A && B && [...A].every(w => !B.has(w)));
     const T1 = [2 * R + 1, -R].join(',');
     check(`R=${R} one covering is the <T1, T2> lattice`, (A && A.has(T1)) || (B && B.has(T1)));
+}
+
+// ─── The neighbor table's back directions ───
+// For every world cell i and direction d with neighbor j, back[i*6+d] is a
+// direction of j that leads back to i, and the two slots are each other's
+// back: the pairing the Descent view draws a stroke's two halves through.
+for (const W of [12, 120]) {
+    for (const topo of [Topology.PLANE, Topology.TORUS, Topology.KLEIN, Topology.RP2]) {
+        const { idx, back } = getNeighborTable(W, W, topo);
+        let ok = true, paired = true;
+        for (let r = 0; r < W; r++) for (let q = 0; q < W; q++) {
+            if (!inHex(q, r, W, W)) continue;
+            const i = r * W + q;
+            for (let d = 0; d < 6; d++) {
+                const j = idx[i * 6 + d];
+                if (j < 0) { if (back[i * 6 + d] !== -1) ok = false; continue; }
+                const bd = back[i * 6 + d];
+                if (bd < 0 || idx[j * 6 + bd] !== i) ok = false;
+                else if (back[j * 6 + bd] !== d) paired = false;
+            }
+        }
+        check(`W=${W} ${topo} back leads to the cell`, ok);
+        check(`W=${W} ${topo} back is an involution on slots`, paired);
+    }
 }
 
 // ─── Inline cubeDist (mirrors topology.js). ───

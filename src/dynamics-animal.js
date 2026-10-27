@@ -8,6 +8,7 @@ import { Animal, Compartment } from './config.js';
 import { EMPTY_STRAIN, hostPick, isMixed } from './strains.js';
 import { susceptibility } from './immunity.js';
 import { nextSuccess } from './prng.js';
+import { SRC_ANIMAL, NO_DIR } from './descent.js';
 
 const ZERO_COUNTS = Object.freeze({
     spillovers: 0,
@@ -50,7 +51,9 @@ export function runAnimalDynamics(ctx) {
         maxActive,
         uint16Max,
         cInf,
-        vaxEff
+        vaxEff,
+        lineage,
+        tick
     } = ctx;
 
     const {
@@ -236,6 +239,7 @@ export function runAnimalDynamics(ctx) {
                             nextStrainLoads[slot0 + s] = 0;
                         }
                     }
+                    if (lineage) lineage.infect(i, SRC_ANIMAL, NO_DIR, tick);
                     spillovers++;
                 }
             }

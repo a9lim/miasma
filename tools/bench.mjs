@@ -57,6 +57,7 @@ for (const R of radii) {
                 grid.compartment[i] = Compartment.I; grid.flags[i] = 0;
                 grid.strain_ids[i * 4] = 0; grid.strain_loads[i * 4] = 1;
                 for (let s = 1; s < 4; s++) { grid.strain_ids[i * 4 + s] = 0xFFFF; grid.strain_loads[i * 4 + s] = 0; }
+                grid.descent.introduce(i);
             }
         }
         const iso = createIsochrones();

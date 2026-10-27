@@ -36,6 +36,7 @@ parallel lanes fit a whole version in one.
 | 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it, and the margin is the atlas's apparatus. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
 | 2026-10-27 | **WebGPU is the one plate renderer** (`b7082e3`); a browser without it sees a notice while the margin runs. |
 | 2026-10-27 | **3.0 is tactical** (a9's call, against a proposal to reframe it as an inference game): you direct measures on the map itself, drawing where the doses go, cordoning, tracing a case's contacts, sampling strains. It is not points spent on abstract policies over a background simulation, as in strategic, global-level games like *Plague Inc: The Cure*. Claude's follow-on: inference pays through where the orders land, so there is no separate findings layer (§7.3). |
+| 2026-10-27 | **Descent is a seventh view** (Open 3, in the 2.2 sketch a9 approved), not a layer over the State view; built in 2.2 M1. |
 | 2026-10-27 | **Lineages, not records** (a9's call): 2.2 tracks infection lineages because the live sim draws, measures and traces them, and builds no checkpoints, replay or recipe links. Miasma is a live, causal, observational sandbox; record artifacts kept for their own sake distract from it, and sharing runs isn't worth the work. The counter-based RNG moves to 3.0, where the twins need it. |
 
 Rows that only scheduled 2.1 (built in one session; 3.0 to wait until it could be done
@@ -50,8 +51,7 @@ Each has a recommendation; a9 decides.
    (recommended), or the sandbox's brushes alone.
 2. **Spillover's experiment** (§4.5): emergence, with human transmissibility as the knob
    and chain sizes as the measure (recommended), or the spillover rate as now.
-3. **The lineage view** (§4.2): Descent as a seventh view (recommended), or
-   a layer drawn over the State view.
+3. *(Decided above: Descent is a seventh view.)*
 4. **Geography** (§5.4): a road brush in 2.3, painted routes that carry long-range
    contact (recommended), or the world stays a bare hexagon.
 5. **Order after 2.2:** 2.3 and 2.4 as parallel lanes (recommended), or one after the
@@ -118,7 +118,21 @@ alongside.
 
 ## 4. 2.2: cause and time
 
-### 4.1 Infection lineages [synthesis]
+### 4.1 Infection lineages [synthesis] — landed in M1
+
+*As built (`src/descent.js`, `AGENTS.md` Lineages): the sketch below held, with five
+changes. Each cell keeps only `evt`, the serial of its current infection's event; the
+source and tick live in the event. A new infection reads its source's `evt`, so it is a
+field a neighbour reads, and its writes are deferred to a `settle` after the swap
+rather than written in place. Paint and the opening's seeds share one code (the seeds go
+through the seed brush). A coinfection is not an event: it adds a strain to a case that
+already has one. Descendants are counted when the view draws them, by one sweep from
+the newest event back, not O(depth) per infection, so the tick pays 2–9% and no RNG
+draw (every fingerprint unchanged). And the event keeps no strain id, since the sweep
+reuses ids. Re by count agrees with the ratio on a spreading front (Threshold
+0.97–1.07 against 0.90–1.25; Spillover 0.37 against 0.40) and parts from it in the Z
+presets (count near 1, ratio 1.4–2.1: Z deaths never enter the ratio's removals). The
+offspring distribution and closed trees' sizes are kept for M3; nothing draws them yet.*
 
 Every →E keeps its source. `pickIncomingStrain` already picks the edge, so the cost is the
 write. The lineages are live state, kept only as long as the plate draws them and the
@@ -144,7 +158,17 @@ archive, and nothing is exported or replayed.
   offspring distribution, whose dispersion is the superspreading parameter k of
   Lloyd-Smith et al. 2005 [standard] (capped at 6 offspring until 2.3).
 
-### 4.2 Descent, a view [synthesis]
+### 4.2 Descent, a view [synthesis] — landed in M1
+
+*As built: per pixel rather than instanced segments. Each stroke is two halves, each
+from a cell's centre to the edge the two cells share, packed per cell into one
+rgba32uint texel (six edges and a root mark), so the gluing, the copies and mirroring
+come from the plate's own cell lookup. Weight is log₂ descendants and sets both width
+and tone, so trunks read at 1×; strokes into live cases are red at full tone, into live
+zombies sap. The view drops the isochrones (the strokes' fade carries time) and mutes
+the State marks. Strain-marked strokes in the Strain view wait: they need a strain per
+edge. Packing costs 1.6 ms for Drift on the default world and 7 ms on the largest (59
+fps at 4×).*
 
 The plate draws the tree. Each infection is a stroke from its source's centre to its own,
 weighted by the number of infections that descend through it, so an outbreak reads like a
@@ -210,7 +234,7 @@ ships.
 
 | Milestone | Contents | Size | Depends on |
 |---|---|---|---|
-| **M1** | infection lineages, Descent, Re by counting | M | — |
+| **M1** | infection lineages, Descent, Re by counting (landed 2026-10-27) | M | — |
 | **M2** | the space–time figure, the trunk on the map | S–M | — |
 | **M3** | the three plates rebuilt, surveyed | M | M1 (Spillover), M2 (Drift) |
 
@@ -484,15 +508,17 @@ life-years as the score.
 
 - A new per-cell field that a neighbour reads needs a scratch buffer, the copy-in and
   the swap (`dynamics-scratch.js`); one that only its own cell reads (age, health, the
-  memory arrays, the animal's age, and 2.2's `src`/`t_inf`, 2.4's `mem_t`) is written in
-  place, after its last read in the tick.
+  memory arrays, the animal's age, 2.4's `mem_t`) is written in place, after its last
+  read in the tick. A field a neighbour reads but only rare events write, like the
+  lineages' `evt`, can defer its writes past the swap instead (`descent.js` `settle`).
 - A pass over every cell costs about 1 ms per 100,000 cells at full speed; the tick and
   the frame visit only the cells that can act where they can (`AGENTS.md`, Performance).
   The event log and the space–time row must not add one.
 - Paint snapshots per-cell state for undo (`captureCellState`). Anything per-cell that
   paint can change belongs in it.
-- The GPU state texel is full, and the strain view's second texture carries every
-  strain. Descent's strokes and the phase view's cores are geometry, not texel bits.
+- The GPU state texel is full, the strain view's second texture carries every strain,
+  and the Descent view's third carries six half-strokes per cell. The phase view's
+  cores need a texture or geometry of their own.
 - `applyPreset` resets params and toggles to the defaults before merging, so a preset
   sets every key it needs, and a new mechanic's params need a quiet default in
   `presets.js` (like `NO_EVOLUTION`) so the six plates keep their fingerprints.
@@ -501,8 +527,9 @@ life-years as the score.
   `STRAIN_GENOME_LAYOUT`. A new transition counter the figure should weigh goes in
   `FLUX_KEYS` and on its arrow.
 - The extinction sweep must count every reference to a strain (active slots, memory slot
-  0 on M, R+C and D+F, `animal_strain`, and 2.2's event log if it keeps strain ids)
-  before it tombstones or reclaims.
+  0 on M, R+C and D+F, `animal_strain`) before it tombstones or reclaims. The lineages'
+  events keep no strain id for that reason; strain-marked strokes would need one, and
+  the sweep would have to count it.
 - 3.0's counter-based RNG changes every seeded run: re-survey the presets and re-record
   the bench fingerprints in the same commit.
 - Calibration and model ideation for Miasma trip vendor biology filters on Sonnet lanes

@@ -68,9 +68,17 @@ export function presetMeasure(sim, s, ctx) {
     }
 }
 
+// Re by the ratio of infections to removals, and by counting each closed
+// case's children (descent.js).
+function reText(reff, counted) {
+    const c = Number.isFinite(counted);
+    if (!Number.isFinite(reff)) return c ? `Re ${counted.toFixed(2)} by count` : '';
+    return c ? `Re ${reff.toFixed(2)}, ${counted.toFixed(2)} by count` : `Re ${reff.toFixed(2)}`;
+}
+
 /** The live caption under the plate: the day and the view's values. */
 export function plateCaption(sim, s, reff, histology, narrow, ctx) {
-    const re = Number.isFinite(reff) ? `Re ${reff.toFixed(2)}` : '';
+    const re = reText(reff, ctx && ctx.descent ? ctx.descent.reCounted() : NaN);
     let parts;
     if (histology) {
         parts = [`${fmt(s.Z)} transformed`, `${fmt(s.D)} necrotic`];
@@ -80,6 +88,11 @@ export function plateCaption(sim, s, reff, histology, narrow, ctx) {
         case ViewMode.STRAIN:
             parts = [`${fmt(s.E + s.I + s.Z)} carriers`, s.coinfected ? `${fmt(s.coinfected)} coinfected` : '', re];
             break;
+        case ViewMode.DESCENT: {
+            const d = ctx && ctx.descent ? ctx.descent.summary() : null;
+            parts = d && d.open ? [`${fmt(d.trees)} ${d.trees === 1 ? 'tree' : 'trees'} growing`, `generation ${fmt(d.generation)}`, re] : [re];
+            break;
+        }
         case ViewMode.AGE: parts = [`mean age ${fmt(s.meanAge)} days`]; break;
         case ViewMode.HEALTH: parts = [`mean health ${s.meanHealth.toFixed(2)}`]; break;
         case ViewMode.STATUS: parts = [`${fmt(s.statusH)} in hospital`, `${fmt(s.statusQ)} in quarantine`]; break;
@@ -120,6 +133,12 @@ export function plateLegend(sim, s, toggles, histology, topStrains, reg) {
             if (s.V) rows.push({ kind: 'V', label: 'Vaccinated' });   // its hatching is drawn in this view too
             break;
         }
+        case ViewMode.DESCENT:
+            rows.push({ kind: 'Dl', label: 'Infection, weighted by descendants' }, { kind: 'Dt', label: 'Into a live case' });
+            if (toggles.Z || s.Z) rows.push({ kind: 'Dz', label: 'Into a zombie' });
+            rows.push({ kind: 'Do', label: 'Placed by hand' });
+            if (s.animalTotal) rows.push({ kind: 'Da', label: 'Spillover' });
+            break;
         case ViewMode.AGE: rows.push({ kind: 'ramp', ink: _themePalette().inks.umber, label: 'Age, newborn to oldest' }); break;
         case ViewMode.HEALTH: rows.push({ kind: 'ramp', ink: _themePalette().inks.viridian, label: 'Health, frail to well' }); break;
         case ViewMode.IMMUNITY: rows.push({ kind: 'ramp', ink: _themePalette().inks.prussian, label: 'Immunity, none to full' }); break;

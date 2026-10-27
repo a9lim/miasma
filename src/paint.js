@@ -102,6 +102,7 @@ function captureCellState(grid, i) {
         memX:        grid.mem_x.slice(mb, mb + MEMORY_SLOTS),
         memY:        grid.mem_y.slice(mb, mb + MEMORY_SLOTS),
         memKind:     grid.mem_kind.slice(mb, mb + MEMORY_SLOTS),
+        evt:         grid.descent.evt[i],
         compartment: grid.compartment[i],
         status:      grid.status[i],
         flags:       grid.flags[i],
@@ -113,6 +114,7 @@ function captureCellState(grid, i) {
 }
 
 function restoreCellState(grid, i, state) {
+    grid.descent.evt[i] = state.evt;
     grid.compartment[i] = state.compartment;
     grid.status[i]      = state.status;
     grid.flags[i]       = state.flags;
@@ -167,6 +169,7 @@ function paintCell(grid, q, r, mode, ctx) {
                 grid.strain_ids[base + s] = EMPTY_SLOT;
                 grid.strain_loads[base + s] = 0;
             }
+            grid.descent.introduce(i);
             return true;
         }
         case PaintMode.VACCINATE: {
@@ -289,16 +292,17 @@ export function createPaintController(opts) {
     // without re-running paintCell (which depends on the live grid state).
     let activeUndoStroke = null;
     let activeRedoStroke = null;
+    let strokeHead = 0;           // the infection log's head before the stroke (descent.js)
     let pointerDown = false;
     let lastApplied = -1;         // last cell idx painted this stroke (dedupe drag-paint)
     // Stroke-suppression flag flipped by external owners (e.g. main.js pinch
     // handler) so two-finger gestures don't trigger paint. When set during an
     // active stroke we cleanly end it so the undo stack stays sane.
     let suppressed = false;
-    // Each undo/redo entry is { pre: Map<i, snap>, post: Map<i, snap> } so
-    // redo can restore the post-stroke state without re-deriving it from
-    // mode + brush + live grid (which would be wrong if a subsequent tick
-    // mutated the cells between undo and redo).
+    // Each undo/redo entry is { pre: Map<i, snap>, post: Map<i, snap>,
+    // head0, head1 } so redo can restore the post-stroke state without
+    // re-deriving it from mode + brush + live grid (which would be wrong if a
+    // subsequent tick mutated the cells between undo and redo).
     const undoStack = [];
     const redoStack = [];
 
@@ -359,6 +363,8 @@ export function createPaintController(opts) {
     function startStroke() {
         activeUndoStroke = new Map();
         activeRedoStroke = new Map();
+        const grid = getGrid();
+        strokeHead = grid ? grid.descent.head : 0;
         lastApplied = -1;
     }
 
@@ -374,7 +380,10 @@ export function createPaintController(opts) {
                     activeRedoStroke.set(i, captureCellState(grid, i));
                 }
             }
-            undoStack.push({ pre: activeUndoStroke, post: activeRedoStroke });
+            // The cases a stroke placed are the log's events from strokeHead
+            // to its head now; no tick runs before an undo, so undo can drop
+            // them and redo bring them back.
+            undoStack.push({ pre: activeUndoStroke, post: activeRedoStroke, head0: strokeHead, head1: grid ? grid.descent.head : strokeHead });
             while (undoStack.length > MAX_UNDO) undoStack.shift();
             // Any fresh stroke invalidates the redo stack — the user has
             // diverged from the saved future. Same convention as gerry.
@@ -422,6 +431,7 @@ export function createPaintController(opts) {
         for (const [i, snap] of entry.pre) {
             restoreCellState(grid, i, snap);
         }
+        grid.descent.truncate(entry.head0);
         redoStack.push(entry);
         while (redoStack.length > MAX_UNDO) redoStack.shift();
         if (onMutate) onMutate();
@@ -437,6 +447,7 @@ export function createPaintController(opts) {
         for (const [i, snap] of entry.post) {
             restoreCellState(grid, i, snap);
         }
+        grid.descent.extend(entry.head1);
         undoStack.push(entry);
         while (undoStack.length > MAX_UNDO) undoStack.shift();
         if (onMutate) onMutate();

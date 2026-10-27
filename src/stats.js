@@ -422,6 +422,8 @@ function buildPanelSkeleton(panelEl) {
     refs.population.textContent = '0';
     refs.reff       = appendValueRow(figures, 'Observed Re',  'reff');
     refs.reff.textContent = '—';
+    refs.reCount    = appendValueRow(figures, 'Re by count',  're-count');
+    refs.reCount.textContent = '—';
     refs.hospital   = appendValueRow(figures, 'In hospital', 'hospital');
     refs.hospital.textContent = '0';
     refs.quarantine = appendValueRow(figures, 'In quarantine', 'quarantine');
@@ -469,8 +471,10 @@ function buildPanelSkeleton(panelEl) {
  * @param {number} reff observed Re value, NaN for "not enough data"
  * @param {number} [capacity] optional integer hospital bed count. When provided,
  *     the Hospital row renders as "N / M"; when omitted, just "N".
+ * @param {number} [reCount] Re by counting each closed case's children
+ *     (descent.js), NaN with none closed.
  */
-export function renderStatsPanel(panelEl, stats, reff, capacity) {
+export function renderStatsPanel(panelEl, stats, reff, capacity, reCount) {
     if (!panelEl) return;
     if (panelEl.dataset.statsReady !== '1') {
         buildPanelSkeleton(panelEl);
@@ -527,6 +531,8 @@ export function renderStatsPanel(panelEl, stats, reff, capacity) {
     // Observed Re.
     const reffText = Number.isFinite(reff) ? reff.toFixed(2) : '—';
     if (refs.reff.textContent !== reffText) refs.reff.textContent = reffText;
+    const countText = Number.isFinite(reCount) ? reCount.toFixed(2) : '—';
+    if (refs.reCount.textContent !== countText) refs.reCount.textContent = countText;
 
     // Mean age — integer ticks. Bare integer; unit is implicit from the sim clock.
     const a = Number.isFinite(stats.meanAge) ? (stats.meanAge | 0) : 0;

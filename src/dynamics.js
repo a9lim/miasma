@@ -54,6 +54,7 @@ import {
 } from './strains.js';
 import { forget, remember, susceptibility } from './immunity.js';
 import { nextSuccess } from './prng.js';
+import { NO_DIR } from './descent.js';
 
 const MAX_ACTIVE = DEFAULTS.maxActiveStrains;
 
@@ -137,6 +138,9 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     // current topology).
     const nbrTable = getNeighborTable(W, H, topology);
     const nbrIdx = nbrTable.idx;
+    // Who infected whom (descent.js): every infection is logged with its
+    // source; the cells' events are written after the swap.
+    const lineage = grid.descent;
 
     // Double-buffered: the fields a cell reads off its neighbours. Age, health
     // and the immune memory are only ever read by the cell's own update, so
@@ -748,6 +752,9 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         return susVal;
     }
     const regBeta = useStrains ? reg.beta : null;
+    // The source of the last successful pick: its cell and the target's
+    // direction toward it (the edge the infection crossed).
+    let pickSrc = -1, pickDir = NO_DIR;
     function pickIncomingStrain(ii) {
         const nbase = ii * 6;
         susCell = -1;
@@ -852,6 +859,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         if (r() >= pInf) return -1;
 
         let pick = EMPTY_STRAIN;
+        pickSrc = -1; pickDir = NO_DIR;
         if (useStrains) {
             let pickedNi = -1;
             if (edgeWeightSum > 0) {
@@ -864,6 +872,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     if (roll <= 0) {
                         pickedNi = edgeNbrIdx[d];
                         pick = edgeStrains[d];
+                        pickDir = d;
                         picked = true;
                         break;
                     }
@@ -873,11 +882,13 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         if (edgeWeights[d] > 0) {
                             pickedNi = edgeNbrIdx[d];
                             pick = edgeStrains[d];
+                            pickDir = d;
                             break;
                         }
                     }
                 }
             }
+            pickSrc = pickedNi;
             // In-neighbor slot pick by (β_s · load_s · σ_s).
             if (pickedNi >= 0 && strain_ids && strain_loads) {
                 const sbase = pickedNi * MAX_ACTIVE;
@@ -1240,6 +1251,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                             nextStrainLoads[slot0 + s] = 0;
                         }
                     }
+                    lineage.infect(i, pickSrc, pickDir, tickIdx);
                     sToE++;
                 }
                 break;
@@ -1276,6 +1288,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     // Counted in sToE so observed Re (which divides by recent
                     // recovery counts) reflects all new infection events,
                     // not just S-derived ones. Same reasoning for V below.
+                    lineage.infect(i, pickSrc, pickDir, tickIdx);
                     sToE++;
                 }
                 break;
@@ -1305,6 +1318,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                             nextStrainLoads[slot0 + s] = 0;
                         }
                     }
+                    lineage.infect(i, pickSrc, pickDir, tickIdx);
                     sToE++;
                 }
                 break;
@@ -1719,6 +1733,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                     const zLSeed = zLSeedRaw > 1 ? 1 : (zLSeedRaw < 0 ? 0 : zLSeedRaw);
 
                     let zombieAlive = true;
+                    const nbrBack = nbrTable.back;
                     for (let d = 0; d < 6; d++) {
                         const ni = nbrIdx[nbase + d];
                         if (ni < 0) continue;
@@ -1746,6 +1761,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                                 if (t.F) {
                                     nextFlags[ni] = nextFlags[ni] | Flag.F_CORPSE;
                                     setMemoryStrain(ni, zStrain);
+                                    lineage.infect(ni, i, nbrBack[nbase + d], tickIdx);
                                 } else {
                                     nextFlags[ni] = nextFlags[ni] & ~Flag.F_CORPSE;
                                     clearStrainSlot(ni);
@@ -1759,12 +1775,14 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                                 next[ni] = Compartment.E;
                                 setZStrain(ni, zStrain);
                                 nextFlags[ni] = (t.L && zLSeed > 0 && r() < zLSeed) ? Flag.LATENT : 0;
+                                lineage.infect(ni, i, nbrBack[nbase + d], tickIdx);
                                 zFightExpose++;
                             } else if (u < tConvert) {
                                 // Unopposed conversion → Z, inheriting
                                 // the attacker's strain.
                                 next[ni] = Compartment.Z;
                                 setZStrain(ni, zStrain);
+                                lineage.infect(ni, i, nbrBack[nbase + d], tickIdx);
                                 zInfect++;
                             }
                             // else: nothing happens this encounter.
@@ -1815,7 +1833,9 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
         maxActive: MAX_ACTIVE,
         uint16Max: UINT16_MAX,
         cInf,
-        vaxEff
+        vaxEff,
+        lineage,
+        tick: tickIdx
     });
     spillovers += animalCounts.spillovers;
     reverseSpillovers += animalCounts.reverseSpillovers;
@@ -1875,6 +1895,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
     //   - age ∈ [0, UINT16_MAX]; EMPTY cells have age 0
     //   - health ∈ [0, 1]
 
+    lineage.settle(grid, tickIdx, tC, tF);
     runExtinctionSweep(grid, strainRegistry, tickIdx);
 
     return {

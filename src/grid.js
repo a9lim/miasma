@@ -3,6 +3,7 @@
 // are stubbed (zero-filled) — populated in Phase 7+.
 
 import { Animal, Compartment, Status, Flag, DEFAULTS, MEMORY_SLOTS, SQRT3 } from './config.js';
+import { Descent } from './descent.js';
 
 export class Grid {
     /** @param {number} W @param {number} H */
@@ -52,6 +53,9 @@ export class Grid {
         this.mem_y    = new Float32Array(N * MEMORY_SLOTS);
         this.mem_kind = new Uint8Array(N * MEMORY_SLOTS);
         this.mem_n    = new Uint8Array(N);
+        // Who infected whom (descent.js): each cell's current infection's
+        // event, and the ring of events it points into.
+        this.descent = new Descent(N);
         // Initialize all cells to S (Uint8Array already zero-filled, S === 0,
         // but be explicit for future-proofing).
         this.compartment.fill(Compartment.S);

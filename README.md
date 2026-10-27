@@ -46,9 +46,15 @@ paint.
   the disease in red, recovery as stipple, vaccination as hatching, deaths as
   crosses, and isochrones of the day each wave arrived, fading as they age. Views for
   compartment, strain (a strain's hatch angle and colour are its antigenic
-  position), age, health, status, and immunity to a chosen strain; the Immunoediting
-  preset's state view is an H&E-stained section. Nightingale's rose and observed Re sit
-  in the Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
+  position), descent, age, health, status, and immunity to a chosen strain; the
+  Immunoediting preset's state view is an H&E-stained section.
+- **Who infected whom**: every infection keeps its source, and the Descent view draws
+  the outbreak's tree on the plate, each infection a stroke from source to case as
+  heavy as the infections descended through it, so a wave reads like a drainage map.
+  The caption gives Re both by the ratio of infections to removals and by counting
+  each closed case's children.
+- **The margin**: Nightingale's rose, observed Re and Re by count sit in the Counts
+  tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
   strains by prevalence, a vaccine-matching control and a per-strain genome editor.
 - **The model as a figure**: the Model tab draws the compartment diagram of the model
   the plate runs, with each compartment's count and each arrow's daily flux; choosing a
@@ -101,8 +107,9 @@ buffers and swaps them in, so every cell updates simultaneously; the tick visits
 the cells that can act where it can, and draws rare per-cell events by skipping to the
 next one. `src/dynamics.js` holds the per-tick model, `src/topology.js` the surface
 identifications, `src/immunity.js` antigenic distance and immune memory, and
-`src/strains.js` the strain registry; `node src/topology.test.mjs` and
-`node src/immunity.test.mjs` run the tests, and `node tools/bench.mjs` times the tick.
+`src/strains.js` the strain registry, `src/descent.js` who infected whom;
+`node src/topology.test.mjs`, `node src/immunity.test.mjs` and
+`node src/descent.test.mjs` run the tests, and `node tools/bench.mjs` times the tick.
 [AGENTS.md](AGENTS.md) has the detailed map.
 
 ## License

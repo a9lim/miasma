@@ -187,7 +187,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         placed.length = 0;
         const furniture = drawFurniture(t, s, G, frame).concat(s.avoid || []);
         if (S.closed) drawCones(t, G, cornerCones(s.topology, G.R), frame);
-        if (!s.histology || s.mode !== ViewMode.COMPARTMENT) drawIsoLabels(t, s, G, frame, furniture);
+        if ((!s.histology || s.mode !== ViewMode.COMPARTMENT) && s.mode !== ViewMode.DESCENT) drawIsoLabels(t, s, G, frame, furniture);
     }
 
     // The lattice: re-pack the state texture when the world changed, then
@@ -424,6 +424,15 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
                 ctx.beginPath(); ctx.strokeStyle = t.rgba(t.text, 0.42); ctx.lineWidth = 1; for (const o of [-6, -1, 4]) { ctx.moveTo(x + o, y); ctx.lineTo(x + o, y + 4.5); } ctx.stroke(); break;
             case 'cone': ctx.fillStyle = t.paper; ctx.strokeStyle = t.text; ctx.lineWidth = 1.2; ctx.arc(x, y, 3.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
             case 'ramp': for (let b = 0; b < 4; b++) { ctx.fillStyle = t.rgba(row.ink, 0.12 + 0.24 * b); ctx.fillRect(x - 9 + b * 4.5, y - 5, 4.5, 10); } break;
+            // Descent: a trunk splitting into lighter twigs; a stroke into a live case or a zombie;
+            // the ring of a case placed by hand; spillover from the animal's mark
+            case 'Dl': ctx.strokeStyle = t.muted; ctx.lineCap = 'round';
+                for (const [x1, y1, w] of [[-9, 0, 3], [8, -5, 1.6], [8, 5, 0.8]]) { ctx.beginPath(); ctx.lineWidth = w; ctx.moveTo(x, y); ctx.lineTo(x + x1, y + y1); ctx.stroke(); }
+                break;
+            case 'Dt': case 'Dz': ctx.strokeStyle = kind === 'Dt' ? t.accent : t.zombie; ctx.lineWidth = 1.6; ctx.lineCap = 'round'; ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke(); break;
+            case 'Do': ctx.strokeStyle = t.muted; ctx.lineWidth = 1.1; ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.stroke(); break;
+            case 'Da': ctx.strokeStyle = t.muted; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.moveTo(x - 5, y - 3); ctx.lineTo(x + 3, y + 2); ctx.stroke();
+                ctx.beginPath(); ctx.fillStyle = t.accent; ctx.moveTo(x + 4, y - 0.5); ctx.lineTo(x + 7.5, y + 5.8); ctx.lineTo(x + 0.5, y + 5.8); ctx.closePath(); ctx.fill(); break;
             default: if (row.draw) row.draw(ctx, x, y, t);
         }
         ctx.restore();

@@ -33,16 +33,30 @@
 // (rgba16uint, written only in the strain view): one channel per strain the cell
 // holds, heaviest first (strain-style.js strainMarks), each (angle code+1) | hue byte>>1
 // << 5 | load level (1–15) << 12, 0 for none.
+//
+// The Descent view draws who infected whom (descent.js) over the State view's
+// marks, muted: each infection a stroke from its source's centre to its own,
+// as heavy as the infections that descend through it, faded by age on the
+// isochrones' clock; graphite once the case has closed, red while it is
+// exposed or infectious. A stroke is drawn in two halves, each from a cell's
+// centre to the edge the two cells share, in that cell's own frame, so one
+// that crosses a glued edge meets itself there and its copies come free. A
+// case placed by hand is ringed; spillover is a stroke from the animal's
+// mark. Descent texel (rgba32uint, written only in this view): descent.js
+// packDescent.
 
 import { memoryOf, susceptibility } from './immunity.js';
 import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
 import { strainMarks, loadLevel } from './strain-style.js';
+import { packDescent } from './descent.js';
+import { getNeighborTable } from './topology.js';
 
 const SHADER = /* wgsl */`
 @group(0) @binding(0) var<uniform> u: array<vec4f, 48>;
 @group(0) @binding(1) var stateTex: texture_2d<u32>;
 @group(0) @binding(2) var fieldTex: texture_2d<f32>;
 @group(0) @binding(3) var strainTex: texture_2d<u32>;
+@group(0) @binding(4) var descTex: texture_2d<u32>;
 
 const SQ3: f32 = 1.7320508;
 
@@ -78,6 +92,8 @@ fn hatchP(wp: vec2f, ang: f32, gap: f32, ph: f32) -> f32 {
   return abs(fract(t + 0.5) - 0.5) * gap;
 }
 fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
+// distance from p to the segment from the origin to m
+fn toSeg(p: vec2f, m: vec2f) -> f32 { return length(p - m * clamp(dot(p, m) / dot(m, m), 0.0, 1.0)); }
 // The strain hue wheel (strain-style.js): OKLCH at u[21].xy, hurried through
 // the accent's hue u[21].z by u[21].w, chroma dipping there by u[22].x over
 // u[22].y radians; returns gamma-encoded sRGB.
@@ -261,8 +277,8 @@ fn wheel(hb: f32) -> vec3f {
     }
   }
 
-  // isochrones
-  if (!(histo && mode == 0)) {
+  // isochrones (the Descent view's strokes carry time themselves)
+  if (!(histo && mode == 0) && mode != 6) {
     let base = floor(a); let f = a - base;
     let o = vec2i(base) + vec2i(i32(R) + 1);
     let v10 = fieldAt(o + vec2i(1, 0)); let v01 = fieldAt(o + vec2i(0, 1));
@@ -294,6 +310,45 @@ fn wheel(hb: f32) -> vec3f {
     }
   }
 
+  // Descent: the marks muted, then the strokes. A stroke's weight w (0–1,
+  // log₂ of its descendants over 16) sets its width and its tone, so the
+  // trunks read at any zoom and the twigs stay a light texture; a stroke into
+  // a live case takes full tone, the front being twigs. Where strokes
+  // meet, the most visible one at this pixel is drawn, so a junction is their
+  // union rather than a darker knot.
+  if (mode == 6 && !histo) {
+    c = mix(paper, c, 0.42);
+    let dv = textureLoad(descTex, vec2i(i32(st.x + cell.x), i32(st.y + cell.y)), 0);
+    var dirs = array<vec2f, 6>(vec2f(1.0, 0.0), vec2f(0.0, 1.0), vec2f(-1.0, 1.0), vec2f(-1.0, 0.0), vec2f(0.0, -1.0), vec2f(1.0, -1.0));
+    var halves = array<u32, 6>(dv.x & 0xFFFFu, dv.x >> 16u, dv.y & 0xFFFFu, dv.y >> 16u, dv.z & 0xFFFFu, dv.z >> 16u);
+    var best = 0.0; var bestInk = 0u;
+    for (var k = 0; k < 6; k++) {
+      let v = halves[k];
+      if (v == 0u) { continue; }
+      let w = f32((v & 255u) - 1u) / 254.0;
+      let tone = select(0.18 + 0.82 * pow(w, 0.8), 1.0, (v >> 14u) != 0u);
+      let al = f32((v >> 8u) & 63u) / 63.0 * tone * cover(toSeg(lp, toPx(dirs[k]) * rc * 0.5), max(0.3, rc * (0.05 + 0.4 * w)), dpr);
+      if (al > best) { best = al; bestInk = v >> 14u; }
+    }
+    let rv = dv.w & 0xFFFFu;
+    if (rv != 0u) {
+      let fa = f32((rv >> 8u) & 63u) / 63.0;
+      var al = 0.0;
+      if ((dv.w >> 16u) == 2u) {
+        // spillover: from the animal's mark to the centre
+        let w = f32((rv & 255u) - 1u) / 254.0;
+        al = fa * select(0.18 + 0.82 * pow(w, 0.8), 1.0, (rv >> 14u) != 0u) * cover(toSeg(lp, vec2f(rc * 0.42, rc * 0.36)), max(0.3, rc * (0.05 + 0.4 * w)), dpr);
+      } else {
+        al = fa * cover(abs(length(lp) - rc * 0.52), max(0.35, rc * 0.1), dpr);
+      }
+      if (al > best) { best = al; bestInk = rv >> 14u; }
+    }
+    if (best > 0.0) {
+      let ink = select(select(u[9].xyz, u[12].xyz, bestInk == 2u), accent, bestInk == 1u);
+      c = over(c, ink, 0.94 * best);
+    }
+  }
+
   // brush footprint
   if (u[4].w > 0.5) {
     let dc = cell - u[4].xy;
@@ -306,7 +361,7 @@ fn wheel(hb: f32) -> vec3f {
 }
 `;
 
-const MODES = { compartment: 0, strain: 1, age: 2, health: 3, status: 4, immunity: 5 };
+const MODES = { compartment: 0, strain: 1, age: 2, health: 3, status: 4, immunity: 5, descent: 6 };
 
 function rgb(hex) {
     const n = parseInt(hex.slice(1), 16);
@@ -337,8 +392,8 @@ export async function createGpuPlate(canvas) {
     });
     const ubuf = device.createBuffer({ size: 48 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const U = new Float32Array(48 * 4);
-    let stateTex = null, fieldTex = null, strainTex = null, bind = null, lost = false;
-    let stateData = null, fieldData = null, strainData = null, fieldSide = 0;
+    let stateTex = null, fieldTex = null, strainTex = null, descTex = null, bind = null, lost = false;
+    let stateData = null, fieldData = null, strainData = null, descData = null, fieldSide = 0;
     const marks = { a: new Uint8Array(4), h: new Uint8Array(4), l: new Float32Array(4) };
     device.lost.then(() => { lost = true; });
 
@@ -352,6 +407,9 @@ export async function createGpuPlate(canvas) {
             if (strainTex) strainTex.destroy();
             strainTex = device.createTexture({ size: [W, H], format: 'rgba16uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
             strainData = new Uint16Array(W * H * 4);
+            if (descTex) descTex.destroy();
+            descTex = device.createTexture({ size: [W, H], format: 'rgba32uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+            descData = new Uint32Array(W * H * 4);
             bind = null;
         }
         if (!fieldTex || fieldSide !== side) {
@@ -369,13 +427,14 @@ export async function createGpuPlate(canvas) {
                     { binding: 0, resource: { buffer: ubuf } },
                     { binding: 1, resource: stateTex.createView() },
                     { binding: 2, resource: fieldTex.createView() },
-                    { binding: 3, resource: strainTex.createView() }
+                    { binding: 3, resource: strainTex.createView() },
+                    { binding: 4, resource: descTex.createView() }
                 ]
             });
         }
     }
 
-    /** Pack the grid into the state texture, and in the strain view the strain texture. */
+    /** Pack the grid into the state texture, and in the strain and descent views their own. */
     function uploadState(grid, mode, opts) {
         const im = opts.immunity, mem = im ? memoryOf(grid) : null;
         const { W, H } = grid;
@@ -405,6 +464,10 @@ export async function createGpuPlate(canvas) {
         }
         device.queue.writeTexture({ texture: stateTex }, d, { bytesPerRow: W * 4 }, [W, H]);
         if (strain) device.queue.writeTexture({ texture: strainTex }, sd, { bytesPerRow: W * 8 }, [W, H]);
+        if (mode === 'descent') {
+            packDescent(grid.descent, grid, getNeighborTable(W, H, opts.topology).back, descData);
+            device.queue.writeTexture({ texture: descTex }, descData, { bytesPerRow: W * 16 }, [W, H]);
+        }
     }
 
     /** Upload the padded arrival field (side = 2R+3, -1 = none). */

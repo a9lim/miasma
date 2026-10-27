@@ -169,7 +169,7 @@ export default function init(dom) {
         const reff = computeReff(history, params);
         // beds exist only while hospitals admit
         const capacity = toggles.auto_hospital ? Math.floor((params.h_capacity_frac || 0) * sim.grid.activeIndices.length) : undefined;
-        renderStatsPanel($.statsPanel, stats(), reff, capacity);
+        renderStatsPanel($.statsPanel, stats(), reff, capacity, sim.grid.descent.reCounted());
     }
 
     let renderDirty = true, stateDirty = true, statsDirty = true, tsDirty = true, strainsDirty = true;
@@ -261,6 +261,7 @@ export default function init(dom) {
             scaleUnit: tissue() ? { per: 12, name: 'µm' } : null,
             stateOpts: {
                 mode: sim.viewMode,
+                topology: sim.topology,
                 animalDisplay: toggles.animalDisplay || 'dots',
                 immunity: sim.immunity,
                 strains,
@@ -282,7 +283,7 @@ export default function init(dom) {
     // wave has reached (the isochrones' stamps), the strain registry.
     function measureCtx() {
         return {
-            params, history, strains, reached: iso.reached,
+            params, history, strains, reached: iso.reached, descent: sim.grid.descent,
             active: sim.grid.activeIndices.length, unvax0: sim.unvax0 || 0,
             prevalence
         };
@@ -545,7 +546,7 @@ export default function init(dom) {
         for (let id = 0; id < strains.ids.length; id++) strains[key][id] = v;
     }
 
-    const VIEWS = [ViewMode.COMPARTMENT, ViewMode.STRAIN, ViewMode.AGE, ViewMode.HEALTH, ViewMode.STATUS, ViewMode.IMMUNITY];
+    const VIEWS = [ViewMode.COMPARTMENT, ViewMode.STRAIN, ViewMode.DESCENT, ViewMode.AGE, ViewMode.HEALTH, ViewMode.STATUS, ViewMode.IMMUNITY];
     function cycleView() {
         const next = VIEWS[(VIEWS.indexOf(sim.viewMode) + 1) % VIEWS.length];
         const b = $.viewModeToggles && $.viewModeToggles.querySelector(`[data-viewmode="${next}"]`);

@@ -71,6 +71,7 @@ export const Topology = Object.freeze({
 export const ViewMode = Object.freeze({
     COMPARTMENT:    'compartment',
     STRAIN:         'strain',
+    DESCENT:        'descent',
     AGE:            'age',
     HEALTH:         'health',
     STATUS:         'status',

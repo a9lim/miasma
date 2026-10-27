@@ -274,6 +274,8 @@ export function wrap(q, r, topology, W, H) {
 // once per (W, H, topology):
 //   idx:   Int32Array(N*6) — flat cell index of each neighbor, or -1 across an
 //          open edge. Cell i's neighbors start at i*6, in HEX_DIRS order.
+//   back:  Int8Array(N*6) — the direction through which that neighbor sees
+//          cell i (the opposite one except across a twisted gluing), or -1.
 //   count: Uint8Array(N) — number of entries that are not -1.
 // Cells outside the hexagon get their plain in-hexagon lattice neighbors.
 
@@ -292,6 +294,7 @@ export function getNeighborTable(W, H, topology) {
     const cx = buildComplex(topology, R);
     const N = W * H;
     const idx = new Int32Array(N * 6).fill(-1);
+    const back = new Int8Array(N * 6).fill(-1);
     const count = new Uint8Array(N);
     for (let r = 0; r < H; r++) {
         for (let q = 0; q < W; q++) {
@@ -302,10 +305,10 @@ export function getNeighborTable(W, H, topology) {
                 let n = -1;
                 if (i >= 0) {
                     const j = cx.nb[i * 6 + d];
-                    if (j >= 0) n = (cr + cx.cells[j][1]) * W + (cq + cx.cells[j][0]);
+                    if (j >= 0) { n = (cr + cx.cells[j][1]) * W + (cq + cx.cells[j][0]); back[cell * 6 + d] = cx.back[i * 6 + d]; }
                 } else {
                     const nq = q + D[d][0], nr = r + D[d][1];
-                    if (nq >= 0 && nq < W && nr >= 0 && nr < H && cx.at(nq - cq, nr - cr) >= 0) n = nr * W + nq;
+                    if (nq >= 0 && nq < W && nr >= 0 && nr < H && cx.at(nq - cq, nr - cr) >= 0) { n = nr * W + nq; back[cell * 6 + d] = (d + 3) % 6; }
                 }
                 idx[cell * 6 + d] = n;
                 if (n >= 0) c++;
@@ -313,7 +316,7 @@ export function getNeighborTable(W, H, topology) {
             count[cell] = c;
         }
     }
-    cached = { idx, count };
+    cached = { idx, back, count };
     _nbrCache.set(key, cached);
     return cached;
 }
