@@ -655,13 +655,14 @@ export { pixelToAxial, hexToPixel };
 // the 1, 7 and 19 hexes it covers, then undo and redo (index.html). No
 // innerHTML: swatches are SVG built by createElementNS.
 
+// in key order: 1–6
 const BRUSHES = [
-    { key: PaintMode.NONE,       label: 'Look',       hint: 'No brush: the pointer only looks (1)' },
-    { key: PaintMode.SEED,       label: 'Seed',       hint: 'Infect cells with strain α (2)' },
-    { key: PaintMode.VACCINATE,  label: 'Vaccinate',  hint: 'S, E, R and M cells become vaccinated (3)' },
-    { key: PaintMode.QUARANTINE, label: 'Quarantine', hint: 'Cordon cells: less transmission both ways (4)' },
-    { key: PaintMode.SANITIZE,   label: 'Sanitize',   hint: 'Cure E and I, clear flags, dispose of corpses (5)' },
-    { key: PaintMode.CULL,       label: 'Cull',       hint: 'Kill the cells under the brush (6)' }
+    { key: PaintMode.NONE,       label: 'Look' },
+    { key: PaintMode.SEED,       label: 'Seed' },
+    { key: PaintMode.VACCINATE,  label: 'Vaccinate' },
+    { key: PaintMode.QUARANTINE, label: 'Quarantine' },
+    { key: PaintMode.SANITIZE,   label: 'Sanitize' },
+    { key: PaintMode.CULL,       label: 'Cull' }
 ];
 const SIZES = [
     { value: 0, label: '1 cell' },
@@ -750,14 +751,14 @@ export function buildBrushRail(railEl, controller, onChange) {
     modes.className = 'rail-brushes';
     modes.setAttribute('role', 'radiogroup');
     modes.setAttribute('aria-label', 'Brush');
-    for (const spec of BRUSHES) {
+    BRUSHES.forEach((spec, k) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'brush-btn';
         b.dataset.paint = spec.key;
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(spec.key === controller.getMode()));
-        b.title = spec.hint;
+        b.title = `${spec.label} (${k + 1})`;
         const name = document.createElement('span');
         name.className = 'brush-name';
         name.textContent = spec.label;
@@ -768,7 +769,7 @@ export function buildBrushRail(railEl, controller, onChange) {
             if (onChange) onChange('mode', spec.key);
         });
         modes.appendChild(b);
-    }
+    });
     const sizes = document.createElement('div');
     sizes.className = 'rail-sizes';
     sizes.setAttribute('role', 'radiogroup');
@@ -781,7 +782,7 @@ export function buildBrushRail(railEl, controller, onChange) {
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(opt.value === controller.getBrushSize()));
         b.setAttribute('aria-label', 'Brush of ' + opt.label);
-        b.title = 'Brush of ' + opt.label + ' ([ and ])';
+        b.title = opt.label + ' ([ and ])';
         b.appendChild(sizeGlyph(opt.value));
         b.addEventListener('click', () => {
             controller.setBrushSize(opt.value);

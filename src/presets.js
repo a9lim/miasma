@@ -8,7 +8,6 @@
 //
 // Each entry is a partial override over DEFAULT_PARAMS + DEFAULT_TOGGLES:
 //   key, label   — stable identifier and the strip's name
-//   description  — one line, the phenomenon first (the strip's hint)
 //   topology     — Topology enum value
 //   toggles, params — merged over the defaults; a preset sets every key it
 //                  relies on and turns off what its experiment doesn't use,
@@ -76,7 +75,6 @@ export const PRESETS = Object.freeze([
         // of cells; the opening shows it at day 300, about 30% reached.
         key: 'threshold',
         label: 'Threshold',
-        description: 'Below a critical β an outbreak stays a finite cluster; just above it, the front is ragged and holed.',
         topology: Topology.TORUS,
         toggles: { ...QUIET_TOGGLES },
         params: {
@@ -97,7 +95,6 @@ export const PRESETS = Object.freeze([
         // mean-field threshold 1 − 1/R0 ≈ 82%.
         key: 'herd-immunity',
         label: 'Herd immunity',
-        description: 'Contacts only between neighbours stop the wave at about half coverage, far below the textbook formula.',
         topology: Topology.TORUS,
         toggles: { ...QUIET_TOGGLES, V: true },
         params: {
@@ -121,7 +118,6 @@ export const PRESETS = Object.freeze([
         // recruit susceptibles.
         key: 'antigenic-drift',
         label: 'Antigenic drift',
-        description: 'Each season a variant that has drifted from what hosts remember returns; the phylogeny grows a trunk.',
         topology: Topology.TORUS,
         toggles: { ...QUIET_TOGGLES },
         params: {
@@ -149,7 +145,6 @@ export const PRESETS = Object.freeze([
         // its size).
         key: 'spillover',
         label: 'Spillover',
-        description: 'Human chains too weak to last never end, because a rodent reservoir keeps sparking new ones.',
         topology: Topology.PLANE,
         toggles: { ...QUIET_TOGGLES },
         params: {
@@ -176,7 +171,6 @@ export const PRESETS = Object.freeze([
         // 3,000).
         key: 'immunoediting',
         label: 'Immunoediting',
-        description: 'Cells, not people: immune surveillance eliminates, holds or loses a tumour seeded by an oncovirus.',
         topology: Topology.TORUS,
         toggles: { ...QUIET_TOGGLES, Z: true, L: true },
         params: {
@@ -208,7 +202,6 @@ export const PRESETS = Object.freeze([
         // living gain ground as it rises (0.10: about 2,100 against 3,200).
         key: 'zombie-apocalypse',
         label: 'Zombie apocalypse',
-        description: 'Infectious corpses rise and the living fight back: overrun, an uneasy cycle, or the upper hand.',
         topology: Topology.PLANE,
         toggles: { ...QUIET_TOGGLES, Z: true, F: true },
         params: {
@@ -281,7 +274,6 @@ export function applyPreset(preset, params, toggles, sim) {
 // closes the list unnumbered. Choosing one applies it. No innerHTML.
 
 const NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
-const SANDBOX_LINE = 'Every mechanic at its default, for free play; the Model tab holds every rate.';
 
 /** The plate numeral of a preset, or null (the sandbox). */
 export function plateNumeral(key) {
@@ -305,8 +297,8 @@ export function buildExperimentList(el, hooks) {
     restore.className = 'text-btn';
     restore.textContent = 'Restore';
     restore.addEventListener('click', () => { if (hooks.onRestore) hooks.onRestore(); });
-    note.append('Changed in the Model tab. ', restore);
-    const add = (key, numeral, title, line) => {
+    note.append(restore);
+    const add = (key, numeral, title) => {
         const li = document.createElement('li');
         const b = document.createElement('button');
         b.type = 'button';
@@ -318,10 +310,7 @@ export function buildExperimentList(el, hooks) {
         const t = document.createElement('span');
         t.className = 'plate-title';
         t.textContent = title;
-        const d = document.createElement('span');
-        d.className = 'plate-line';
-        d.textContent = line;
-        b.append(n, t, d);
+        b.append(n, t);
         b.addEventListener('click', () => {
             if (b.getAttribute('aria-current') === 'true') return;
             if (hooks.onApply) hooks.onApply(key || null);
@@ -330,8 +319,8 @@ export function buildExperimentList(el, hooks) {
         el.appendChild(li);
         entries.push(b);
     };
-    PRESETS.forEach((p, k) => add(p.key, NUMERALS[k], p.label, p.description));
-    add(null, '', 'Sandbox', SANDBOX_LINE);
+    PRESETS.forEach((p, k) => add(p.key, NUMERALS[k], p.label));
+    add(null, '', 'Sandbox');
 
     function show(key, changed) {
         for (const b of entries) {

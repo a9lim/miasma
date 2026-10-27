@@ -252,21 +252,21 @@
       <div class="plate-stage">
         <canvas id="plate-gpu" aria-hidden="true"></canvas>
         <canvas id="sim-canvas" aria-label="Atlas plate of a spatial epidemic on a hexagonal world whose edges are glued into a chosen surface"></canvas>
-        <p id="plate-nogpu" class="plate-notice" role="status" hidden>The plate is drawn with WebGPU, which this browser does not offer. The figures in the margin still run.</p>
+        <p id="plate-nogpu" class="plate-notice" role="status" hidden>This plate needs WebGPU.</p>
 
         <!-- Over the plate: how it is drawn (the view) and the clock's rate. -->
         <div class="plate-head">
           <div id="viewmode-toggles" class="view-picker" role="radiogroup" aria-label="Map view">
-            <button class="view-btn" data-viewmode="compartment" role="radio" aria-checked="true" title="The outbreak, by day of arrival">State</button>
-            <button class="view-btn" data-viewmode="strain" role="radio" aria-checked="false" title="Each carrier hatched by every strain it holds, weighted by load">Strain</button>
-            <button class="view-btn" data-viewmode="age" role="radio" aria-checked="false" title="Age of every living cell">Age</button>
-            <button class="view-btn" data-viewmode="health" role="radio" aria-checked="false" title="Health of every living cell">Health</button>
-            <button class="view-btn" data-viewmode="status" role="radio" aria-checked="false" title="Hospital beds and quarantine">Status</button>
-            <button class="view-btn" data-viewmode="immunity" role="radio" aria-checked="false" title="Immunity to the selected or leading strain">Immunity</button>
+            <button class="view-btn" data-viewmode="compartment" role="radio" aria-checked="true">State</button>
+            <button class="view-btn" data-viewmode="strain" role="radio" aria-checked="false">Strain</button>
+            <button class="view-btn" data-viewmode="age" role="radio" aria-checked="false">Age</button>
+            <button class="view-btn" data-viewmode="health" role="radio" aria-checked="false">Health</button>
+            <button class="view-btn" data-viewmode="status" role="radio" aria-checked="false">Status</button>
+            <button class="view-btn" data-viewmode="immunity" role="radio" aria-checked="false">Immunity</button>
           </div>
           <div class="run-tools" role="toolbar" aria-label="Run">
-            <button id="speed-btn" class="text-btn speed-btn" title="Speed (click to cycle)" aria-label="Simulation speed"><span class="speed-label">1×</span></button>
-            <button id="reset-btn" class="text-btn" title="Run the model again on a fresh world (R)" aria-label="Restart"><span class="reset-icon" data-icon="reset" data-icon-size="17"></span><span class="reset-label">Restart</span></button>
+            <button id="speed-btn" class="text-btn speed-btn" title="Speed" aria-label="Simulation speed"><span class="speed-label">1×</span></button>
+            <button id="reset-btn" class="text-btn" title="Restart (R)" aria-label="Restart"><span class="reset-icon" data-icon="reset" data-icon-size="17"></span><span class="reset-label">Restart</span></button>
             <button id="margin-open" class="text-btn" title="Show the controls (S)" aria-controls="margin" aria-expanded="false" hidden>Controls</button>
           </div>
         </div>
@@ -309,17 +309,15 @@
           <section class="setup" aria-label="Surface">
             <h2 class="margin-head">Surface</h2>
             <div id="topology-toggles" class="surface-picker" role="radiogroup" aria-label="Surface">
-              <button class="surface-btn" data-topology="plane" role="radio" aria-checked="false" title="Plane: every edge is a shore">Plane</button>
-              <button class="surface-btn" data-topology="torus" role="radio" aria-checked="true" title="Torus: all three pairs glued straight">Torus</button>
-              <button class="surface-btn" data-topology="klein" role="radio" aria-checked="false" title="Klein bottle: two pairs twisted, one straight">Klein</button>
-              <button class="surface-btn" data-topology="rp2" role="radio" aria-checked="false" title="Projective plane: all three pairs twisted">RP²</button>
+              <button class="surface-btn" data-topology="plane" role="radio" aria-checked="false">Plane</button>
+              <button class="surface-btn" data-topology="torus" role="radio" aria-checked="true">Torus</button>
+              <button class="surface-btn" data-topology="klein" role="radio" aria-checked="false" title="Klein bottle">Klein</button>
+              <button class="surface-btn" data-topology="rp2" role="radio" aria-checked="false" title="Real projective plane">RP²</button>
             </div>
-            <p id="surface-note" class="margin-note"></p>
           </section>
           <section class="setup" aria-label="World">
-            <h2 class="margin-head">World</h2>
+            <h2 class="margin-head">World, cells</h2>
             <div id="world-picker" class="word-picker" role="radiogroup" aria-label="World size, in cells"></div>
-            <p class="margin-note">Cells in the world. A new size starts the run again; zoom in to read a large one.</p>
           </section>
         </div>
         <!-- Counts: Nightingale's rose and the census. #timeseries-panel survives stats-panel rebuilds (stats.js). -->
@@ -329,9 +327,7 @@
             <figcaption class="caption rose-caption"><span class="caption-n">Fig. 2.</span> <span id="rose-caption"></span></figcaption>
           </figure>
         </div>
-        <div class="tab-panel" id="tab-strains" role="tabpanel">
-          <p class="margin-note">The strain list and phylogeny fill in as the outbreak runs.</p>
-        </div>
+        <div class="tab-panel" id="tab-strains" role="tabpanel"></div>
         <!-- Model: the compartment diagram, and the parameters of whatever part of it is chosen (model.js). -->
         <div class="tab-panel" id="tab-model" role="tabpanel"></div>
       </div>
@@ -381,7 +377,7 @@
       <p>W. O. Kermack and A. G. McKendrick, <a href="https://doi.org/10.1098/rspa.1927.0118" target="_blank" rel="noopener">"A contribution to the mathematical theory of epidemics"</a>, <em>Proc. R. Soc. A</em> (1927). H. W. Hethcote, <a href="https://doi.org/10.1137/S0036144500371907" target="_blank" rel="noopener">"The Mathematics of Infectious Diseases"</a>, <em>SIAM Review</em> 42(4):599–653 (2000). M. J. Keeling and K. T. D. Eames, <a href="https://doi.org/10.1098/rsif.2005.0051" target="_blank" rel="noopener">"Networks and epidemic models"</a>, <em>J. R. Soc. Interface</em> 2(4):295–307 (2005). R. M. Anderson and R. M. May, <em>Infectious Diseases of Humans: Dynamics and Control</em> (Oxford University Press, 1991).</p>
 
       <h3>Accessibility</h3>
-      <p>Miasma's colophon, view picker, experiment list, knob, brush rail, surface picker, margin tabs, the parts of the model diagram, sliders, switches, and documented paint-mode shortcuts are keyboard-operable. The plate exposes its purpose via <code>aria-label</code>, but placing brush strokes on particular cells still requires a pointer or touch; phylogeny row selection is also pointer-driven. Controls carry ARIA labels, compartment counts, status counts, the animal census, and observed Re are reported as text in the margin, and a live figure caption under the plate states the current counts and what the surface does. Every state on the plate is a pattern as well as a color. The theme toggle switches between light and dark presentations. Known hazards: continuous change on the lattice during outbreaks, faster at high speed. With reduced motion set, Miasma opens paused on a finished plate; users sensitive to motion can also lower the speed or step the simulation one day at a time.</p>
+      <p>Miasma's colophon, view picker, experiment list, knob, brush rail, surface picker, margin tabs, the parts of the model diagram, sliders, switches, and documented paint-mode shortcuts are keyboard-operable. The plate exposes its purpose via <code>aria-label</code>, but placing brush strokes on particular cells still requires a pointer or touch; phylogeny row selection is also pointer-driven. Controls carry ARIA labels, compartment counts, status counts, the animal census, and observed Re are reported as text in the margin, and a live figure caption under the plate states the day and the current counts. Every state on the plate is a pattern as well as a color. The theme toggle switches between light and dark presentations. Known hazards: continuous change on the lattice during outbreaks, faster at high speed. With reduced motion set, Miasma opens paused on a finished plate; users sensitive to motion can also lower the speed or step the simulation one day at a time.</p>
 
       <p><em>See also: <a href="/worldline">Worldline</a> for particle physics, <a href="/lumen">Lumen</a> for cellular biochemistry, <a href="/shoals">Shoals</a> for options trading.</em></p>
     </article>

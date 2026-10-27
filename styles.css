@@ -282,17 +282,18 @@ body.sim-body {
 }
 
 .plate-caption {
-  /* a fixed three-line block, so the plate never re-fits as the text changes */
+  /* a fixed two-line block, so the plate never re-fits as the text changes;
+     the values fill one line at desktop widths, and wrap rather than clip */
   flex: 1 1 auto;
   min-width: 0;
   box-sizing: content-box;
-  height: calc(3 * 1.45em);
+  height: calc(2 * 1.45em);
   margin: 0;
   max-width: 64rem;
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 /* The knob: a ruler, ticked where theory (or the survey) puts its
@@ -429,13 +430,6 @@ body.sim-body {
   color: var(--text-muted);
 }
 
-.margin-note {
-  margin: 0.45rem 0 0;
-  font-style: italic;
-  color: var(--text-muted);
-  font-size: var(--font-sm);
-  line-height: 1.45;
-}
 
 /* ───── Experiments: the list of plates ───── */
 .plates { list-style: none; margin: 0; padding: 0; }
@@ -445,7 +439,6 @@ body.sim-body {
   display: grid;
   grid-template-columns: 2.1rem minmax(0, 1fr);
   column-gap: 0.5rem;
-  row-gap: 1px;
   width: 100%;
   padding: 10px 0 11px;
   border: 0;
@@ -456,7 +449,6 @@ body.sim-body {
 }
 
 .plate-n {
-  grid-row: 1 / 3;
   padding-top: 0.12rem;
   color: var(--text-muted);
   font-size: var(--font-base);
@@ -470,21 +462,11 @@ body.sim-body {
   text-underline-offset: 0.22em;
   transition: color 0.15s var(--ease-out), text-decoration-color 0.15s var(--ease-out);
 }
-.plate-line {
-  grid-column: 2;
-  color: var(--text-muted);
-  font-size: var(--font-sm);
-  font-style: italic;
-  line-height: 1.42;
-  text-wrap: pretty;
-}
-
 .plate-entry:hover .plate-title { color: var(--accent); }
 .plate-entry[aria-current="true"] { cursor: default; }
 .plate-entry[aria-current="true"] .plate-n,
 .plate-entry[aria-current="true"] .plate-title { color: var(--accent); }
 .plate-entry[aria-current="true"] .plate-title { text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-.plate-entry[aria-current="true"] .plate-line { color: var(--text-secondary); }
 .plate-entry:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 .plate-changed {
   margin: -4px 0 0;
@@ -720,9 +702,8 @@ body.sim-body {
 .model-topic.mdl-off:not([aria-pressed="true"]) { opacity: 0.6; }
 
 .model-detail { padding-top: 12px; }
-.model-title { margin: 0; font-size: 1.12rem; font-weight: 400; color: var(--text); }
+.model-title { margin: 0 0 0.35rem; font-size: 1.12rem; font-weight: 400; color: var(--text); }
 .model-sym { color: var(--text-muted); font-style: italic; margin-left: 0.25em; font-size: 0.95em; }
-.model-what { margin: 0.25rem 0 0.6rem; font-size: var(--font-sm); font-style: italic; color: var(--text-muted); line-height: 1.45; text-wrap: pretty; }
 .model-subhead { margin: 0.8rem 0 0.1rem; font-size: var(--font-sm); font-style: italic; color: var(--text-muted); }
 .model-display { flex-wrap: wrap; padding-top: 6px; }
 .model-foot { margin-top: 1.2rem; padding-top: 0.6rem; border-top: 1px solid var(--border); }

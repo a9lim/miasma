@@ -29,7 +29,6 @@ const NUMBER = new Intl.NumberFormat('en-US');
 const PARTS = {
     S: {
         title: 'Transmission', sym: 'S → E',
-        what: 'Each day an infectious neighbour infects a susceptible cell with chance β, scaled by the season and by how well the cell remembers the strain.',
         rows: [
             { key: 'beta', label: 'β, transmission', min: 0, max: 1, step: 0.005, digits: 3 },
             { key: 'season_amp', label: 'Seasonal swing', min: 0, max: 0.8, step: 0.01, digits: 2 },
@@ -38,7 +37,6 @@ const PARTS = {
     },
     E: {
         title: 'Exposed', sym: 'E',
-        what: 'Infected, not yet infectious; becomes infectious at σ a day. A latent infection waits far longer, and can transform into Z.',
         rows: [
             { key: 'sigma', label: 'σ, onset', min: 0.01, max: 1, step: 0.01, digits: 2 },
             { toggle: 'L', label: 'Latent infections, L' },
@@ -48,7 +46,6 @@ const PARTS = {
     },
     I: {
         title: 'Infectious', sym: 'I',
-        what: 'Infects its six neighbours; recovers at γ a day or dies at μ, faster when old or frail.',
         rows: [
             { key: 'gamma', label: 'γ, recovery', min: 0.01, max: 1, step: 0.01, digits: 2 },
             { key: 'mu', label: 'μ, death', min: 0, max: 0.1, step: 0.001, digits: 3 },
@@ -59,7 +56,6 @@ const PARTS = {
     },
     R: {
         title: 'Recovered', sym: 'R',
-        what: 'Remembers the antigen of every strain it carried. Protection falls off with antigenic distance, so a drifted strain can reinfect.',
         rows: [
             { key: 'immunity_strength', label: 'Protection against the same strain', min: 0, max: 1, step: 0.01, digits: 2 },
             { toggle: 'C', label: 'Chronic carriers, C' },
@@ -69,7 +65,6 @@ const PARTS = {
     },
     D: {
         title: 'Deaths', sym: 'D',
-        what: 'The dead stay on their cell until it is cleared; an infectious corpse transmits until it fades, and can rise as Z.',
         rows: [
             { key: 'd_disposal', label: 'Cleared a day', min: 0, max: 0.2, step: 0.005, digits: 3 },
             { toggle: 'F', label: 'Infectious corpses, F' },
@@ -79,19 +74,17 @@ const PARTS = {
     },
     V: {
         title: 'Vaccinated', sym: 'V',
-        what: 'Remembers the vaccine’s antigen, so a strain that drifts from it breaks through. The Strains tab can match the vaccine to a strain.',
         rows: [
             { toggle: 'V', label: 'Vaccination, V' },
             { key: 'vax_efficacy', label: 'Efficacy', min: 0, max: 1, step: 0.01, digits: 2, needs: ['V'] },
             { key: 'vax_coverage', label: 'Coverage at the start', min: 0, max: 0.9, step: 0.01, digits: 2, needs: ['V'] },
-            { toggle: 'vax_rollout', label: 'Rollout through the run', needs: ['V'] },
+            { toggle: 'vax_rollout', label: 'Rollout', needs: ['V'] },
             { key: 'vax_rollout_rate', label: 'Vaccinated a day', min: 0, max: 0.05, step: 0.0005, digits: 4, needs: ['V', 'vax_rollout'] }
         ],
         on: (P, T) => T.V
     },
     M: {
         title: 'Maternal immunity', sym: 'M',
-        what: 'A newborn of a recovered parent starts with the parent’s memory, which wanes until it is susceptible.',
         rows: [
             { toggle: 'M', label: 'Maternal immunity, M' },
             { key: 'm_decay', label: 'Wanes a day', min: 0, max: 0.2, step: 0.001, digits: 3, needs: ['M'] }
@@ -100,7 +93,6 @@ const PARTS = {
     },
     Z: {
         title: 'Z', sym: 'Z',
-        what: 'Zombies, or transformed cells: they rise from corpses, the infectious or latent infections, and meet the living one encounter at a time.',
         rows: [
             { toggle: 'Z', label: 'The Z compartment' },
             { head: 'Rises' },
@@ -122,7 +114,6 @@ const PARTS = {
     },
     births: {
         title: 'Births and age', sym: '',
-        what: 'An empty cell is born into when enough of its neighbours are alive. Natural death rises with age until old age and holds there; old age is also where age raises susceptibility and μ in full. A new world starts at the ages these rates settle into.',
         rows: [
             { key: 'birth_rate', label: 'Birth rate, per living neighbour', min: 0, max: 0.2, step: 0.005, digits: 3 },
             { key: 'birth_threshold', label: 'Living neighbours needed', min: 1, max: 6, step: 1, digits: 0 },
@@ -134,7 +125,6 @@ const PARTS = {
     },
     reservoir: {
         title: 'Reservoir', sym: '△',
-        what: 'Animals with an SIR cycle of their own share the cells with people: an infectious animal can expose the person on its cell, and a person can infect the animal.',
         rows: [
             { key: 'spillover_rate', label: 'Spillover to people', min: 0, max: 0.5, step: 0.001, digits: 3 },
             { key: 'reverse_spillover_rate', label: 'People to animals', min: 0, max: 0.1, step: 0.001, digits: 3 },
@@ -156,14 +146,13 @@ const PARTS = {
     },
     response: {
         title: 'Hospital and quarantine', sym: '',
-        what: 'Responses that run by themselves each day: beds for the infectious while they last, and quarantine for every case and its contacts.',
         rows: [
-            { toggle: 'auto_hospital', label: 'Hospitals admit the infectious' },
+            { toggle: 'auto_hospital', label: 'Hospitals' },
             { key: 'h_capacity_frac', label: 'Beds, share of cells', min: 0, max: 0.2, step: 0.005, digits: 3, needs: ['auto_hospital'] },
             { key: 'h_recover_mult', label: 'In hospital × γ', min: 0.5, max: 3, step: 0.05, digits: 2, needs: ['auto_hospital'] },
             { key: 'h_mortality_mult', label: 'In hospital × μ', min: 0, max: 1, step: 0.05, digits: 2, needs: ['auto_hospital'] },
             { key: 'h_overflow_mortality_mult', label: 'Without a bed × μ', min: 1, max: 3, step: 0.05, digits: 2, needs: ['auto_hospital'] },
-            { toggle: 'auto_quarantine', label: 'Cases and contacts are quarantined' },
+            { toggle: 'auto_quarantine', label: 'Contact tracing' },
             { key: 'quarantine_trace_rate', label: 'Traced a day', min: 0, max: 1, step: 0.01, digits: 2, needs: ['auto_quarantine'] },
             { head: 'Quarantine, painted or traced' },
             { key: 'q_transmit_mult', label: 'Quarantined source × β', min: 0, max: 1, step: 0.01, digits: 2 },
@@ -173,7 +162,6 @@ const PARTS = {
     },
     evolution: {
         title: 'Evolution', sym: '',
-        what: 'An infection can register a mutant: its rates jitter, and its antigen steps across antigenic space. Two strains in one host compete, and can recombine.',
         rows: [
             { key: 'mutation_rate', label: 'Mutation rate', min: 0, max: 0.1, step: 0.001, digits: 3 },
             { key: 'mutation_strength', label: 'Rates jitter by', min: 0, max: 0.5, step: 0.01, digits: 2 },
@@ -310,7 +298,7 @@ function route(A, B, arc, at) {
 }
 
 /**
- * Build the Model tab into `panelEl`. hooks: { params, toggles, presetLabel(),
+ * Build the Model tab into `panelEl`. hooks: { params, toggles,
  * onParam(key, value, spec), onToggle(key, value), onDisplay(key, value),
  * onRestore() }. Returns { sync(), refresh(), update(stats, flux), select(part) }:
  * sync rebuilds the chosen part's rows (a new experiment), refresh re-reads
@@ -333,7 +321,7 @@ export function buildModel(panelEl, hooks) {
     const capN = document.createElement('span');
     capN.className = 'caption-n';
     capN.textContent = 'Fig. 5.';
-    cap.append(capN, document.createTextNode(' The model the plate runs: cells in each compartment now, and an arrow’s weight is how many cross it a day. Choose a part to set it; faded parts are off.'));
+    cap.append(capN, ' Compartments and flows');
     fig.append(svg, cap);
     panelEl.appendChild(fig);
 
@@ -421,12 +409,9 @@ export function buildModel(panelEl, hooks) {
     const restore = document.createElement('button');
     restore.type = 'button';
     restore.className = 'text-btn model-restore';
-    restore.textContent = 'Restore the experiment’s values';
+    restore.textContent = 'Restore';
     restore.addEventListener('click', () => { if (hooks.onRestore) hooks.onRestore(); });
-    const note = document.createElement('p');
-    note.className = 'margin-note';
-    note.textContent = 'A rate set here holds for every strain; a strain’s own rates are in the Strains tab. Values marked at the start take effect on Restart.';
-    foot.append(restore, note);
+    foot.append(restore);
     panelEl.appendChild(foot);
 
     let chosen = 'S', rowEls = [];
@@ -453,10 +438,7 @@ export function buildModel(panelEl, hooks) {
             s.textContent = part.sym;
             h.append(' ', s);
         }
-        const what = document.createElement('p');
-        what.className = 'model-what';
-        what.textContent = part.what;
-        detail.append(h, what);
+        detail.append(h);
         for (const spec of part.rows) {
             let row;
             if (spec.head) {
@@ -585,7 +567,6 @@ export function buildModel(panelEl, hooks) {
     function sync() {
         buildDetail();
         paintFigure();
-        restore.textContent = hooks.presetLabel && hooks.presetLabel() ? 'Restore ' + hooks.presetLabel() + '’s values' : 'Restore the defaults';
     }
 
     select(chosen);

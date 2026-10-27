@@ -29,7 +29,7 @@ import { strainStyle } from './strain-style.js';
 import { pickAntigenic, renderAntigenicMap } from './antigenic-map.js';
 import { agDist } from './immunity.js';
 
-// Top-K list cap. Anything beyond this gets surfaced via the "+N hidden" hint.
+// Top-K list cap. Anything beyond this is counted in the "+N" line under it.
 const MAX_ROWS = 8;
 
 /**
@@ -137,7 +137,6 @@ export function computeStrainPrevalence(grid, registry, maxSlot) {
 // ─── Renderer ───────────────────────────────────────────────────────────────
 
 function buildPanelSkeleton(panelEl) {
-    // Wipe any placeholder content (the Phase-1 .panel-hint).
     while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
 
     // Fig. 3, the antigenic map, then Fig. 4, the phylogeny, above the
@@ -177,7 +176,7 @@ function buildPanelSkeleton(panelEl) {
     panelEl.appendChild(agFig.f);
 
     const phyFig = figure('phylogeny', 'Fig. 4.');
-    phyFig.text.textContent = 'Each living strain and its ancestors as branches from the day they emerged, joined to their parent on that day; a dashed joint is a recombinant\'s second parent, and a branch\'s weight is its prevalence now.';
+    phyFig.text.textContent = 'Phylogeny';
     const forest = document.createElement('canvas');
     forest.className = 'strain-forest-canvas';
     forest.dataset.role = 'lineage-phylogeny';
@@ -286,7 +285,7 @@ const HEADER_FIELDS = [
     { key: 'type',      label: 'Type'      },
     { key: 'parent',    label: 'Parent'    },
     { key: 'parent2',   label: 'Parent 2'  },
-    { key: 'birthTick', label: 'Born tick' },
+    { key: 'birthTick', label: 'Born, day' },
     { key: 'antigen',   label: 'Antigen'   },
     { key: 'gen',       label: 'Generation' }
 ];
@@ -449,7 +448,7 @@ function updateDetail(detailEl, registry, strainId) {
     }
 
     set('birthTick', String(s.birthTick));
-    set('antigen', `${s.agX.toFixed(2)}, ${s.agY.toFixed(2)} · ${agDist(0, 0, s.agX, s.agY).toFixed(2)} from α`);
+    set('antigen', `${s.agX.toFixed(2)}, ${s.agY.toFixed(2)} · ${agDist(0, 0, s.agX, s.agY).toFixed(2)} AU from α`);
     set('gen', String(s.gen));
 
     // Pull every genome-editor slider value from the registry. Cheap text-
@@ -545,7 +544,7 @@ function renderPhylogeny(canvas, registry, prevalence, selectedId, tick) {
     c.fillText('day', w - 4, ay + 5);
     if (_phylo.hidden) {
         c.textAlign = 'left'; c.font = `italic 11px ${_FONT.text}`;
-        c.fillText(`${_phylo.hidden} rarer living ${_phylo.hidden === 1 ? 'strain' : 'strains'} not drawn`, x0, ay + 19);
+        c.fillText(`+${_phylo.hidden}`, x0, ay + 19);
     }
     for (const id of rows) {
         const st = strainStyle(registry, id), y = yOf.get(id);
@@ -837,8 +836,7 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick, 
     // than we're displaying. Counts strains beyond the top-MAX_ROWS cut.
     const overflow = prevalence.length > MAX_ROWS ? prevalence.length - MAX_ROWS : 0;
     if (overflow > 0) {
-        const noun = overflow === 1 ? 'strain' : 'strains';
-        const hintText = '+' + overflow + ' less prevalent ' + noun + ' hidden';
+        const hintText = '+' + overflow;
         if (hintEl.textContent !== hintText) hintEl.textContent = hintText;
         if (hintEl.style.display === 'none') hintEl.style.display = '';
     } else if (hintEl.style.display !== 'none') {
@@ -865,15 +863,14 @@ export function renderStrainPanel(panelEl, prevalence, registry, onClick, tick, 
         const target = activeId !== null && getStrain(registry, activeId) && !isExtinct(registry, activeId)
             ? activeId : (prevalence.length ? prevalence[0].id : 0);
         panelEl._lineageVaxTarget = target;
-        const label = 'Match the vaccine to ' + registry.names[target];
+        const label = 'Match vaccine to ' + registry.names[target];
         if (refs.vaxBtn.textContent !== label) refs.vaxBtn.textContent = label;
         const now = performance.now();
         const signature = bornCount(registry) + '|' + countLiving(registry) + '|' + activeId + '|' + (vax ? vax.x + ',' + vax.y : '') + '|' + document.documentElement.dataset.theme;
         if (now - refs.lastMapDraw >= 250 || refs.lastMapSignature !== signature) {
             const m = renderAntigenicMap(refs.agMapEl, registry, prevalence, activeId, vax);
-            const where = `The dominant strain, ${m.name}, sits ${m.fromA.toFixed(1)} units from α` +
-                (vax ? ` and ${m.fromV.toFixed(1)} from the vaccine.` : '.');
-            const text = 'Every strain at its antigenic position on a torus 8 units around, whose opposite edges are the same place. On the plate a strain is hatched at the angle and in the colour of its place here. Hexagons are living strains, sized by prevalence; dots are their ancestors; the line is the dominant strain\'s descent; the cross is the vaccine, ringed where its protection falls to 1/e. ' + where;
+            const text = `Antigenic map · lead ${m.name} · ${m.fromA.toFixed(1)} AU from α` +
+                (vax ? ` · ${m.fromV.toFixed(1)} from vaccine` : '');
             if (refs.agCapEl.textContent !== text) refs.agCapEl.textContent = text;
             refs.lastMapSignature = signature;
             refs.lastMapDraw = now;

@@ -15,9 +15,8 @@
 import { topoFromString, topoToString, ViewMode, WORLD_RADII, worldCells } from './config.js';
 import { SURFACES, cornerCones } from './topology.js';
 import { buildBrushRail } from './paint.js';
-import { buildExperimentList, buildKnob, getPreset, modelChanged } from './presets.js';
+import { buildExperimentList, buildKnob, modelChanged } from './presets.js';
 import { buildModel } from './model.js';
-import { SURFACE_NOTE } from './caption.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -115,17 +114,12 @@ export function setupUI($, sim, hooks) {
     surfaceBtns.forEach((b) => b.prepend(surfaceGlyph(topoFromString(b.dataset.topology))));
     const setSurface = radioGroup(surfaceBtns, (b) => {
         sim.topology = topoFromString(b.dataset.topology);
-        syncSurfaceNote();
         haptic('selection');
         if (hooks.onTopologyChange) hooks.onTopologyChange(sim.topology);
     });
-    function syncSurfaceNote() {
-        if ($.surfaceNote) $.surfaceNote.textContent = SURFACE_NOTE[topoToString(sim.topology)] || '';
-    }
     function syncSurface() {
         const key = topoToString(sim.topology);
         setSurface((b) => b.dataset.topology === key);
-        syncSurfaceNote();
     }
 
     // ── Map view, over the plate ──
@@ -147,7 +141,7 @@ export function setupUI($, sim, hooks) {
             b.setAttribute('role', 'radio');
             b.dataset.world = String(R);
             b.textContent = worldCells(R).toLocaleString('en-US');
-            b.title = worldCells(R).toLocaleString('en-US') + ' cells, ' + R + ' from the centre to an edge';
+            b.title = 'Radius ' + R;
             $.worldPicker.appendChild(b);
             worldBtns.push(b);
         }
@@ -167,7 +161,6 @@ export function setupUI($, sim, hooks) {
     // ── Model ──
     const model = buildModel($.modelPanel, {
         params: hooks.params, toggles: hooks.toggles,
-        presetLabel: () => { const p = getPreset(sim.presetKey); return p ? p.label : null; },
         onParam: (key, value, spec) => { if (hooks.onParam) hooks.onParam(key, value, spec); },
         onToggle: (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); },
         onDisplay: (key, value) => { if (hooks.onTogglesChange) hooks.onTogglesChange(key, value); },

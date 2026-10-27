@@ -12,7 +12,7 @@
 // it at the same scale, so the two can be compared.
 //
 // API (same as the stacked-area chart it replaces): initTimeseries(panel,
-// canvas) → { push(stats, counts), render(), resize(), clear(), caption(histology) }.
+// canvas) → { push(stats, counts), render(), resize(), clear() }.
 
 export const ROSE_PERIOD = 10;
 export const ROSE_WEDGES = 12;
@@ -49,14 +49,9 @@ export function initTimeseries(panelEl, canvasEl) {
 
     function clear() { wedges = []; lastTick = 0; }
 
-    // the scale spans the current rose and the one before it; Z is named only
-    // when the current rose, the one drawn in full, holds any
+    // the scale spans the current rose and the one before it
     const roseFrom = () => Math.floor(Math.max(0, lastTick - 1) / SPAN) * ROSE_WEDGES;
     const shownFrom = () => Math.max(0, roseFrom() - ROSE_WEDGES);
-    function hasZ() {
-        for (let k = roseFrom(); k < wedges.length; k++) if (wedges[k][3]) return true;
-        return false;
-    }
 
     function render() {
         if (!w) resize();
@@ -150,12 +145,7 @@ export function initTimeseries(panelEl, canvasEl) {
         }
     }
 
-    function caption(histology) {
-        const z = hasZ() ? `, ${histology ? 'newly transformed cells' : 'new zombies'} in green hatching` : '';
-        return `Each wedge is ${ROSE_PERIOD} days, and its area counts what happened in them: exposures in pale red, recoveries in stipple, deaths cross-hatched${z}. A rose is 120 days, read clockwise from nine o'clock; the dashed outline is the 120 before, at the same scale.`;
-    }
-
-    return { push, render, resize, clear, caption };
+    return { push, render, resize, clear };
 }
 
 function hash(a, b) {

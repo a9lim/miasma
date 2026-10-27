@@ -326,7 +326,7 @@ remembers, gains load, and at equal fitness nothing changes (no incumbent advant
 
 The vaccine has an antigen (`vax_ag_x`, `vax_ag_y`, α's by default) that the vaccinate
 brush and the rollout write into memory, so a drifted strain meets reduced vaccine
-efficacy. The Strains tab's "Match the vaccine to …" sets it to the selected (or
+efficacy. The Strains tab's "Match vaccine to …" sets it to the selected (or
 dominant) strain's position.
 
 ### Coinfection
@@ -479,8 +479,9 @@ draws the marks procedurally in the world's frame, so hatching runs on unbroken 
 mirrored on a mirrored copy), then on the 2D canvas above it the edges (thin rule with
 one, two or three chevrons per glued pair, agreeing for a translation and opposed for a
 twist; a heavy rule with hachures for a shore), cone-point circles with their angles, the
-title (top right; the experiment's plate numeral and name, the surface and the view, from
-`plateTitle`; the sandbox has no numeral), the Reference cartouche (bottom left;
+title (top right; the experiment's plate numeral and name, and H&E on the slide, from
+`plateTitle`; "Sandbox" when none; the surface and the view are left to their own
+controls), the Reference cartouche (bottom left;
 rows from `caption.js`), the scale bar (cells; µm on the slide) and the isochrone labels
 (every 24 days, only while the level's fade is at least 0.5 and on lines at least 6 cells
 long, so a spillover-driven run's small loops carry no number; the text is drawn at the
@@ -525,13 +526,12 @@ What acts on the plate sits on it; the margin holds the atlas's apparatus.
   the sandbox.
 - **The margin** (under the plate below 760 px), four tabs: **Experiments** (the
   default): the list of plates (`buildExperimentList`: the six experiments by plate
-  numeral, then the Sandbox; choosing one applies it, and a changed model shows
-  "Changed in the Model tab. Restore"), the surface picker (each surface's fundamental
-  polygon drawn from `SURFACES` and `cornerCones`, and a line on what its edges do) and
-  the World row. **Counts**: Nightingale's rose, the census (S, E, I, R and D always,
+  numeral, then the Sandbox, titles only; choosing one applies it, and a changed model
+  shows a Restore button under it), the surface picker (each surface's fundamental
+  polygon drawn from `SURFACES` and `cornerCones`) and the World row. **Counts**: Nightingale's rose, the census (S, E, I, R and D always,
   the rest only while they have cells), the figures (population, observed Re, beds,
   quarantine, mean age and health) and the reservoir while it has animals. **Strains**:
-  Fig. 3 the antigenic map with "Match the vaccine to …", Fig. 4 the phylogeny, top
+  Fig. 3 the antigenic map with "Match vaccine to …", Fig. 4 the phylogeny, top
   strains, genome editor. **Model** (`model.js`): Fig. 5, the model as a compartment
   diagram. The chain S → E → I → R runs down the left, V, Z and D beside it, births,
   the reservoir and cleared cells round the edges; each node is a chip with the plate's
@@ -560,8 +560,13 @@ every strain live; a knob marked `reset` (coverage) restarts with its value. A M
 row for a value given at the start (coverage, the reservoir's density and seed) takes
 effect on the next Restart.
 
-The figure caption carries the running preset's measured sentence (`caption.js`
-`presetMeasure`, from `measureCtx()` in main.js) in place of the surface note.
+The figure caption (`caption.js` `plateCaption`) is the day and the view's live values,
+`·`-separated, and nothing else: what a mark means, how a control works and what a
+surface's gluing does live in the about panel (root AGENTS.md, "Show, don't tell"). In
+the State view it ends with the running preset's measured values (`presetMeasure`, from
+`measureCtx()` in main.js); a phone drops recovered, dead and Re to make room for them.
+The margin's figure captions are a name and, where there is one, a live value (Fig. 3's
+leading strain and its distances); the rose's day span is drawn on the rose itself.
 
 The antigenic map (`antigenic-map.js`) draws the torus as a square centred on α, its
 glued edges marked like the plate's (one chevron left and right, two top and bottom,
@@ -574,9 +579,9 @@ ringed at 1 AU. It redraws at most every 250 ms unless its signature changes.
 Nightingale's rose (`rose.js`, behind the old chart's `initTimeseries` API) counts
 exposures, recoveries and deaths per ten-day wedge from the tick's transition counts,
 overlaid from the center, plus arrivals in Z (`dToZ + iToZ + lToZ + zInfect`) in the
-plate's sap, wide cross-hatching over a tint, when the current rose holds any (the
-caption then names them); a rose is 120 days, and the previous 120 are a dashed
-envelope at the same scale. The phylogeny (`lineage.js`) draws living strains and their
+plate's sap, wide cross-hatching over a tint, when the current rose holds any; a rose
+is 120 days, and the previous 120 are a dashed envelope at the same scale. The census
+below keys its marks, and the rose labels its own days. The phylogeny (`lineage.js`) draws living strains and their
 ancestors (at most 28 living, the rest counted) as branches over real time, joined to
 their parent on their birth day (a dashed second connector for a recombinant), with a
 living branch's weight its current prevalence and its tip the strain's swatch.
@@ -630,8 +635,9 @@ false`) so the about panel shows them without a second handler firing.
 - Inside the scene, an effect ships only if it reads a quantity in the model, and every
   state is a pattern before it is a color (root AGENTS.md, "Inside the scene"). The red
   is the disease alone; interventions are inks.
-- The plate never re-fits as text changes: the caption is a fixed three-line block
-  (two on phones), and the frame is measured only on resize.
+- The plate never re-fits as text changes: the caption is a fixed two-line block whose
+  values fill one line at desktop widths and wrap rather than clip, and the frame is
+  measured only on resize.
 - Defaults are a showcase (the Sandbox): `DEFAULT_PARAMS` avoids 0 and 1 so every
   mechanic is visible, and Z is off. `applyPreset` resets params and toggles to the
   defaults before merging, so a preset must set every key it needs and turn off what its

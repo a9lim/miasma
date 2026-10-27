@@ -126,27 +126,15 @@ export function computeViewport(canvas, grid, frame) {
 }
 
 /**
- * Plate title: the experiment (its plate numeral and name; the sandbox has
- * neither), the surface, and what the view draws; shorter on a 'medium'
- * plate, the numeral alone on a 'narrow' one. `immunity` names the immunity
- * view's strain.
+ * Plate title: the experiment's plate numeral and name ("Sandbox" when none),
+ * and H&E on the slide; the numeral alone on a narrow plate. The surface and
+ * the view are left to their own controls.
  */
-export function plateTitle(mode, topology, histology, width, immunity, presetKey) {
-    const S = SURFACES[topology], p = getPreset(presetKey), numeral = plateNumeral(presetKey);
-    const n = numeral ? `Plate ${numeral}.` : 'Sandbox.';
-    if (width === 'narrow') return numeral ? n : '';
-    if (width === 'medium') return p ? `${n} ${p.label}` : n;
-    const subject = p ? p.label : 'The outbreak';
-    const on = 'on a ' + (S.key === 'rp2' ? 'projective plane' : S.name);
-    if (histology) return `${n} ${subject}: a section stained with haematoxylin and eosin`;
-    switch (mode) {
-        case ViewMode.STRAIN: return `${n} ${subject} ${on}, by strain`;
-        case ViewMode.AGE: return `${n} ${subject} ${on}, by age`;
-        case ViewMode.HEALTH: return `${n} ${subject} ${on}, by health`;
-        case ViewMode.STATUS: return `${n} ${subject} ${on}: hospital beds and quarantine`;
-        case ViewMode.IMMUNITY: return `${n} ${subject} ${on}, by immunity to strain ${(immunity && immunity.name) || 'α'}`;
-        default: return `${n} ${subject} ${on}, by day of arrival`;
-    }
+export function plateTitle(presetKey, histology, narrow) {
+    const p = getPreset(presetKey);
+    if (!p) return narrow ? '' : 'Sandbox';
+    const n = `Plate ${plateNumeral(presetKey)}.`;
+    return narrow ? n : `${n} ${p.label}${histology ? ', H&E' : ''}`;
 }
 
 /**
@@ -344,7 +332,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         const rects = [], narrow = f.w < 600;
         // title
         ctx.font = font(narrow ? 13.5 : 14.5, true); ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
-        const title = plateTitle(s.mode, s.topology, s.histology, narrow ? 'narrow' : f.w < 820 ? 'medium' : 'wide', s.stateOpts && s.stateOpts.immunity, s.presetKey);
+        const title = plateTitle(s.presetKey, s.histology, narrow);
         if (title) {
             const tw = ctx.measureText(title).width, tx = f.x + f.w - (narrow ? 12 : 22), ty = f.y + (narrow ? 18 : 24);
             ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(tx - tw - 8, ty - 17, tw + 14, 24);

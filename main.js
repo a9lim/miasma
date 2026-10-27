@@ -19,7 +19,7 @@
 
 import { Grid } from './src/grid.js';
 import { createPlate, computeViewport } from './src/plate.js';
-import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells, OPENING_SEEDS } from './src/config.js';
+import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, OPENING_SEEDS } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
 import { initializeGrid, seedPopulation } from './src/initialization.js';
@@ -28,7 +28,7 @@ import { makeParams } from './src/params.js';
 import { DEFAULT_PARAMS } from './src/default-params.js';
 import { memoryOf, remember } from './src/immunity.js';
 import { makeToggles, DEFAULT_TOGGLES } from './src/toggles.js';
-import { initTimeseries } from './src/rose.js';
+import { initTimeseries, ROSE_PERIOD } from './src/rose.js';
 import { createRegistry, getStrain, GENOME_FIELDS } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
@@ -38,7 +38,7 @@ import { createCamera, ZOOM_STEP_BTN, ZOOM_STEP_WHEEL } from './src/camera.js';
 import { createTransitionHistory } from './src/history.js';
 import { makeRngFromLocation } from './src/prng.js';
 import { createIsochrones } from './src/isochrones.js';
-import { plateCaption, plateLegend, presetMeasure } from './src/caption.js';
+import { plateCaption, plateLegend } from './src/caption.js';
 import { hexBounds } from './src/topology.js';
 
 function cacheDOM() {
@@ -46,7 +46,7 @@ function cacheDOM() {
     return {
         canvas: $('sim-canvas'), gpuCanvas: $('plate-gpu'), noGpu: $('plate-nogpu'), playBtn: $('play-btn'), stepBtn: $('step-btn'), resetBtn: $('reset-btn'),
         speedBtn: $('speed-btn'), themeBtn: $('theme-btn'), menuBtn: $('menu-btn'), marginOpen: $('margin-open'),
-        aboutBtn: $('about-btn'), topologyToggles: $('topology-toggles'), surfaceNote: $('surface-note'),
+        aboutBtn: $('about-btn'), topologyToggles: $('topology-toggles'),
         worldPicker: $('world-picker'), viewModeToggles: $('viewmode-toggles'), experimentList: $('experiment-list'),
         knob: $('knob'), brushRail: $('brush-rail'), zoom: $('canvas-controls'), stage: document.querySelector('.plate-stage'),
         plateHead: document.querySelector('.plate-head'), statsPanel: $('tab-compartments'), modelPanel: $('tab-model'),
@@ -233,7 +233,6 @@ export default function init(dom) {
     }
 
     const setCaption = window._colophon ? window._colophon.caption($.caption, 250) : () => {};
-    const setRoseCaption = window._colophon ? window._colophon.caption($.roseCaption, 1000) : () => {};
     // The Immunoediting preset reads the lattice as tissue: its scale is in
     // µm, and its State view is an H&E-stained section (the other views draw
     // as they do everywhere).
@@ -276,8 +275,7 @@ export default function init(dom) {
     }
     let lastCaption = '';
     function captionText(vp) {
-        return plateCaption(sim, stats(), computeReff(history, params), strains, paintController, histology(),
-            vp.frame.w < 600, measureCtx());
+        return plateCaption(sim, stats(), computeReff(history, params), histology(), vp.frame.w < 600, measureCtx());
     }
 
     // What presetMeasure reads: the params, the history, how many cells the
@@ -318,7 +316,7 @@ export default function init(dom) {
         if ((statsDirty || tsDirty || strainsDirty) && (!sim.playing || now - lastPanels >= PANEL_MS)) {
             lastPanels = now;
             if (statsDirty) { updateStats(); if (ui) ui.model.update(stats(), flux); statsDirty = false; }
-            if (tsDirty && ts) { ts.render(); setRoseCaption(ts.caption(tissue())); tsDirty = false; }
+            if (tsDirty && ts) { ts.render(); tsDirty = false; }
             if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         }
         if (renderDirty) { drawPlate(); renderDirty = false; }
@@ -326,7 +324,6 @@ export default function init(dom) {
             // the caption is throttled; going idle, write the latest one for sure
             if (captionStale) { lastCaption = captionText(getEffectiveViewport()); captionStale = false; }
             setCaption(lastCaption, true);
-            if (ts) setRoseCaption(ts.caption(tissue()), true);
             running = false; rafId = null; return;
         }
         rafId = requestAnimationFrame(frame);
@@ -423,7 +420,6 @@ export default function init(dom) {
         applyCoverage();
         seedOpening(OPENING_SEEDS);
         requestFrame();
-        if (typeof showToast === 'function') showToast('World of ' + worldCells(sim.R).toLocaleString('en-US') + ' cells');
     }
 
     // Restart runs the model as it stands (the experiment, its knob and any
@@ -438,15 +434,14 @@ export default function init(dom) {
     }
     function reset() {
         restart();
-        const p = getPreset(sim.presetKey);
-        if (typeof showToast === 'function') showToast('Restarted: ' + (p ? p.label : 'Sandbox'));
+        if (typeof showToast === 'function') showToast('Restarted');
         if (typeof _haptics !== 'undefined') _haptics.trigger('warning');
     }
     function restore() {
         const p = getPreset(sim.presetKey);
         if (p) applyScene(p);
         else applySandbox();
-        if (typeof showToast === 'function') showToast('Restored: ' + (p ? p.label : 'the defaults'));
+        if (typeof showToast === 'function') showToast('Restored');
     }
 
     function applySandbox() {
@@ -522,16 +517,8 @@ export default function init(dom) {
         onRestore: () => restore(),
         params, toggles,
         paintController,
-        onPaintChange: (kind, value) => {
+        onPaintChange: () => {
             markState();
-            if (typeof showToast === 'function') {
-                if (kind === 'mode') {
-                    const labels = { none: 'Look (no brush)', seed: 'Seed brush', vaccinate: 'Vaccinate brush', quarantine: 'Quarantine brush', sanitize: 'Sanitize brush', cull: 'Cull brush' };
-                    showToast(labels[value] || ('Mode: ' + value));
-                } else if (kind === 'brush') {
-                    showToast('Brush: ' + (['1 cell', '7 cells', '19 cells'][value] || (value + ' cells')));
-                }
-            }
             if (typeof _haptics !== 'undefined') _haptics.trigger('selection');
         },
         onApplyPreset: (presetKey) => {
@@ -653,7 +640,6 @@ export default function init(dom) {
         const label = $.speedBtn.querySelector('.speed-label');
         const txt = (sim.speed < 1 ? String(sim.speed).replace(/^0/, '') : String(sim.speed)) + '×';
         if (label) label.textContent = txt;
-        $.speedBtn.title = 'Speed ' + txt + ' (click to cycle)';
     }
     if ($.speedBtn) {
         syncSpeedBtn();
@@ -661,7 +647,6 @@ export default function init(dom) {
             const idx = SPEED_STEPS.indexOf(sim.speed);
             sim.speed = SPEED_STEPS[(idx + 1) % SPEED_STEPS.length];
             syncSpeedBtn();
-            if (typeof showToast === 'function') showToast('Speed ' + sim.speed + '×');
             if (typeof _haptics !== 'undefined') _haptics.trigger('selection');
         });
     }
@@ -723,6 +708,7 @@ export default function init(dom) {
     };
 
     if ($.timeseriesPanel && $.timeseriesCanvas) ts = initTimeseries($.timeseriesPanel, $.timeseriesCanvas);
+    if ($.roseCaption) $.roseCaption.textContent = `Rose · ${ROSE_PERIOD}-day wedges`;
 
     resize();
     openScene(reducedMotion);
