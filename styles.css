@@ -49,7 +49,7 @@ body.sim-body {
 
 /* The lattice is drawn by WebGPU on #plate-gpu; #sim-canvas above it (2D)
    carries edges, labels and the plate furniture, and takes the pointer.
-   Without WebGPU, #sim-canvas draws everything. The frame the world is
+   Without WebGPU the plate shows #plate-nogpu instead. The frame the world is
    fitted in starts --plate-top below the stage's top, ends --plate-bottom
    above its foot, and keeps the world clear of --plate-left (main.js
    plateFrame reads all three). */
@@ -72,6 +72,21 @@ body.sim-body {
 
 #plate-gpu { visibility: hidden; }
 .gpu #plate-gpu { visibility: visible; }
+
+.plate-notice {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(30em, calc(100% - 32px));
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-lg);
+  font-style: italic;
+  line-height: 1.5;
+  text-align: center;
+}
+.plate-notice[hidden] { display: none; }
 
 #sim-canvas {
   touch-action: none;

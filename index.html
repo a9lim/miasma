@@ -80,7 +80,7 @@
     ],
     "keywords": "epidemic simulator, SEIR model, SIR model, compartmental model, basic reproduction number, herd immunity, cellular automaton, hex lattice, topology, Klein bottle, projective plane, epidemiological atlas, isochrone, multi-strain, vaccination, educational",
     "operatingSystem": "Any (Web Browser)",
-    "browserRequirements": "Modern browser with Canvas support",
+    "browserRequirements": "Requires WebGPU",
     "sameAs": "https://github.com/a9lim/a9lim.github.io",
     "codeRepository": "https://github.com/a9lim/a9lim.github.io",
     "license": "https://www.gnu.org/licenses/agpl-3.0.html",
@@ -252,6 +252,7 @@
       <div class="plate-stage">
         <canvas id="plate-gpu" aria-hidden="true"></canvas>
         <canvas id="sim-canvas" aria-label="Atlas plate of a spatial epidemic on a hexagonal world whose edges are glued into a chosen surface"></canvas>
+        <p id="plate-nogpu" class="plate-notice" role="status" hidden>The plate is drawn with WebGPU, which this browser does not offer. The figures in the margin still run.</p>
 
         <!-- Over the plate: how it is drawn (the view) and the clock's rate. -->
         <div class="plate-head">

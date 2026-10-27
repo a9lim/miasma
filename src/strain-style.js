@@ -14,7 +14,7 @@
 // so no strain reads as the disease. gpu-plate.js computes the same wheel in
 // WGSL from wheelParams().
 
-import { ANTIGENIC_SIZE } from './config.js';
+import { ANTIGENIC_SIZE, DEFAULTS } from './config.js';
 
 const WHEEL = {
     light: { L: 0.525, C: 0.08, accentHue: 24.9 },   // accentHue: OKLCH hue of the theme's accent
@@ -104,4 +104,36 @@ export function markAt(agx, agy) {
 /** { angle, ink } of strain `id` in registry `reg`. */
 export function strainStyle(reg, id) {
     return markAt(reg.ag_x[id] || 0, reg.ag_y[id] || 0);
+}
+
+/** Load quantized to the 15 line weights the plate draws (1..15; 15 is a whole load). */
+export const LOAD_LEVELS = 15;
+export const loadLevel = (l) => Math.max(1, Math.min(LOAD_LEVELS, Math.round(l * LOAD_LEVELS)));
+
+/**
+ * The strains a carrier holds, as the Strain view draws them, heaviest first:
+ * each slot with load gives its hatch angle code (out.a), hue byte (out.h)
+ * and load (out.l), and two strains that share both codes are merged, since
+ * their lines would coincide. `out` holds four of each; returns how many.
+ */
+export function strainMarks(grid, i, reg, out) {
+    const base = i * DEFAULTS.maxActiveStrains, A = out.a, Hb = out.h, L = out.l;
+    let n = 0;
+    if (!reg) return 0;
+    for (let s = 0; s < DEFAULTS.maxActiveStrains; s++) {
+        const id = grid.strain_ids[base + s], l = grid.strain_loads[base + s];
+        if (id === 0xFFFF || !(l > 0) || id >= reg.ag_x.length) continue;
+        const a = angleCode(reg.ag_x[id]), h = hueByte(reg.ag_y[id]);
+        let k = 0;
+        while (k < n && (A[k] !== a || Hb[k] !== h)) k++;
+        if (k < n) { L[k] += l; continue; }
+        A[n] = a; Hb[n] = h; L[n] = l; n++;
+    }
+    for (let k = 1; k < n; k++) {
+        const a = A[k], h = Hb[k], l = L[k];
+        let j = k - 1;
+        for (; j >= 0 && L[j] < l; j--) { A[j + 1] = A[j]; Hb[j + 1] = Hb[j]; L[j + 1] = L[j]; }
+        A[j + 1] = a; Hb[j + 1] = h; L[j + 1] = l;
+    }
+    return n;
 }

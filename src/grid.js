@@ -93,18 +93,18 @@ export class Grid {
     }
 }
 
-// ─── Axial-coordinate helpers (flat-top hex) ───
-// Mirrors gerry/src/hex-math.js but parameterized by hexSize (so render.js
+// ─── Axial-coordinate helpers (pointy-top hex) ───
+// Mirrors gerry/src/hex-math.js but parameterized by hexSize (so the plate
 // can scale without changing config constants).
 
-/** Axial (q, r) → pixel center for flat-top hexes. */
+/** Axial (q, r) → pixel center for pointy-top hexes. */
 export function hexToPixel(q, r, size) {
     const w = SQRT3 * size;
     const h = 1.5 * size;
     return { x: w * (q + r / 2), y: h * r };
 }
 
-/** Pixel (x, y) → fractional axial coords (flat-top). */
+/** Pixel (x, y) → fractional axial coords (pointy-top). */
 export function pixelToAxialFractional(x, y, size) {
     const r = y / (1.5 * size);
     const q = x / (SQRT3 * size) - r / 2;

@@ -6,8 +6,9 @@ with immunity by antigenic distance, an animal reservoir, painted interventions,
 four surfaces made by gluing the edges of a hexagonal world. It runs six presets, each
 an experiment with one knob and a measured number. The map is drawn as a plate from an
 epidemiological atlas.
-Vanilla ES modules; the lattice renders in WebGPU with a Canvas 2D fallback; no
-dependencies and no build step of its own. It is a submodule of the a9l.im repository
+Vanilla ES modules; the lattice renders in WebGPU only (a browser without it sees a
+notice on the plate, and the margin's figures still run); no dependencies and no build
+step of its own. It is a submodule of the a9l.im repository
 (`a9lim.github.io`, at `projects/miasma`); the root `AGENTS.md` covers the shared
 layer, the design system (including "Inside the scene"), build, and deployment, and
 `docs/sim-overhaul/PLAN.md` in the parent holds the plan this rebuild follows.
@@ -21,9 +22,9 @@ Preview from the parent root with `node docs/sim-overhaul/serve.mjs <port>` (ser
 seeding, mutation, and recombination); `?mi=plane|torus|klein|rp2` opens on a surface
 (a retired name such as `cylinder` or `mobius` falls back to the default);
 `?view=<view mode>` opens on a view; `?r=<radius>` opens on a world of that radius
-(16–239; the Experiments tab offers 59, 89, 119 and 179); `?canvas2d` forces the Canvas fallback.
-`docs/sim-overhaul/check.mjs` screenshots the page headless and reports console errors,
-overflow and frame rate.
+(16–239; the Experiments tab offers 59, 89, 119 and 179).
+`docs/sim-overhaul/check.mjs` screenshots the page headless (Chrome for Testing with
+WebGPU on) and reports console errors, overflow and frame rate.
 
 ```bash
 node src/topology.test.mjs        # 2510 checks: gluing, χ, orientability, cone points
@@ -82,7 +83,7 @@ src/default-toggles.js   DEFAULT_TOGGLES
 src/immunity.js          the antigenic torus (distance, midpoint) and per-cell memory: susceptibility, remember, forget
 src/strains.js           registry (genome, antigen, lineage, generation), mutation, recombination, reclamation, a coinfected host as a mixture
 src/strain-extinction.js periodic sweep: tombstone, reclaim dead branches, splice under pressure
-src/strain-style.js      a strain's mark from its antigen: hatch angle × OKLCH hue
+src/strain-style.js      a strain's mark from its antigen (hatch angle × OKLCH hue), the marks a carrier's strains make
 src/antigenic-map.js     Fig. 3, the antigenic map (Strains tab)
 src/presets.js           six experiment presets, applyPreset, the theory their knobs are ticked with, the list of plates, the knob
 src/params.js            the params object, STRAIN_GENOME_LAYOUT, the slider row (Model tab, genome editor)
@@ -92,10 +93,9 @@ src/paint.js             paint controller (pointer events, brush, undo/redo, pai
 src/camera.js            zoom/pan over the fitted plate
 src/isochrones.js        latest-wave arrival day per cell, smoothed, contoured and faded on the lattice
 src/isochrones-worker.js the isochrone build off the main thread
-src/plate.js             the plate per frame: copies, edges, cone points, labels, title, cartouche, scale bar
-src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a state texture
-src/render.js            Canvas 2D fallback for the lattice (the same marks, batched), plate geometry
-src/histology.js         the Immunoediting preset as an H&E-stained section (Canvas; GPU mirrors it)
+src/plate.js             the plate per frame: theme, fit, then over the lattice the edges, cone points, labels, title, cartouche, scale bar
+src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a state texture, every mark
+src/histology.js         the Immunoediting preset as an H&E-stained section: what its marks read, its Reference rows
 src/caption.js           the live figure caption and the Reference cartouche rows
 src/rose.js              Nightingale's rose (Counts tab)
 src/stats.js             census and observed Re (Counts tab)
@@ -425,7 +425,7 @@ cells are stipple, vaccinated hatching (prussian), deaths small crosses (red for
 F-corpse), susceptible cells graphite dots, maternal-immune newborns small rings, Z
 cross-hatching (sap); a latent E carries a dark dot, a carrier R a red one; H is a
 plus and Q a cordon (hex outline, indigo). The strain view hatches each carrier with the
-mark of every strain it holds (`render.js` `strainMarks`), each strain's tint and line
+mark of every strain it holds (`strain-style.js` `strainMarks`), each strain's tint and line
 width its load's share of a whole carrier's, the lightest drawn first; under a device
 pixel a line's width turns to opacity, two strains with the same mark merge, and two at
 one angle interleave rather than overprint. A coinfected cell therefore carries no more
@@ -453,8 +453,9 @@ wave takes that wave's day, while one still passing through the same wave keeps 
 not reached read `latest + 6`. `build` smooths the field by neighbor averaging over the
 surface's own neighbor table (so it is continuous across glued edges), mixing only
 neighbors within `CLIFF` (24 days) of a cell's own value so an old wave's stamps and a new
-wave's stay sharp, and contours it every 8 days by marching triangles on the cell-center
-lattice. A triangle whose corners span more than `CLIFF_SPAN` (32 days) is skipped: where
+wave's stay sharp, and contours the levels a label can sit on (below) by marching
+triangles on the cell-center lattice; the shader draws a line every 8 days from the field
+itself. A triangle whose corners span more than `CLIFF_SPAN` (32 days) is skipped: where
 a new wave meets old stamps the field jumps by hundreds of days, and contouring it would
 stack a line for every level. A contour is drawn at its base opacity times
 `isoFade(latest − level)`, a quadratic ramp from 1 down to `FADE_FLOOR` (0.12) over
@@ -465,15 +466,12 @@ stack a line for every level. A contour is drawn at its base opacity times
 changes), posts the arrival field and the compartments, one build at a time; the
 result (the padded field and the segments, transferred) lands a frame or two later and
 redraws the plate, and one from before a reset is dropped. Without a module worker
-(Node, the tools) it runs in place. Under WebGPU the shader draws the lines from the
-padded field, so only the levels a label can sit on are contoured; the Canvas fallback
-contours every level. The fade and the
-cliff rule run per pixel on the GPU (uniform 43; the shader tests the same triangle span
-the CPU does) and per level in `drawContours`, so the two paths agree. Segments feed the
-label placement and the Canvas renderer, and a padded copy of the field (one cell past
-every edge, read through the gluing) feeds the GPU, which draws the isolines per pixel
-with their analytic gradient. On each labeled level `runLen[k]` is the length in cells of
-the connected line segment `k` belongs to (endpoints joined by union-find).
+(Node, the tools) it runs in place. The fade and the cliff rule run per pixel on the
+GPU (uniform 43; the shader tests the same triangle span the CPU does), and the labels
+take the same fade. A padded copy of the field (one cell past every edge, read through
+the gluing) feeds the GPU, which draws the isolines per pixel with their analytic
+gradient; the segments feed only the label placement, and `runLen[k]` is the length in
+cells of the connected line segment `k` belongs to (endpoints joined by union-find).
 
 Each frame `plate.js` composes: the lattice (WebGPU: `gpu-plate.js`, one full-screen
 pass; each pixel finds its cell, through the inverse edge isometry on a faded copy, and
@@ -486,27 +484,24 @@ title (top right; the experiment's plate numeral and name, the surface and the v
 rows from `caption.js`), the scale bar (cells; µm on the slide) and the isochrone labels
 (every 24 days, only while the level's fade is at least 0.5 and on lines at least 6 cells
 long, so a spillover-driven run's small loops carry no number; the text is drawn at the
-fade, and labels are collision-checked against each other and the furniture). Without WebGPU
-(or with `?canvas2d`), `render.js` draws the same marks into an offscreen tile once per
-change and `plate.js` blits it, and its copies through `destination-in` fading. The
+fade, and labels are collision-checked against each other and the furniture). Until
+WebGPU has started, or where it cannot, the 2D canvas shows only the paper and
+`#plate-nogpu` says why; a lost device is replaced on the next frame. The state texture
+is re-packed only when the world, the view, the brush or the theme changed (main.js
+`markState`); otherwise a frame is one pass. The
 GPU state texel is `x` compartment, `y` flags | status << 4, `z` animal | (hatch angle
 code + 1) << 3 (31 angles), `w` the ramp value or, in the strain view, the hue byte (both
 the heaviest strain's). In the strain view a second, `rgba16uint` texture carries every
 strain, one channel each, heaviest first: angle code + 1, the hue byte's top seven bits
 << 5, and the load in 15 levels (`loadLevel`) << 12. The shader computes the same OKLCH
-wheel from `wheelParams()` (uniforms 21–22). The Canvas path bins marks to 31 angles ×
-32 hues × 15 line weights × interleave phase, a cell sitting in one bin per strain, and
-hatches each bin within its bounds, the lightest first. Chrome
-builds a canvas path in time quadratic in its length (10,000 hexes in one path take
-0.2 s, 100,000 take 20 s), so the tile draws long runs of marks `BATCH` (400) to a path
-(`render.js` `batched`), hatches a group of cells a batch at a time (each batch clipped
-to its cells, on lines anchored at the origin), and clips to the world's outline
-polygon rather than to a path of every cell. Both paths hold 60 fps at 4× on a 2×
-display; see Performance below.
+wheel from `wheelParams()` (uniforms 21–22). The plate holds 60 fps at 4× on a 2×
+display; see Performance below. The Reference cartouche draws its swatches with the
+same marks in 2D (`plate.js` `swatch`, `histology.js` `HISTOLOGY_ROWS`), so a change to
+a mark in the shader needs its swatch changed too.
 
 Canvas text is Newsreader and waits on `_loadTextFonts()`; theme changes invalidate
 `plateTheme()` (a `MutationObserver` on `data-theme`), and the colophon's theme
-handler marks the tile, rose, strain and census panels dirty.
+handler marks the plate, rose, strain and census panels dirty.
 
 ### UI
 

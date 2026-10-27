@@ -20,7 +20,7 @@ self.onmessage = (e) => {
     if (r.padded) { transfer.push(r.padded.buffer); bufs.padded = null; }
     for (const c of r.contours) {
         transfer.push(c.segs.buffer);
-        if (c.runLen) transfer.push(c.runLen.buffer);
+        transfer.push(c.runLen.buffer);
     }
     self.postMessage({ gen: job.gen, padded: r.padded, side: r.side, maxLevel: r.maxLevel, latest: r.latest, contours: r.contours }, transfer);
 };

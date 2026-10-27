@@ -10,22 +10,33 @@
 // centers; their width uses the field's analytic gradient, so lines stay one
 // pixel-true width at any zoom. A triangle whose corners span more than
 // CLIFF_SPAN days (a new wave against an old one) draws no line, and each
-// line is faded by how far its level lies behind the newest stamp, exactly
-// as isochrones.js and the Canvas path do. The 2D canvas on top carries
-// edges, labels and the plate furniture.
+// line is faded by how far its level lies behind the newest stamp, as
+// isochrones.js fades the labels. The 2D canvas on top (plate.js) carries
+// edges, labels and the plate furniture, and its Reference swatches draw
+// these marks.
 //
-// The encodings match render.js, the Canvas fallback, mark for mark.
+// Encodings, compartment view (every state is a pattern first, a color
+// second, so the plate survives grayscale):
+//   S  graphite dot         E  pale red          I  solid red (the disease)
+//   R  stipple              D  small cross       V  hatching (prussian)
+//   M  small ring           Z  cross-hatch (sap) EMPTY  the paper
+//   latent E: a dot in the red; carrier R: a red dot in the stipple;
+//   F-corpse: a red cross; H: a plus; Q: a cordon (hex outline).
+// The strain view hatches each carrier at the angle and ink of every strain
+// it holds (strain-style.js), each strain's lines as heavy as its load. Age,
+// health and immunity are single-ink ramps in eight steps. The Immunoediting
+// preset's State view is an H&E-stained section (histology.js).
 //
 // State texel: x compartment · y flags | status<<4 · z animal | (hatch angle code+1)<<3
 // · w ramp value (age, health or immunity, 0–255), or the strain view's hue byte;
 // in the strain view the angle and hue are the heaviest strain's. Strain texel
 // (rgba16uint, written only in the strain view): one channel per strain the cell
-// holds, heaviest first (render.js strainMarks), each (angle code+1) | hue byte>>1
+// holds, heaviest first (strain-style.js strainMarks), each (angle code+1) | hue byte>>1
 // << 5 | load level (1–15) << 12, 0 for none.
 
 import { memoryOf, susceptibility } from './immunity.js';
 import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
-import { strainMarks, loadLevel } from './render.js';
+import { strainMarks, loadLevel } from './strain-style.js';
 
 const SHADER = /* wgsl */`
 @group(0) @binding(0) var<uniform> u: array<vec4f, 48>;
@@ -169,7 +180,7 @@ fn wheel(hb: f32) -> vec3f {
         // Every strain the cell holds, lightest first so the heaviest lies on
         // top where they cross. A strain's tint and line width are its load's
         // share of a whole carrier's; under a device pixel the width turns to
-        // opacity. Strains that share an angle interleave (render.js).
+        // opacity. Strains that share an angle interleave.
         let sv = textureLoad(strainTex, vec2i(i32(st.x + cell.x), i32(st.y + cell.y)), 0);
         var mk = array<u32, 4>(sv.x, sv.y, sv.z, sv.w);
         let gap = max(2.4, rc * 0.78); let hw = max(0.4, rc * 0.12);
@@ -366,14 +377,14 @@ export async function createGpuPlate(canvas) {
 
     /** Pack the grid into the state texture, and in the strain view the strain texture. */
     function uploadState(grid, mode, opts) {
-        let ageMax = opts.ageMax || 5000;
         const im = opts.immunity, mem = im ? memoryOf(grid) : null;
         const { W, H } = grid;
         ensureTextures(W, H, fieldSide || 3);
         const d = stateData, sd = strainData, comp = grid.compartment, flags = grid.flags, status = grid.status, an = grid.animal;
         const act = grid.activeIndices;
         // age reads relative to the oldest living cell, so the ramp spans the population
-        if (mode === 'age') { ageMax = 1; for (let k = 0; k < act.length; k++) { const i = act[k]; if (comp[i] !== 8 && comp[i] !== 4 && grid.age[i] > ageMax) ageMax = grid.age[i]; } }
+        let ageMax = 1;
+        if (mode === 'age') for (let k = 0; k < act.length; k++) { const i = act[k]; if (comp[i] !== 8 && comp[i] !== 4 && grid.age[i] > ageMax) ageMax = grid.age[i]; }
         const strain = mode === 'strain', age = mode === 'age', health = mode === 'health', immunity = mode === 'immunity' && im;
         for (let k = 0; k < act.length; k++) {
             const i = act[k], o = i * 4, c = comp[i];

@@ -92,8 +92,9 @@ world of that radius (Settings → World offers four sizes).
 
 ## How it's built
 
-Vanilla JavaScript modules with no dependencies; the lattice draws in WebGPU with a
-Canvas 2D fallback, and the isochrones build in a Web Worker. Cell state is a set of
+Vanilla JavaScript modules with no dependencies; the lattice draws in WebGPU (a
+browser without it gets a notice, and the margin's figures still run), and the
+isochrones build in a Web Worker. Cell state is a set of
 typed arrays over an axial grid masked to a regular hexagon: 24,031 cells by default,
 from 10,621 to 96,661. Each tick computes the next state of what neighbours read into scratch
 buffers and swaps them in, so every cell updates simultaneously; the tick visits only

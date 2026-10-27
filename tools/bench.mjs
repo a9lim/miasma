@@ -1,8 +1,7 @@
 // Per-tick cost of the simulation, headless: the tick itself and the work
 // main.js does after every tick (census, isochrone stamps, and the contour
 // build every fourth tick), for each preset and the Sandbox, at one or more
-// world radii (the build contours only the labeled levels, as under WebGPU;
-// ALL=1 contours every level, as the Canvas fallback does). A fingerprint of the final state checks that a refactor meant
+// world radii. A fingerprint of the final state checks that a refactor meant
 // to preserve behavior does (same seed, same state).
 // usage: node tools/bench.mjs [presets=all] [radii=the default] [ticks=600] [seed=1]
 // The dynamics call the /shared/utils.js globals; define them for Node.
@@ -71,7 +70,7 @@ for (const R of radii) {
             let t2 = performance.now(); tStats += t2 - t1;
             iso.record(grid, k);
             let t3 = performance.now(); tRec += t3 - t2;
-            if (k % 4 === 0) iso.build(grid, sim.topology, k, 0, process.env.ALL === '1');
+            if (k % 4 === 0) iso.build(grid, sim.topology, k, 0);
             tBuild += performance.now() - t3;
             const act = st.E + st.I + st.Z;
             if (act > peak) peak = act;

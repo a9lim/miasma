@@ -2,7 +2,7 @@
    colors.js — Miasma's compartment colors over the shared palette.
    The plate is an atlas: the disease is the one red (the theme
    accent), and every other state is a pattern in graphite or an ink,
-   so the map reads in grayscale too (render.js draws the patterns;
+   so the map reads in grayscale too (gpu-plate.js draws the patterns;
    the --epi-* vars below color the swatches and labels in the UI).
 
      S = graphite dot       (susceptible; textMuted)

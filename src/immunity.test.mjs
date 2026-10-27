@@ -308,8 +308,8 @@ function world() {
     }
 }
 {
-    // The Strain view draws every strain a carrier holds (render.js strainMarks).
-    const { strainMarks, loadLevel, LOAD_LEVELS } = await import('./render.js');
+    // The Strain view draws every strain a carrier holds (strain-style.js strainMarks).
+    const { strainMarks, loadLevel, LOAD_LEVELS } = await import('./strain-style.js');
     const grid = new Grid(8, 8);
     const reg = createRegistry(DEFAULT_PARAMS);
     const far = registerStrain(reg, DEFAULT_PARAMS, 0, 0, null, 4, 2);

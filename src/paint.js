@@ -309,7 +309,7 @@ export function createPaintController(opts) {
     // ─── Brush footprint hover state ───
     // The brush no longer renders as a DOM circle hovering above the canvas;
     // instead the cells under the brush are highlighted via a render-pass
-    // overlay (see main.js + render.js). We track only the cell the cursor
+    // overlay (see main.js + gpu-plate.js). We track only the cell the cursor
     // is currently over and emit onHover whenever that changes — main.js
     // flips renderDirty so the next frame redraws with the new footprint.
     let hoverQ = -1;

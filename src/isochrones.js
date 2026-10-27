@@ -20,8 +20,9 @@
 // the clock is `latest`, not the tick, so a finished outbreak stops fading.
 // Triangles that reach past a glued edge read their outer corner through the
 // copy of the world beyond it (topology.wrap), so the lines run up to the
-// edge and on into the faded copies. Segments come back in axial units
-// relative to the world center; the renderer scales them.
+// edge and on into the faded copies. The WebGPU plate draws every line from
+// the padded field; segments are built only for the levels a label can sit
+// on, in axial units relative to the world center, for the label placement.
 
 import { Compartment } from './config.js';
 import { getNeighborTable, hexBounds, wrap } from './topology.js';
@@ -46,16 +47,16 @@ export function isoFade(age) {
 /**
  * The isochrones of one arrival field: smooth it, pad it one cell past the
  * edges through the gluing (the WebGPU plate draws the lines from that), and
- * contour it, every level or, with `all` false, only the levels a label can
- * sit on (every ISO_LABEL days, while still plain enough to label). `job` is
- * { arrival, compartment, act, W, H, topology, latest, all }; `bufs` is the
+ * contour the levels a label can sit on (every ISO_LABEL days, while still
+ * plain enough to label). `job` is
+ * { arrival, compartment, act, W, H, topology, latest }; `bufs` is the
  * caller's scratch, reused between calls. Pure, so it runs in the isochrone
  * worker (isochrones-worker.js) or, without one, on the main thread.
  * Returns { padded, side, maxLevel, latest, contours }, padded null while no
  * cell has been reached.
  */
 export function buildContours(job, bufs) {
-    const { arrival, compartment: empty, act, W, H, topology, latest, all } = job;
+    const { arrival, compartment: empty, act, W, H, topology, latest } = job;
     const N = W * H;
     if (!bufs.field || bufs.field.length !== N) {
         bufs.field = new Float32Array(N);
@@ -130,14 +131,13 @@ export function buildContours(job, bufs) {
         for (let k = 0; k < padded.length; k++) padded[k] = look0[k] >= 0 ? field[look0[k]] : -1;
         const out = { padded, side, maxLevel, latest, contours };
         if (!maxLevel) return out;
-        // The levels to contour: every ISO_STEP days, or only the labeled ones
-        // still plain enough to carry a label.
+        // The levels to contour: the labeled ones still plain enough to carry a label.
         const levels = [];
-        for (let L = ISO_STEP; L <= maxLevel; L += ISO_STEP) {
-            if (all || (L % ISO_LABEL === 0 && isoFade(latest - L) >= LABEL_FADE)) levels.push(L);
+        for (let L = ISO_LABEL; L <= maxLevel; L += ISO_LABEL) {
+            if (isoFade(latest - L) >= LABEL_FADE) levels.push(L);
         }
         if (!levels.length) return out;
-        const lo0 = levels[0], hi0 = levels[levels.length - 1], stepL = all ? ISO_STEP : ISO_LABEL;
+        const lo0 = levels[0], hi0 = levels[levels.length - 1], stepL = ISO_LABEL;
         const segs = levels.map(() => []);
         const inW = worldMask(R);
         const SQ3 = Math.sqrt(3);
@@ -181,10 +181,8 @@ export function buildContours(job, bufs) {
         }
         for (let n = 0; n < levels.length; n++) {
             if (!segs[n].length) continue;
-            const level = levels[n];
-            const c = { level, segs: Float32Array.from(segs[n]) };
-            if (level % ISO_LABEL === 0) c.runLen = runLengths(c.segs);
-            contours.push(c);
+            const ls = Float32Array.from(segs[n]);
+            contours.push({ level: levels[n], segs: ls, runLen: runLengths(ls) });
         }
         return out;
 }
@@ -200,11 +198,11 @@ export function createIsochrones(opts = {}) {
     let arrival = null;          // Float32Array(W*H), tick of the latest wave's arrival
     let was = null;              // Uint8Array(W*H), E/I/Z at the previous record
     let latest = 0, latestOut = 0;   // newest stamp; and its value at the last build
-    // [{ level, segs: Float32Array [x0,y0,x1,y1,...], runLen? }]; on the labeled levels runLen[k]
+    // [{ level, segs: Float32Array [x0,y0,x1,y1,...], runLen }]; runLen[k]
     // is the length in cells of the connected line that segment k belongs to
     let contours = [];
     let padded = null, side = 0, maxLevelOut = 0;   // the field one cell past the edges, for the GPU
-    let lastBuild = -1, lastTopo = -1, lastAll = true, dirty = true;
+    let lastBuild = -1, lastTopo = -1, dirty = true;
     let reached = 0;             // cells stamped at least once
     const bufs = {};
     // One build in flight at a time; a newer request waits in `queued`, and a
@@ -291,22 +289,22 @@ export function createIsochrones(opts = {}) {
 
     /**
      * Rebuild the isochrones if the field changed and at least `every` ticks
-     * have passed (see buildContours for `all`). Returns true when they changed
+     * have passed. Returns true when they changed
      * in place; a worker's result arrives later, through `opts.onBuilt`.
      */
-    function build(grid, topology, tick, every = 4, all = true) {
+    function build(grid, topology, tick, every = 4) {
         ensure(grid);
-        if (!dirty && topology === lastTopo && all === lastAll) return false;
-        if (topology === lastTopo && all === lastAll && lastBuild >= 0 && tick - lastBuild < every && tick >= lastBuild) return false;
-        lastBuild = tick; lastTopo = topology; lastAll = all; dirty = false;
+        if (!dirty && topology === lastTopo) return false;
+        if (topology === lastTopo && lastBuild >= 0 && tick - lastBuild < every && tick >= lastBuild) return false;
+        lastBuild = tick; lastTopo = topology; dirty = false;
         const { W, H } = grid;
         if (worker) {
-            const job = { gen, arrival: arrival.slice(), compartment: grid.compartment.slice(), act: null, W, H, topology, latest, all };
+            const job = { gen, arrival: arrival.slice(), compartment: grid.compartment.slice(), act: null, W, H, topology, latest };
             if (busy) queued = { job, act: grid.activeIndices };
             else post(job, grid.activeIndices);
             return false;
         }
-        apply(buildContours({ arrival, compartment: grid.compartment, act: grid.activeIndices, W, H, topology, latest, all }, bufs));
+        apply(buildContours({ arrival, compartment: grid.compartment, act: grid.activeIndices, W, H, topology, latest }, bufs));
         return true;
     }
 

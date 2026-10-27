@@ -3,10 +3,10 @@
 // The run loop advances simulated time by dt each frame, drains the
 // accumulator into dynamics.tick() calls, pushes each tick's transition
 // counts to the observed-Re history and the rose, stamps arrivals for
-// the isochrones, then draws the plate. The plate's world tile is redrawn only
-// when something it shows changed (a tick, paint, the brush, the view, the
-// theme, the zoom); otherwise a frame is a few drawImage calls. The loop
-// idle-stops when paused with nothing dirty.
+// the isochrones, then draws the plate. The plate's state texture is
+// re-packed only when something it shows changed (a tick, paint, the brush,
+// the view, the theme); otherwise a frame is one WebGPU pass and the 2D
+// furniture. The loop idle-stops when paused with nothing dirty.
 //
 // The page opens on a living frame: an outbreak already under way on the
 // torus, its isochrones laid down by a short warm-up, and the clock running.
@@ -18,8 +18,7 @@
 // _haptics, _loadTextFonts, _themePalette, _FONT.
 
 import { Grid } from './src/grid.js';
-import { computeViewport } from './src/render.js';
-import { createPlate } from './src/plate.js';
+import { createPlate, computeViewport } from './src/plate.js';
 import { DEFAULTS, ViewMode, Compartment, MemoryKind, Topology, topoFromString, WORLD_R_RANGE, worldCells, OPENING_SEEDS } from './src/config.js';
 import { setupUI } from './src/ui.js';
 import { tick } from './src/dynamics.js';
@@ -45,7 +44,7 @@ import { hexBounds } from './src/topology.js';
 function cacheDOM() {
     const $ = (id) => document.getElementById(id);
     return {
-        canvas: $('sim-canvas'), playBtn: $('play-btn'), stepBtn: $('step-btn'), resetBtn: $('reset-btn'),
+        canvas: $('sim-canvas'), gpuCanvas: $('plate-gpu'), noGpu: $('plate-nogpu'), playBtn: $('play-btn'), stepBtn: $('step-btn'), resetBtn: $('reset-btn'),
         speedBtn: $('speed-btn'), themeBtn: $('theme-btn'), menuBtn: $('menu-btn'), marginOpen: $('margin-open'),
         aboutBtn: $('about-btn'), topologyToggles: $('topology-toggles'), surfaceNote: $('surface-note'),
         worldPicker: $('world-picker'), viewModeToggles: $('viewmode-toggles'), experimentList: $('experiment-list'),
@@ -100,14 +99,17 @@ export default function init(dom) {
     seedPopulation(sim.grid, params, rng);
     const history = createTransitionHistory(HISTORY_CAP);
     // the isochrones build in a worker; a result redraws the plate
-    const iso = createIsochrones({ worker: true, onBuilt: () => markTile() });
+    const iso = createIsochrones({ worker: true, onBuilt: () => markState() });
 
     const canvas = $.canvas;
     if (!canvas) { console.error('miasma: #sim-canvas not found'); return; }
     const ctx = canvas.getContext('2d');
-    const plate = createPlate(canvas, document.getElementById('plate-gpu'), (ok) => {
+    // The lattice draws only in WebGPU; without it the plate says so, and
+    // the margin's figures run on.
+    const plate = createPlate(canvas, $.gpuCanvas, (ok) => {
         document.body.classList.toggle('gpu', ok);
-        markTile();
+        if ($.noGpu) $.noGpu.hidden = ok;
+        markState();
     });
 
     // The plate frame: the canvas below the band over it (the colophon and
@@ -133,7 +135,7 @@ export default function init(dom) {
         getGrid: () => sim.grid,
         computeViewport: (cv, grid) => computeViewport(cv, grid, plateFrame()),
         resizeCanvasDPR: window.resizeCanvasDPR,
-        onChange: () => { updateZoomIndicator(); markTile(); }
+        onChange: () => { updateZoomIndicator(); markState(); }
     });
     const getEffectiveViewport = () => {
         const vp = camera.getEffectiveViewport();
@@ -170,11 +172,11 @@ export default function init(dom) {
         renderStatsPanel($.statsPanel, stats(), reff, capacity);
     }
 
-    let renderDirty = true, tileDirty = true, statsDirty = true, tsDirty = true, strainsDirty = true;
+    let renderDirty = true, stateDirty = true, statsDirty = true, tsDirty = true, strainsDirty = true;
     let lastFrameTime = performance.now();
     let accumulator = 0;
 
-    function markTile() { tileDirty = true; renderDirty = true; legendDirty = true; requestFrame(); }
+    function markState() { stateDirty = true; renderDirty = true; legendDirty = true; requestFrame(); }
 
     // While the clock runs the plate redraws every frame something changed,
     // but the text around it need not: the Counts, Strains and rose panels
@@ -188,7 +190,7 @@ export default function init(dom) {
     function invalidateDerived(opts) {
         opts = opts || {};
         if (opts.gridMutated) { cachedStats = cachedPrev = null; iso.record(sim.grid, sim.tick); }
-        if (opts.render !== false) { renderDirty = true; tileDirty = true; }
+        if (opts.render !== false) { renderDirty = true; stateDirty = true; }
         if (opts.stats !== false) statsDirty = true;
         if (opts.timeseries) tsDirty = true;
         if (opts.strains !== false) strainsDirty = true;
@@ -209,14 +211,14 @@ export default function init(dom) {
         history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, counts.zPop);
         if (ts) ts.push(sim.tick, counts);
         iso.record(sim.grid, sim.tick);
-        renderDirty = tileDirty = statsDirty = tsDirty = strainsDirty = true;
+        renderDirty = stateDirty = statsDirty = tsDirty = strainsDirty = true;
     }
 
     function updateStrainPanel() {
         if (!$.strainPanel || !$.strainPanel.classList.contains('active')) return;
         renderStrainPanel($.strainPanel, prevalence(), strains, (id) => {
             sim.selectedStrain = id;
-            if (sim.viewMode === ViewMode.IMMUNITY) markTile();
+            if (sim.viewMode === ViewMode.IMMUNITY) markState();
         }, sim.tick, {
             vax: { x: params.vax_ag_x || 0, y: params.vax_ag_y || 0 },
             onMatchVaccine: (id) => {
@@ -240,11 +242,10 @@ export default function init(dom) {
 
     function drawPlate() {
         const vp = getEffectiveViewport();
-        if (tileDirty) {
-            // WebGPU draws the isolines from the field; the Canvas fallback needs every segment.
-            iso.build(sim.grid, sim.topology, sim.tick, 4, !plate.gpu);
-            plate.markTile();
-            tileDirty = false;
+        if (stateDirty) {
+            iso.build(sim.grid, sim.topology, sim.tick, 4);
+            plate.markState();
+            stateDirty = false;
         }
         const now = performance.now();
         if (legendDirty || !legend || now - lastLegendAt >= CAPTION_MS) {
@@ -259,10 +260,9 @@ export default function init(dom) {
             contours: iso.contours, field: iso, histology: histology(),
             legend, avoid: overlayRects, presetKey: sim.presetKey,
             scaleUnit: tissue() ? { per: 12, name: 'µm' } : null,
-            tileOpts: {
+            stateOpts: {
                 mode: sim.viewMode,
                 animalDisplay: toggles.animalDisplay || 'dots',
-                ageMax: params.mortality_max_age || 5000,
                 immunity: sim.immunity,
                 strains,
                 paintOverlay: paintController.getHoverFootprint()
@@ -362,7 +362,7 @@ export default function init(dom) {
         if (paintController) paintController.clearUndo();
         camera.refreshBaseViewport();
         camera.reset();
-        renderDirty = tileDirty = statsDirty = tsDirty = strainsDirty = true;
+        renderDirty = stateDirty = statsDirty = tsDirty = strainsDirty = true;
     }
 
     // Seed strain α at axial offsets from the world center (and a ring of
@@ -477,7 +477,7 @@ export default function init(dom) {
         // on the world cell it is a copy of.
         pickAt: (x, y) => plate.pick(sim.grid, getEffectiveViewport(), sim.topology, x, y),
         onMutate: () => invalidateDerived({ gridMutated: true }),
-        onHover: () => markTile(),
+        onHover: () => markState(),
         onHistoryChange: syncUndoRedoBtns
     });
 
@@ -510,20 +510,20 @@ export default function init(dom) {
     if (typeof initShortcuts === 'function') initShortcuts(shortcuts);
 
     ui = setupUI($, sim, {
-        onTopologyChange: () => { iso.markDirty(); markTile(); },
+        onTopologyChange: () => { iso.markDirty(); markState(); },
         onWorldChange: (R) => setWorld(R),
-        onViewModeChange: () => markTile(),
+        onViewModeChange: () => markState(),
         // A slider in the Model tab has set params[key]. A genome field lives
         // on every strain, so it is written onto all of them; the knob and
         // its marks follow.
         onParam: (key) => { setGenome(key, params[key]); if (ui) ui.showPreset(sim.presetKey); invalidateDerived({ stats: true, strains: true }); },
-        onTogglesChange: () => { if (ui) ui.showPreset(sim.presetKey); markTile(); statsDirty = true; },
+        onTogglesChange: () => { if (ui) ui.showPreset(sim.presetKey); markState(); statsDirty = true; },
         onReset: () => reset(),
         onRestore: () => restore(),
         params, toggles,
         paintController,
         onPaintChange: (kind, value) => {
-            markTile();
+            markState();
             if (typeof showToast === 'function') {
                 if (kind === 'mode') {
                     const labels = { none: 'Look (no brush)', seed: 'Seed brush', vaccinate: 'Vaccinate brush', quarantine: 'Quarantine brush', sanitize: 'Sanitize brush', cull: 'Cull brush' };
@@ -643,7 +643,7 @@ export default function init(dom) {
             playing: false,
             onPlay: () => { setPlaying(!sim.playing); return sim.playing; },
             onStep: () => stepOnce(),
-            onTheme: () => { markTile(); tsDirty = true; strainsDirty = true; statsDirty = true; requestFrame(); },
+            onTheme: () => { markState(); tsDirty = true; strainsDirty = true; statsDirty = true; requestFrame(); },
             onHelp: () => {}   // the about panel binds #about-btn itself
         });
     }
@@ -705,14 +705,14 @@ export default function init(dom) {
     function resize() {
         camera.resize();
         if (ts) { ts.resize(); tsDirty = true; }
-        markTile();
+        markState();
     }
     window.addEventListener('resize', resize);
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => resize()).observe(canvas);
     document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else start(); });
 
     // Canvas text is Newsreader; redraw once the face has loaded.
-    if (typeof _loadTextFonts === 'function') _loadTextFonts().then(() => { markTile(); tsDirty = true; requestFrame(); });
+    if (typeof _loadTextFonts === 'function') _loadTextFonts().then(() => { markState(); tsDirty = true; requestFrame(); });
 
     window.__miasma = {
         sim, params, toggles, history, tickOnce, iso, plate,

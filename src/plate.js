@@ -1,6 +1,7 @@
-// plate.js — composes the plate each frame: the world tile, its faded copies
-// beyond the glued edges, the edges themselves, isochrone labels, and the
-// plate furniture (title, Reference cartouche, scale bar).
+// plate.js — composes the plate each frame: the lattice and its faded copies
+// beyond the glued edges (gpu-plate.js, in WebGPU), then on the 2D canvas
+// above it the edges, isochrone labels, and the plate furniture (title,
+// Reference cartouche, scale bar).
 //
 // Bound to the model:
 //   chevrons on an edge   that edge is glued; one, two or three name the pair,
@@ -15,11 +16,114 @@
 
 import { SQRT3, ViewMode } from './config.js';
 import { hexBounds, edgeGluings, cornerCones, SURFACES, wrap } from './topology.js';
-import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, paintInk, _tile } from './render.js';
 import { createGpuPlate } from './gpu-plate.js';
 import { wheelParams } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
 import { getPreset, plateNumeral } from './presets.js';
+
+// ─── Theme ──────────────────────────────────────────────────────────────────
+let _theme = null;
+let _themeKey = '';
+
+function rgba(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** The current theme's plate colors, rebuilt when <html data-theme> changes. */
+export function plateTheme() {
+    const key = document.documentElement.dataset.theme || 'light';
+    if (_theme && key === _themeKey) return _theme;
+    const P = _themePalette(), dark = key === 'dark';
+    _themeKey = key;
+    _theme = {
+        dark, P, rgba,
+        paper: P.canvas, panel: P.panelSolid, text: P.text, text2: P.textSecondary, muted: P.textMuted,
+        accent: P.accent, inks: P.inks,
+        dot: rgba(P.textMuted, dark ? 0.62 : 0.55),
+        exposed: rgba(P.accent, dark ? 0.36 : 0.3),
+        infectious: rgba(P.accent, 0.94),
+        stipple: rgba(P.text, dark ? 0.6 : 0.55),
+        cross: rgba(P.text, dark ? 0.82 : 0.86),
+        hatch: P.inks.prussian,
+        zombie: P.inks.sap,
+        maternal: P.inks.mulberry,
+        cordon: P.inks.indigo,
+        rule: rgba(P.text, 0.5),
+        ruleSoft: rgba(P.text, 0.24),
+        isoMajor: rgba(P.text, dark ? 0.66 : 0.6)
+    };
+    return _theme;
+}
+
+if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(() => { _theme = null; })
+        .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+}
+
+const PAINT_INK = { seed: 'accent', vaccinate: 'prussian', quarantine: 'indigo', sanitize: 'verdigris', cull: 'text' };
+
+/** The ink of a paint brush's footprint. */
+function paintInk(mode, t) {
+    const name = PAINT_INK[mode] || 'text';
+    return name === 'accent' ? t.accent : name === 'text' ? t.text : t.inks[name];
+}
+
+// ─── Geometry ───────────────────────────────────────────────────────────────
+// Cells are pointy-top hexes of circumradius rc; the world hexagon has its
+// corners at E and W, apothem apo = 1.5·rc·(R + ½) and circumradius
+// Rb = √3·rc·(R + ½).
+
+/** Pixel offset of relative axial (q, r) for cell radius rc. */
+function axialToPx(q, r, rc) {
+    return [SQRT3 * rc * (q + r / 2), 1.5 * rc * r];
+}
+
+/** Fractional relative axial coords of a pixel offset. */
+function pxToAxial(x, y, rc) {
+    const r = y / (1.5 * rc);
+    return [x / (SQRT3 * rc) - r / 2, r];
+}
+
+function roundAxial(q, r) {
+    let x = Math.round(q), z = Math.round(r), y = Math.round(-q - r);
+    const dx = Math.abs(x - q), dy = Math.abs(y + q + r), dz = Math.abs(z - r);
+    if (dx > dy && dx > dz) x = -y - z;
+    else if (dy <= dz) z = -x - y;
+    return [x, z];
+}
+
+/** Pointy-top hex of circumradius rr, appended to a path or context. */
+function hexPath(p, x, y, rr) {
+    const h = rr * 0.8660254;
+    p.moveTo(x, y - rr); p.lineTo(x + h, y - rr / 2); p.lineTo(x + h, y + rr / 2);
+    p.lineTo(x, y + rr); p.lineTo(x - h, y + rr / 2); p.lineTo(x - h, y - rr / 2); p.closePath();
+}
+
+/**
+ * Fit the world hexagon into the plate frame (CSS px). Returns the base
+ * viewport { cssWidth, cssHeight, hexSize, originX, originY, frame }, where
+ * origin is the pixel of axial (0, 0) — the convention paint.js hit-tests in.
+ */
+export function computeViewport(canvas, grid, frame) {
+    const rect = canvas.getBoundingClientRect();
+    const cssWidth = rect.width || canvas.clientWidth, cssHeight = rect.height || canvas.clientHeight;
+    const f = frame || { x: 0, y: 0, w: cssWidth, h: cssHeight };
+    const { cq, cr, R } = hexBounds(grid.W, grid.H);
+    const narrow = f.w < 600;
+    const padL = f.padL || 0;
+    const apo = Math.max(40, Math.min(f.h * (narrow ? 0.45 : 0.415), (f.w - padL) * (narrow ? 0.475 : 0.43) * SQRT3 / 2));
+    const hexSize = apo / (1.5 * (R + 0.5));
+    // Shift right into any spare width so the Reference cartouche (bottom
+    // left) clears the world's south-west edge.
+    const slack = f.w - 2 * apo * 2 / SQRT3;
+    let cx = f.x + f.w / 2 + (narrow ? 0 : Math.max(0, Math.min(80, slack / 2 - 30)));
+    // and keep the world's west corner clear of the brush rail
+    cx = Math.max(cx, f.x + padL + 2 * apo / SQRT3 + 8);
+    const cy = f.y + f.h / 2 + (narrow ? 4 : 10);
+    const [ox, oy] = axialToPx(cq, cr, hexSize);
+    return { cssWidth, cssHeight, hexSize, originX: cx - ox, originY: cy - oy, frame: f };
+}
 
 /**
  * Plate title: the experiment (its plate numeral and name; the sandbox has
@@ -46,21 +150,25 @@ export function plateTitle(mode, topology, histology, width, immunity, presetKey
 }
 
 /**
- * The plate on `canvas` (2D: edges, labels, furniture, and everything when
- * WebGPU is unavailable) over `gpuCanvas` (the lattice, when it is).
- * `onGpu(ok)` is called once WebGPU has started or failed.
+ * The plate: the lattice on `gpuCanvas` (WebGPU), and on `canvas` above it
+ * (2D) the edges, labels and furniture. `onGpu(ok)` is called once WebGPU
+ * has started or failed, and again if a lost device cannot be replaced.
  */
 export function createPlate(canvas, gpuCanvas, onGpu) {
     const ctx = canvas.getContext('2d');
-    const ghost = { c: document.createElement('canvas'), x: null };
-    ghost.x = ghost.c.getContext('2d');
-    let tileDirty = true, last = null, gpu = null;
-    if (gpuCanvas && !/[?&]canvas2d\b/.test(location.search)) {
+    let stateDirty = true, gpu = null, starting = false;
+    // Start WebGPU; a device that is lost (a driver reset, the GPU process
+    // restarting) is replaced the same way on the next frame.
+    function start() {
+        starting = true;
         createGpuPlate(gpuCanvas).then((g) => {
+            starting = false;
             gpu = g;
+            stateDirty = true;
             if (onGpu) onGpu(!!g);
-        }, () => { if (onGpu) onGpu(false); });
-    } else if (onGpu) Promise.resolve().then(() => onGpu(false));
+        }, () => { starting = false; gpu = null; if (onGpu) onGpu(false); });
+    }
+    start();
     const placed = [];
     const font = (size, italic) => `${italic ? 'italic ' : ''}${size}px ${_FONT.text}`;
 
@@ -70,72 +178,23 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         return { R, rc, cx: vp.originX + ox, cy: vp.originY + oy, apo: 1.5 * rc * (R + 0.5), Rb: SQRT3 * rc * (R + 0.5) };
     }
 
-    // Canvas transform for the copy of the world under gluing g, around (cx, cy).
-    function ghostMatrix(g, G) {
-        const [a, b, c, d] = g.m;
-        // K = A·M·A⁻¹ with A = [[√3, √3/2], [0, 3/2]] (axial → pixel)
-        const A = [SQRT3, SQRT3 / 2, 0, 1.5], Ai = [1 / SQRT3, -1 / 3, 0, 2 / 3];
-        const AM = [A[0] * a + A[1] * c, A[0] * b + A[1] * d, A[2] * a + A[3] * c, A[2] * b + A[3] * d];
-        const K = [AM[0] * Ai[0] + AM[1] * Ai[2], AM[0] * Ai[1] + AM[1] * Ai[3], AM[2] * Ai[0] + AM[3] * Ai[2], AM[2] * Ai[1] + AM[3] * Ai[3]];
-        const [vx, vy] = axialToPx(g.v[0], g.v[1], G.rc);
-        return [K[0], K[2], K[1], K[3], G.cx + vx, G.cy + vy];
-    }
-
     /**
-     * Draw one frame. s: { grid, vp, topology, mode, dpr, tileOpts, contours,
-     * histology, legend, scaleUnit }.
+     * Draw one frame. s: { grid, vp, topology, mode, dpr, stateOpts, contours,
+     * histology, legend, scaleUnit }. Until WebGPU has started (or when it
+     * cannot), only the paper is drawn.
      */
     function draw(s) {
-        const t = plateTheme(), dpr = s.dpr, W = s.vp.cssWidth, H = s.vp.cssHeight, G = geometry(s.grid, s.vp);
+        const t = plateTheme(), dpr = s.dpr, G = geometry(s.grid, s.vp);
         const S = SURFACES[s.topology], frame = s.vp.frame;
-        if (gpu && !gpu.lost && drawGpu(s, t, G, S, dpr)) {
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            overlay(s, t, G, S, frame);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (gpu && gpu.lost && !starting) { gpu = null; start(); }
+        if (!gpu || !drawGpu(s, t, G, S, dpr)) {
+            ctx.fillStyle = t.paper;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             return;
         }
-        if (tileDirty || !last || last.rc !== G.rc || last.dpr !== dpr) {
-            renderTile(s.grid, G.rc, Object.assign({ dpr, contours: s.contours, isoLatest: s.field ? s.field.latest : 0, histology: s.histology }, s.tileOpts));
-            tileDirty = false;
-        }
-        last = { rc: G.rc, dpr };
-        const T = _tile;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillStyle = t.paper;
-        ctx.fillRect(0, 0, W, H);
-        const gl = S.closed ? edgeGluings(s.topology, G.R) : null;
-        if (gl) {
-            if (ghost.c.width !== canvas.width || ghost.c.height !== canvas.height) { ghost.c.width = canvas.width; ghost.c.height = canvas.height; }
-            const g2 = ghost.x;
-            g2.setTransform(1, 0, 0, 1, 0, 0);
-            g2.globalCompositeOperation = 'source-over';
-            g2.clearRect(0, 0, ghost.c.width, ghost.c.height);
-            for (let e = 0; e < 6; e++) {
-                const m = ghostMatrix(gl[e], G);
-                g2.setTransform(dpr * m[0], dpr * m[1], dpr * m[2], dpr * m[3], dpr * m[4], dpr * m[5]);
-                g2.drawImage(T.c, -T.w / 2, -T.h / 2, T.w, T.h);
-            }
-            // the copies fade with distance, so they read as "continues", not as more world
-            g2.setTransform(dpr, 0, 0, dpr, 0, 0);
-            g2.globalCompositeOperation = 'destination-in';
-            const peak = t.dark ? 0.55 : 0.5;
-            const grad = g2.createRadialGradient(G.cx, G.cy, G.apo * 0.92, G.cx, G.cy, G.Rb * 1.9);
-            grad.addColorStop(0, `rgba(0,0,0,${peak})`);
-            grad.addColorStop(0.42, `rgba(0,0,0,${peak * 0.5})`);
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
-            g2.fillStyle = grad;
-            g2.fillRect(0, 0, W, H);
-            g2.globalCompositeOperation = 'source-over';
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.drawImage(ghost.c, 0, 0);
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        }
-        ctx.drawImage(T.c, G.cx - T.w / 2, G.cy - T.h / 2, T.w, T.h);
-        overlay(s, t, G, S, frame);
-    }
-
-    function overlay(s, t, G, S, frame) {
         drawEdges(t, G, S);
         placed.length = 0;
         const furniture = drawFurniture(t, s, G, frame).concat(s.avoid || []);
@@ -143,14 +202,14 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         if (!s.histology || s.mode !== ViewMode.COMPARTMENT) drawIsoLabels(t, s, G, frame, furniture);
     }
 
-    // The lattice through WebGPU: re-pack the state texture when the world
-    // changed, then one full-screen pass. Returns false to fall back.
+    // The lattice: re-pack the state texture when the world changed, then
+    // one full-screen pass. Returns false while the device is unusable.
     function drawGpu(s, t, G, S, dpr) {
-        const { cq, cr } = hexBounds(s.grid.W, s.grid.H), o = s.tileOpts;
-        if (tileDirty) {
+        const { cq, cr } = hexBounds(s.grid.W, s.grid.H), o = s.stateOpts;
+        if (stateDirty) {
             gpu.uploadState(s.grid, s.mode, o);
             if (s.field && s.field.padded) gpu.uploadField(s.field.padded, s.field.side);
-            tileDirty = false;
+            stateDirty = false;
         }
         gpu.resize(canvas.width, canvas.height);
         const po = o.paintOverlay;
@@ -285,7 +344,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         const rects = [], narrow = f.w < 600;
         // title
         ctx.font = font(narrow ? 13.5 : 14.5, true); ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
-        const title = plateTitle(s.mode, s.topology, s.histology, narrow ? 'narrow' : f.w < 820 ? 'medium' : 'wide', s.tileOpts && s.tileOpts.immunity, s.presetKey);
+        const title = plateTitle(s.mode, s.topology, s.histology, narrow ? 'narrow' : f.w < 820 ? 'medium' : 'wide', s.stateOpts && s.stateOpts.immunity, s.presetKey);
         if (title) {
             const tw = ctx.measureText(title).width, tx = f.x + f.w - (narrow ? 12 : 22), ty = f.y + (narrow ? 18 : 24);
             ctx.fillStyle = t.rgba(t.paper, 0.92); ctx.fillRect(tx - tw - 8, ty - 17, tw + 14, 24);
@@ -395,8 +454,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     return {
         draw, pick, geometry,
         get gpu() { return !!gpu && !gpu.lost; },
-        markTile() { tileDirty = true; },
-        get ctx() { return ctx; }
+        markState() { stateDirty = true; }
     };
 }
 
