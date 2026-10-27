@@ -109,6 +109,7 @@ tools/presets-survey.mjs the six presets at their default knobs across seeds
 tools/bench.mjs          per-tick cost by preset and radius, with state fingerprints
 tools/survey.mjs         headless long runs: fates, strain composition, genome drift
 tools/threshold.mjs      final-size sweep through the lattice epidemic threshold
+tools/spirals.mjs        recurring waves on the real gluing: which waning rules hold spirals, and their charges
 docs/ROADMAP.md          the plan: 2.1 (antigenic immunity, six experiment presets), 3.0 (the game)
 docs/VISION.md           ideation draft: strengths, gaps, directions, measured evidence
 ```
@@ -699,19 +700,31 @@ preset's knob, as the presets' comments record.
 
 ## Open work
 
-`docs/ROADMAP.md` is the plan; 2.1 landed on 2026-10-24 and 3.0 is the game, a tactical
-reverse Plague Inc. When an item lands, move it to the roadmap's Landed table and update
-this file. `docs/VISION.md` holds the wider directions and the measurements behind them.
+`docs/ROADMAP.md` is the plan, refreshed on 2026-10-27 from an audit of the build: 2.2
+gives the plate cause and time (the transmission record and its Descent view, a
+space–time figure, the three plates that read only in their captions rebuilt), 2.3
+widens contact beyond the neighbours, 2.4 adds waning and the spirals plate, and 3.0 is
+the game, proposed as the Inquiry. When an item lands, move it to the roadmap's Landed
+table and update this file. `docs/VISION.md` holds the first ideation round and the
+measurements behind it.
 
+- Antigenic drift, Spillover and Immunoediting show their phenomenon only in the
+  caption: their plates are a snapshot of state, and the phenomenon lives in time or in
+  a distribution (roadmap §1, §4.5).
+- Each infection's source is picked and then discarded, so nothing on screen knows who
+  infected whom (roadmap §4.1).
 - The default-on `auto_quarantine` is instant, unlimited and omniscient (it sees every
-  true case); the presets turn it off, and 3.0's budgets and reports replace it.
+  true case); the presets turn it off, and 3.0's reports replace it.
 - The tick runs on the main thread. Moving it to a worker is the next lever for worlds
-  past ~100,000 cells: the site is cross-origin isolated (COOP same-origin, COEP
-  credentialless), so the grid could live in SharedArrayBuffers, with paint, presets
-  and the registry's panels crossing as messages.
+  past ~100,000 cells and a prerequisite for 3.0's twins: the site is cross-origin
+  isolated (COOP same-origin, COEP credentialless), so the grid could live in
+  SharedArrayBuffers, with paint, presets and the registry's panels crossing as
+  messages.
 - The drift preset's lineages diffuse from α in every direction rather than along a
   canalized trunk: on a nearest-neighbour lattice competition is local, so lineages in
-  different regions coexist. Long-range mixing (`docs/VISION.md`, A) would globalize it.
+  different regions coexist. Whether long-range mixing canalizes it is a 2.3 question.
+- Immunity never wanes. `tools/spirals.mjs` shows that waning must hold and then lapse
+  for waves to recur as spirals; memoryless or smooth waning gives noise (roadmap §6.1).
 - `tick()` returns counters (`zFight*`, `animalBirths`, `autoQuarantined`, …) that
   nothing displays, and animal marks shade only by S/I/R/D.
 - The plate's isochrone labels are upright; atlas labels often follow the line.

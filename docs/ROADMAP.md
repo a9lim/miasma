@@ -1,18 +1,23 @@
 # Miasma Roadmap
 
 The one authoritative plan for Miasma. `AGENTS.md` describes Miasma as it is; this file
-describes where it is going. When an item lands, move it to §5 with its commit and update
-`AGENTS.md`. `docs/VISION.md` holds the wider ideation round and the measurements behind
-it. Its directions are unslated until a version here names them.
+describes where it is going. When an item lands, move it to §10 with its commit and update
+`AGENTS.md`. `docs/VISION.md` holds the first ideation round (2026-10-24) and the
+measurements behind it; its directions are unslated until a version here names them.
 
-Written on 2026-10-24 by Claude with a9, the day 2.0 (the atlas) landed, after the
-ideation round in `VISION.md`. This file lives in `docs/` so the parent build's stager
-never deploys it.
+Refreshed on 2026-10-27 by Claude with a9, after 2.1, the performance pass, the apparatus
+and three model passes had landed. It starts from an audit of the build (§1): the opening
+and the other five plates screenshotted at day 1,000–1,800, and a prototype of recurring
+waves on Miasma's own surfaces (`tools/spirals.mjs`). The 2.1 plan as written, and the first 3.0 sketch,
+are in git history (`3b01072` and earlier). The versions in §3 are Claude's proposal from
+that audit; a9 ratifies them through the Open items. This file lives in `docs/` so the
+parent build's stager never deploys it.
 
 Tags: **[standard]** an established result · **[synthesis]** our own design applying
-standard ideas · **[speculative]** needs prototyping before it's trusted. Sizes **S / M / L**
-are relative. a9's calibration from Worldline: a milestone is one to three serial
-sessions, and parallel lanes fit a whole version in one.
+standard ideas · **[measured]** found by a script in `tools/`, reproducible ·
+**[speculative]** needs prototyping before it's trusted. Sizes **S / M / L** are relative.
+a9's calibration from Worldline: a milestone is one to three serial sessions, and
+parallel lanes fit a whole version in one.
 
 ## 0. Decisions
 
@@ -20,349 +25,429 @@ sessions, and parallel lanes fit a whole version in one.
 
 | Date | Decision |
 |---|---|
-| 2026-10-24 | **The versions:** 2.1 is immunity by antigenic distance and six presets that work (§2). 3.0 is the game, a tactical reverse Plague Inc (§3), not before next week's usage window. |
-| 2026-10-24 | **Fewer, better presets** (Worldline's rule): a preset earns its place as an experiment with one knob, not as coverage. The cut presets' mechanics stay reachable from Settings. |
+| 2026-10-24 | **The versions:** 2.1 is immunity by antigenic distance and six presets that work. 3.0 is the game, not before the following week's usage window. (3.0's form is reopened in Open 1.) |
+| 2026-10-24 | **Fewer, better presets** (Worldline's rule): a preset earns its place as an experiment with one knob, not as coverage. The cut presets' mechanics stay reachable from the Model tab. |
 | 2026-10-24 | **Antigenic memory replaces the bloom filter outright.** Miasma persists no state, so there is nothing to migrate and no compatibility reader to keep. |
 | 2026-10-24 | **2.0, the atlas:** the plate in the line of Snow's map, the inks, four surfaces that glue every edge or none (`58a3d09`). |
-| 2026-10-24 | **2.1 is built now, in one session.** 3.0 waits until it can be done properly. |
-| 2026-10-24 | **The opening preset is Threshold,** calibrated to the ragged regime (§2.3). |
-| 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance, so drift never runs off the map and can recycle old antigens. **Strain marks encode the position directly:** one axis is hatch angle (0–180°), the other hue (0–360°), on an OKLCH wheel fitted like the inks and squeezed near the accent (§2.2). |
-| 2026-10-24 | **Isochrones fade** (a9's call): a cell's arrival is re-stamped when a new wave reaches it, contours fade with their age measured against the newest arrival, and contours never cross the cliff between waves (§2.2). |
-| 2026-10-25 | **The world's size is a setting** (Settings → World, `?r=`): 10,621 to 96,661 cells. **The default is 24,031** (a9's call): the presets were re-surveyed at that size and the opening's warm-up lengthened to keep its composition. |
-| 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it (the view picker over it, the brush rail down its left edge, the zoom by the scale bar, the knob beside the caption as a ruler ticked at the theory's threshold), and the margin is the atlas's apparatus: the experiments as its numbered plates, Counts, Strains, and the Model tab, the model drawn as a compartment diagram whose parts hold every switch and rate. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
+| 2026-10-24 | **The opening preset is Threshold,** calibrated to the ragged regime. |
+| 2026-10-24 | **Antigenic space is a torus** (a9's call), 8 AU around, with shortest-way distance. **Strain marks encode the position directly:** one axis is hatch angle, the other hue on an OKLCH wheel fitted like the inks and squeezed near the accent. |
+| 2026-10-24 | **Isochrones fade** (a9's call): re-stamped when a new wave arrives, faded by age against the newest arrival, never contoured across the cliff between waves. |
+| 2026-10-25 | **The world's size is a setting** (Experiments → World, `?r=`): 10,621 to 96,661 cells. **The default is 24,031** (a9's call). |
+| 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it, and the margin is the atlas's apparatus. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
+| 2026-10-27 | **WebGPU is the one plate renderer** (`b7082e3`); a browser without it sees a notice while the margin runs. |
+
+Rows that only scheduled 2.1 (built in one session; 3.0 to wait until it could be done
+properly) are in git history.
 
 ### Open
 
-1. **3.0's clock** (§3.1): weekly turns (recommended) or real time with pause. Left for
-   3.0.
-2. **3.0's mode:** the sandbox stays the default and the game is a mode (recommended), or
-   the game becomes the front door. Left for 3.0.
+Each has a recommendation; a9 decides.
 
-## 1. Versions
+1. **3.0's core verb** (§7): *the Inquiry*, where the player reads partial reports, works
+   out the cause and files findings that are scored when the truth is revealed
+   (recommended), or *containment*, the reverse Plague Inc of the first sketch. Ndemic's
+   *Plague Inc: The Cure* (2020) already ships containment: patient-zero hunts, contact
+   tracing, lockdowns with public compliance, a vaccine pipeline. Inference is what
+   Miasma's hidden spatial truth, antigenic adversary and counterfactual twins are
+   uniquely placed to make a game of.
+2. **Spillover's experiment** (§4.5): emergence, with human transmissibility as the knob
+   and chain sizes as the measure (recommended), or the spillover rate as now.
+3. **The transmission record's view** (§4.2): Descent as a seventh view (recommended), or
+   a layer drawn over the State view.
+4. **Geography** (§5.4): a road brush in 2.3, painted routes that carry long-range
+   contact (recommended), or the world stays a bare hexagon.
+5. **Order after 2.2:** 2.3 and 2.4 as parallel lanes (recommended), or one after the
+   other.
+6. **3.0's clock:** weekly turns around the Weekly Return (recommended) or real time with
+   pause.
+7. **3.0's mode:** the sandbox and the plates stay the front door and the Inquiry is a
+   mode (recommended), or the Inquiry becomes the front door.
+
+## 1. Where Miasma stands
+
+2.x made Miasma an atlas of experiments: six numbered plates, each with one knob, a number
+measured live in the caption and, where theory gives one, a predicted number ticked on the
+knob's ruler. The plate is drawn after Snow on four glued surfaces up to 96,661 cells at
+60 fps; immunity works by antigenic distance; the Model tab draws the whole state machine
+as a figure whose parts hold every rate. The audit of 2026-10-27 found five things.
+
+1. **Half the plates read only in their captions.** Threshold, Herd immunity and Zombie
+   apocalypse show their phenomenon on the plate: a ragged front; one pale channel the
+   wave threaded through the vaccinated hatching (faint, at 13% of the unvaccinated by
+   day 1,000); a red front with green behind it. The other three don't. Antigenic
+   drift at day 1,800 is faint hatching under isochrones labelled anywhere from day 1,560
+   to 1,776; Spillover is an even speckle; Immunoediting is a pink field with glass
+   holes. Their phenomena live in time (seasons, sweeps, the three regimes) or in
+   statistics (chain sizes), and the plate is a snapshot of state.
+2. **The plate forgets causes.** Every infection picks one source (`pickIncomingStrain`
+   chooses an edge, then a strain), and the pick is thrown away. Who infected whom is the
+   richest record an outbreak has. It gives Re by counting rather than by ratio, chain
+   sizes, the offspring distribution, and the contact tracing a game needs.
+3. **Contact stops at the neighbours.** Lattice R0 is capped at 6, the drift preset's
+   lineages diffuse instead of forming a trunk, and the well-mixed comparison that
+   `about.md` opens on appears nowhere as a number.
+4. **Only Drift recurs, and as an endemic soup.** Immunity never wanes, so every other
+   run has one act.
+5. **The 3.0 sketch is close to a shipped game** (Open 1).
+
+## 2. The thesis
+
+The next step gives the plate **cause and time**: who infected whom, drawn on the map, and
+what happened where, drawn against time. Then it widens what the plate can show (contact
+beyond the neighbours, waves that come back). Last, it hands the reader the
+epidemiologist's real job, which is inference: in 3.0 you read reports, work out the cause
+and act on it, and the truth is revealed at the end.
+
+The thread through all of it is one new record. Once each infection keeps its source, the
+Descent view draws the outbreak's tree, the caption counts Re instead of estimating it,
+Spillover measures stuttering chains, a trace order in 3.0 follows real edges, and the
+epilogue reveals the true tree under the reported plate.
+
+## 3. Versions
 
 | Version | Theme | Contents | Size |
 |---|---|---|---|
-| **2.0** | The atlas | done 2026-10-24 (§5) | — |
-| **2.1** | Immunity by distance; presets that work | done 2026-10-24 (§2.0, §5) | — |
-| **3.0** | The game | a tactical reverse Plague Inc: reports instead of truth, costed orders, an evolving adversary, scored against the world you didn't touch (§3) | L |
+| **2.2** | Cause and time | the transmission record and the Descent view, a space–time figure, the trunk on the map, the three weak plates rebuilt, a counter-based RNG and recipe links (§4) | M–L |
+| **2.3** | Beyond the neighbours | the mixing dial, the ghost of the ODE, roads, two new plates: the ghost and the front (§5) | M |
+| **2.4** | Time that recurs | waning that holds then lapses, the phase view with spiral cores and their charges, the year rose, the spirals plate (§6) | M |
+| **3.0** | The Inquiry | reports instead of truth, inquiries and orders on a budget, findings scored against the hidden truth, twins (§7) | L |
 
-Everything else in `VISION.md` is unslated (§4).
+2.2 comes first: it repairs the half of the atlas that doesn't read, and its record and RNG
+are 3.0's substrate. 2.3 and 2.4 touch different parts of the tick (transmission for 2.3,
+memory for 2.4) and different figures, so they can run as parallel lanes in worktrees,
+with `presets.js` and `model.js` merged by hand (Open 5). The engine track (§8) runs
+alongside.
 
-## 2. 2.1: immunity by distance, and presets that work
+## 4. 2.2: cause and time
 
-### 2.0 As built (2026-10-24)
+### 4.1 The transmission record [synthesis]
 
-2.1 landed in one session (§5). What differs from the plan below, and what was learned:
+Every →E records its source. `pickIncomingStrain` already picks the edge, so the cost is
+the write:
 
-- **Strain marks** are the antigen itself (a9's call): `ag_x` → hatch angle over 180°,
-  `ag_y` → hue around an OKLCH wheel fitted like the inks (light L 0.525 C 0.08, dark
-  L 0.62 C 0.10), α opposite the accent, the wheel hurrying and its chroma dipping
-  through the accent's hue. The antigenic map is the torus as a square centred on α,
-  its ground the key of marks.
-- **Isochrones fade** (a9's call; built by a lane): re-stamped on re-arrival after 32
-  days, faded by age against the newest stamp (quadratic to 0.12 over 420 days), no
-  contours across cliffs between waves, labels only on fresh, long lines.
-- **The registry** reclaims dead branches always and splices dead single-line
-  ancestors only above 16,384 slots, so the antigenic map can draw the trunk's whole
-  path; `gen` keeps lineage depth.
-- **Within-host fitness** is β × the host's susceptibility, as planned. Recombination's
-  range-scaled noise lets selection inflate β, so the drift preset turns it off, and
-  `mutation_strength: 0` now means no genome noise.
-- **Seasonality** (`season_amp`, from `VISION.md` C) came in for the drift preset:
-  without it drift settles into a spatial endemic state with no waves.
-- **The drift preset** shows seasons, drift (about 1.5 AU a year) and deepening
-  lineages, but lineages diffuse from α in every direction rather than along a
-  canalized trunk: on a nearest-neighbour lattice competition is local, so lineages
-  in different regions coexist **[synthesis]**. A low mutation rate (0.002) keeps each
-  wave to a few variants, so the plate shows sectors, not confetti. Long-range mixing
-  (`VISION.md` A) is the lever for a trunk.
-- **Spillover** needed two model fixes found in calibration: chronic *human* carriers
-  transmit for life and made human chains supercritical (removed from the preset), and
-  a reservoir that burns through its rodents dies out (the rodents now carry the
-  infection chronically, with turnover, and `animal_seed` starts 5% infected).
-- **The presets' facts** are in `AGENTS.md` ("Presets"), reproduced by
-  `tools/presets-survey.mjs`.
-- **The experiment strip** puts the preset picker, its knob and its description in the
-  margin head; the picker left Settings, and Reset restarts the running experiment.
-- **Calibration lanes** on Sonnet were stopped by its biology safeguard (a false
-  positive on an educational lattice model), as was Codex's ideation thread; the
-  calibration ran in the main loop instead. Pure math consults went through.
+- **Per cell:** `src` (Int32: the source cell; a distinct code for paint, the opening's
+  seeds and spillover from the cell's animal) and `t_inf` (the tick). Nothing a neighbour
+  reads, so both are written in place (§11). Paint can set them, so
+  `captureCellState` snapshots them.
+- **The event log:** a typed ring of infections `(cell, src, tick, strain)` over a
+  window (the isochrones' 420 days is the natural one), each event pointing at its
+  parent's event. Each new event adds one to the descendant count of every ancestor still
+  in the window: O(depth) per infection, bounded by the window. `tools/bench.mjs` before
+  and after.
+- **Re by counting:** the mean number of children of the cases whose infectious period
+  ended in the last 30 days. The caption prints it beside today's ratio estimator. On a
+  growing lattice front both sit near 1, because incidence grows with the front's
+  circumference rather than exponentially; now the plate can show that the count agrees.
+  Wallinga & Teunis 2004 reconstruct the tree's likelihood from case dates to estimate
+  Re [standard]; here the tree is known exactly.
+- **Distributions:** the size of each tree when it closes (Spillover, §4.5), and the
+  offspring distribution, whose dispersion is the superspreading parameter k of
+  Lloyd-Smith et al. 2005 [standard] (capped at 6 offspring until 2.3).
 
-The evidence is in `VISION.md`, "What the measurements say". Immunity recognizes only
-exact strain ids, so every mutant is fully novel to every host. The phylogeny stays a
-broom, at most 5 generations from α by day 3,000. Within a host, the incumbent strain
-always wins whatever its genome (`src/dynamics.js:460`). Every preset sits 4–21× above
-the lattice threshold, and two never take off. 2.1 makes evolution consequential and
-rebuilds the presets as experiments.
+### 4.2 Descent, a view [synthesis]
 
-### 2.1 Antigenic space [synthesis]
+The plate draws the tree. Each infection is a stroke from its source's centre to its own,
+weighted by the number of infections that descend through it, so an outbreak reads like a
+drainage map: trunks where the wave ran through, twigs at the front, lone twigs where a
+chain stuttered. Line weight is a quantity in the model (descendants), so it passes
+"depict, don't decorate". Strokes cross glued edges through the edge isometry, like the
+isochrones, and fade with the same clock. The live tips (I cells) stay red; closed strokes
+are graphite; in the Strain view each stroke takes its strain's mark. At 24,031 cells a
+wave lays at most about 24,000 strokes: instanced segments in `gpu-plate.js`.
 
-**Strains get a position.** Each strain has an antigenic coordinate `(ag_x, ag_y)` in
-antigenic units (AU), stored as two new registry arrays; α sits at the origin. One AU is
-the distance at which cross-immunity falls by 1/e, so immunity has no width parameter of
-its own; presets set the step size instead. Two dimensions follow Smith et al. 2004
-(H3N2's antigenic evolution is mostly two-dimensional and clustered) **[standard]**. Bedford,
-Rambaut & Pascual 2012 found the trajectory canalized, close to one-dimensional, which a
-2D model should reproduce rather than assume **[standard]**.
+What each plate gains: Threshold near β_c draws a fractal tree; above it, long trunks run
+from the two seeds and across glued edges. Spillover becomes a forest of small trees rooted
+at animals. Drift lays a new forest each season. Zombie apocalypse draws the conversion
+trees.
 
-- **Mutation.** Every mutation event also takes an antigenic step in a uniformly random
-  direction. Its length is drawn with mean `ag_step` (sim-wide, AU), and with
-  probability `ag_jump` it is a large jump of about 2 AU instead. Single substitutions near
-  the receptor-binding site cause major antigenic change in influenza (Koel et al. 2013)
-  **[standard]**. Coordinates take additive steps. The multiplicative genome noise would
-  freeze a coordinate at 0, so the coordinate is not one of `GENOME_FIELDS`.
-- **Recombination.** The recombinant takes its parents' midpoint, plus a small jitter.
+### 4.3 Space–time, a figure [synthesis]
 
-**Cells remember positions, not ids.** `strain_hist` (the 64-bit bloom) is replaced by
-K = 4 memory slots per cell: `mem_x`, `mem_y` (Float32, N·K), `mem_kind` (infection or
-vaccine) and `mem_n` (fill count, ring overwrite of the oldest). With scratch copies that
-is about 1 MB at the current grid.
+A Hovmöller diagram (Hovmöller 1949, the meteorologists' trough-and-ridge diagram)
+[standard]: position along a transect against time, inked by incidence. The transect is
+the world's centre row, averaged over a band of rows and read through the gluing; time
+runs down the figure over the last two years. A travelling front is a V whose slope is its
+speed (Threshold, and 2.3's front plate); seasons are horizontal bands (Drift); in the
+Strain view, sweeps are bands where the mark changes. Cummings et al. 2004 found dengue
+waves radiating from Bangkok in this kind of view [standard]. One row of W values per tick
+into a ring texture: O(W), drawn as a figure in the Counts tab beside the rose.
 
-- **Written on:** recovery (each carried strain, merging positions within 0.1 AU),
-  vaccination (the current vaccine antigen, below), and the sanitize brush's I/E → R cure.
-  Vaccination rollout keeps memory as it keeps the bloom today. The paint undo snapshot
-  (`captureCellState`) captures memory.
-- **Susceptibility** of a cell to strain s:
-  `σ(s) = 1 − max_k c_k · exp(−|a_s − m_k|)`. Here `c_k` is `immunity_strength` for an
-  infection memory and `vax_efficacy` for a vaccine memory. σ is 1 for an empty memory.
-  Start with the exponential kernel and the max; prototype a Gaussian kernel and the
-  product of escapes before M1 closes.
-- **Where σ applies:** every infection roll whose target has memory. That covers R → E
-  reinfection, V → E breakthrough, coinfection of an I cell (σ replaces today's bloom
-  block), and animal-to-human spillover. R and V are ordinary targets scaled by σ.
-  A strain matching a memory exactly meets `1 − c`, and a distant one meets almost a naive
-  host.
-- **Removed:** `strain_hist`, `bloomSet`, `bloomHas`, `bloomCount`,
-  `cross_immunity_mult` and `r_susceptibility_mult`. Textbook SEIR without reinfection is
-  `immunity_strength = 1` and `ag_step = 0`.
+### 4.4 The trunk on the map [synthesis]
 
-**Vaccines have an antigen.** A sim-wide `vax_antigen` (default α's position) is what the
-vaccinate brush and the rollout write into memory. Vaccine mismatch then falls out of the
-model: a drifted strain meets reduced vaccine efficacy, and the annual flu-shot decision
-(which strain to match) becomes visible. In 2.1, a control in the Strains tab, "match
-the vaccine to the selected strain", sets it at once. In 3.0 it costs time and money
-(§3.3).
+Each strain records its birth cell (`born_at`, Int32 in the registry; a recombinant takes
+its host's cell). The Strain view draws the dominant strain's ancestry as a route through
+its ancestors' birthplaces, each leg the short way round through the gluing, with a dot at
+each birth. That is where the lineage has been, the way Nextstrain draws a phylogeny on a
+map (Hadfield et al. 2018) [standard]. Fig. 3 shows where the trunk went in antigenic
+space; this shows where it went on the world. S.
 
-**Within-host selection reads the genome.** Step 3's update becomes replicator dynamics
-on a fitness that depends on the strain and the host:
-`f_i = β_i · σ_host(i)` and `x_i ← x_i · (1 + k (f_i − f̄) / f̄)`, then renormalized. A strain
-escaping this host's memory, or simply more transmissible, gains load; the incumbent no
-longer wins by default. **[synthesis]**
+### 4.5 The three plates rebuilt
 
-**The registry can reclaim ids.** Ids stayed unique only because blooms hashed them.
-Once no cell remembers an id, a tombstoned strain with no living descendants, absent from
-every human slot (memory slot 0 included) and every `animal_strain`, can be freed and its
-id reused. Reclaim bottom-up, leaves of the extinct subtree first. The phylogeny draws only
-living strains and their ancestors, so it never sees a reclaimed id. This removes the
-65,535 cap that high-incidence runs reach (about 12,000 strains by day 600). The
-extinction sweep starts scanning `animal_strain`, which closes the open bug where a
-strain circulating only in animals is tombstoned.
+- **Spillover becomes emergence** (Open 2). The knob is human transmissibility (β), not
+  the spillover rate. The phenomenon: stuttering chains rooted at animals that lengthen
+  as β rises, until one doesn't stop. The measure: the mean chain size and its
+  distribution (a figure on log axes). Two predictions sit on the ruler. The branching
+  process's mean, 1/(1 − R) with R the early offspring mean (about 5T on the lattice),
+  diverges at T = 0.2: the mean-field foil. On the lattice a chain in fresh hosts is a
+  bond-percolation cluster, finite until T ≈ 0.347, the threshold Plate I marks
+  [synthesis, to measure; the reservoir's accumulated immunity will move it]. The
+  current preset already sits in the gap: T ≈ 0.25 per edge, so 5T ≈ 1.2, yet its
+  measured human Re is 0.38. Blumberg & Lloyd-Smith 2013 estimate R from exactly this
+  distribution [standard]; Lloyd-Smith et al. 2009 frame the human–animal interface
+  around it [standard].
+- **Antigenic drift** gains the space–time figure (seasons as bands, sweeps as changing
+  marks) and the trunk on the map. Its isochrones keep the current season's wave
+  and drop older labels, which today scatter across the plate. S.
+- **Immunoediting** gains growth rings: the margin of the transformed region (a contour
+  of smoothed transformed-cell density at ½) every 100 days, faded with age. Escape reads
+  as rings spreading apart, equilibrium as rings piling onto one another, elimination as
+  rings that shrink and stop. The isochrone builder's marching triangles run on a
+  different field. M.
 
-### 2.2 Seeing it
+Each rebuilt plate is re-surveyed across ten seeds (`tools/presets-survey.mjs`) before it
+ships.
 
-- **Strain marks encode antigenic position.** Today a strain's ink and hatch angle cycle
-  by id (`strain-style.js`), so neighbors in antigenic space look unrelated. The principle
-  for 2.1: similar antigens look alike, drift reads as a gradual change, and a jump reads
-  as a new ink. One candidate: an antigenic cluster is one ink (a strain founds a new
-  cluster when it is more than 1 AU from its cluster's founder), and within a cluster the
-  hatch angle turns with distance from the founder. Sketch it first (Open 2). On the GPU,
-  the strain view carries its angle in the texel's `w`, which only the ramp views use
-  today; the cluster ink takes the 3 slot bits in `z`.
-- **The immunity view** replaces "susceptibility by prior exposure", which counts bloom
-  bits. It shades each cell by σ to a chosen strain: by default the dominant one, or the
-  strain selected in the Strains tab. It shows the immune landscape the virus is escaping.
-- **The antigenic map,** a second figure in the Strains tab. Strains sit at their
-  antigenic positions: living ones sized by prevalence in their ink and hatch, extinct ones
-  as small graphite points. The trunk (the dominant strain's ancestry) is drawn as a line
-  over a 1 AU grid. The vaccine antigen is a marked cross with its 1 AU circle. Clicking
-  selects, as in the phylogeny. Smith's figure is a map, so it already belongs in an atlas.
-- **The phylogeny** keeps its code. It should now show a trunk, and its tips take the new
-  marks.
-- **Recurring waves** (Open 3). First-arrival isochrones freeze after the first wave. If
-  the drift plate needs more, contour each cell's first exposure to the current antigenic
-  cluster, labeled by cluster.
+### 4.6 The record: a counter-based RNG and recipes
 
-### 2.3 Presets: six experiments
+- **A counter-based RNG**, `u = hash(seed, tick, cell, stream)`, replaces the sequential
+  `mulberry32` stream (`VISION.md`, I1). It underlies 3.0's twins (common random numbers:
+  twins differ only by the orders), replay from a checkpoint, and seeded cases. Every
+  `?seed=` run and fingerprint changes, so the presets are re-surveyed. S–M.
+- **Recipes:** one link encodes the plate, knob, surface, world, seed, the Model tab's
+  edits and the paint log, so any plate a reader makes can be sent to someone. S–M.
 
-Each preset names one knob and what to look for, states a measured number live in the
-caption, and gives the predicted number where theory supplies one. The knob appears as a
-single slider beside the preset's name. Calibration standard: every preset is surveyed
-with `tools/survey.mjs` across at least 10 seeds, and none fizzles unless fizzling is the
-experiment. The plate reads well by day 100, and the run either keeps something to watch
-past day 1,000 or reaches an end the caption names. Each preset sets every toggle it
-relies on, because `applyPreset` resets to the defaults first, and leaves off what its
-experiment doesn't use.
-
-| Preset | From | Knob | Look for | Predicted | Measured |
-|---|---|---|---|---|---|
-| **Threshold** | SEIR vanilla | β | below β_c outbreaks stay finite clusters; near it the front is ragged and holed | β_c ≈ 0.061 with independent edges (`p_c = 2 sin(π/18)` on the triangular lattice); correlated edges push it up (Grassberger 1983) **[standard]** | final size; measured crossover β ≈ 0.067 at γ + μ = 0.123 (`tools/threshold.mjs`) |
-| **Herd immunity** | Smallpox | random vaccine coverage | the wave stops at about half coverage, though each edge transmits with T = 0.93 | the triangular site-percolation threshold 1/2 as T → 1 **[standard]**; the mean-field 1 − 1/R0 ≈ 82% (taking R0 ≈ 6T) as the foil | final size among the unvaccinated; measured crossover 0.48–0.50 |
-| **Antigenic drift** | new, influenza-like | `ag_step` | a trunk in the phylogeny and the antigenic map, recurring waves, the immunity view lagging the virus | canalized drift (Bedford et al. 2012) **[standard]**; wave interval against step size **[synthesis]**, to measure | AU per year; days between waves; lineage depth |
-| **Spillover** | Andes hantavirus | spillover rate | human chains that can't sustain themselves and never end | human T below threshold (today's 0.48 is above it and must be recalibrated) | human-to-human Re against cases from spillover |
-| **Immunoediting** | Oncoviral | immune surveillance (`z_die_fighting`) | elimination, equilibrium or escape (Dunn et al. 2002) **[standard]**, read on the H&E section | three regimes as the knob moves | transformed cells over time; tumor extent |
-| **Zombie apocalypse** | as is | fight-back (`z_die_fighting`) | the humans win, coexist or are overrun | — | humans and zombies remaining |
-
-- **Cut:** COVID-like, Ebola, TB, Plague and Absurd. Their mechanics stay reachable from
-  Settings: infectious corpses run in Zombie apocalypse, latency in Immunoediting, chronic
-  carriers and the reservoir in Spillover, vaccination in Herd immunity.
-- **Herd immunity** is new evidence, measured on 2026-10-24: smallpox-like rates
-  (β 0.55, σ 0.16, γ 0.07, μ 0.018) on the torus, random pre-vaccination at efficacy 1,
-  one seed cell, eight seeds per coverage. Final size among the unvaccinated: 93% at
-  coverage 0.42, 71% at 0.45, 25% at 0.48, 9% at 0.51, 1% at 0.55. The lesson is that
-  contacts limited to neighbors make herd immunity far cheaper than the textbook formula
-  says **[synthesis]**. The mixing dial in `VISION.md` (A) would move it back toward 82%.
-- **Immunoediting** must stop saturating. Today 6,524 cells are transformed from day
-  about 200 onward and the plate goes uniformly purple. Surveillance strong enough to
-  reach elimination and equilibrium at the knob's low end, plus a necrotic core that
-  keeps the section changing, is the calibration target.
-- **The opening** (Open 1): Threshold at β of about 0.09–0.11 (T ≈ 0.55–0.6), so the
-  front is ragged but still crosses a glued edge during the warm-up.
-
-### 2.4 Fixes that ride along
-
-- The rose counts Z transitions, with their own pattern (sap cross-hatching). Today Z
-  runs leave it empty.
-- Presets stop inheriting the default-on `auto_quarantine` (§2.3). Capacity for
-  tracing waits for 3.0's budgets. The sandbox keeps tracing on.
-- The strain view's cartouche lists vaccination hatching when V cells are on the plate.
-- Hospital capacity counts active cells (10,621), not `W · H` (14,400).
-- Isochrone labels are suppressed where the field is incoherent, as in spillover-driven
-  runs that print "day 24" beside "day 192". Spillover needs this to read.
-- The extinction sweep scans `animal_strain` (§2.1).
-
-### 2.5 Receipts
-
-- `src/immunity.test.mjs`. σ = 1 − c at distance 0, rises monotonically with distance,
-  and tends to 1. Vaccine memory uses `vax_efficacy`. The memory ring keeps the newest K.
-  In a primed host, the escaping strain gains load. Reclamation never frees a strain that
-  is referenced or has living descendants. Memory arrays survive the scratch/swap round
-  trip and paint undo.
-- `tools/survey.mjs` gains a preset mode (each preset × 10 seeds: takeoff rate, peak,
-  fate). Its table goes into `AGENTS.md`, like Worldline's preset facts.
-- Screenshots for each preset in light, dark and phone widths, with no console errors
-  (`docs/sim-overhaul/check.mjs` in the parent).
-- Docs: `AGENTS.md`; `about.md` (the immunity paragraph, the preset list, a bumped
-  `updated`); `index.html`'s educational text and JSON-LD (two FAQ answers describe the
-  bloom filter and `r_susceptibility_mult`); `README.md`.
-
-### 2.6 Order
+### 4.7 Order and receipts
 
 | Milestone | Contents | Size | Depends on |
 |---|---|---|---|
-| **M1** | antigenic registry, memory, σ, vaccine antigen, within-host fitness, bloom removal, id reclamation, tests | M | — |
-| **M2** | strain marks, immunity view, antigenic map, vaccine control | M | M1; Open 2 sketched |
-| **M3** | the six presets calibrated, the knob slider, §2.4's fixes | M | M1 for Antigenic drift only; the other five can start at once |
-| **M4** | docs and receipts | S | M2, M3 |
+| **M1** | the record, Descent, Re by counting | M | — |
+| **M2** | the space–time figure, the trunk on the map | S–M | — |
+| **M3** | the three plates rebuilt, surveyed | M | M1 (Spillover), M2 (Drift) |
+| **M4** | the counter-based RNG, recipes | S–M | — |
 
-M1 and M3 (without Antigenic drift) can run as parallel lanes.
+M1, M2 and M4 can run as parallel lanes. Receipts: tests that every event's source was a
+transmitter at the start of its tick and that descendant counts equal subtree sizes;
+`tools/bench.mjs` per milestone; screenshots in light, dark and phone widths; docs
+(`AGENTS.md`, `about.md` with a bumped `updated`, `index.html`'s text).
 
-## 3. 3.0: the game (sketch)
+## 5. 2.3: beyond the neighbours
 
-**A tactical reverse Plague Inc.** In Plague Inc you evolve a pathogen to end the world.
-Here the pathogen evolves on its own, through 2.1's machinery, and you contain it as the
-world's Medical Officer of Health, seeing only what is reported, with finite doses and
-staff, and nothing instant. It is a sketch for next week or later; each part names what it
-needs.
+### 5.1 The mixing dial [synthesis]
 
-### 3.1 The clock: the Weekly Return
+A fraction ε of each source's transmission goes to a cell drawn from a kernel:
+exponential with length ℓ, a power law, or uniform (`VISION.md`, A). Local edges are
+scaled by 1 − ε, so the total contact rate is fixed and ε alone moves the world from
+lattice (0) to mass action (1, uniform). Push sampling: each transmitting cell makes
+Poisson(ε · 6β) long-range attempts per tick, resolved against start-of-tick state, at
+O(#I). A jump is a vector in the universal cover, wrapped back through the gluing with
+`wrap` (lost at a shore), so long jumps cross the surface correctly and mirror across a
+twist. The Descent view draws them as long strokes.
 
-The run proceeds in weeks. Each week you read the Weekly Return, issue orders on the
-plate, and the world runs seven days. The Return is the diegetic interface, the way the
-morning Brief is in Shoals: a plate of reported deaths and cases in Snow's manner, a
-short table, a headline in the caption. It is historically exact: Snow noticed the table on
-the South London water companies in the Registrar General's Weekly Return of
-19 November 1853. Farr's Return of 14 October 1854 then summarized the registrars'
-inquiry into each household's water supply **[standard]**. The alternative clock is real
-time with pause (Open 4).
+### 5.2 The ghost of the ODE [standard]
 
-### 3.2 What you know: reports, not truth
+The mean-field SEIR(D) with the same per-day rates, integrated beside the lattice and
+drawn as a dashed envelope on the rose. The caption gives Kermack–McKendrick's final size
+against the lattice's. At ε = 1 with a uniform kernel the lattice must match it; that is
+a regression test.
+
+### 5.3 Two plates
+
+- **The ghost.** Knob: ε. Measured: final size and peak day against the ODE's. The
+  lattice's slow, low, long epidemic rises into the ghost as ε grows.
+- **The front.** Knob: the kernel's tail. Measured: front speed (the space–time
+  figure's slope) against Fisher–KPP for thin tails; heavy tails accelerate the front
+  (Mollison 1977) [standard], so the isochrones visibly spread apart.
+
+### 5.4 Roads (Open 4) [synthesis]
+
+A road brush paints a route between two cells: a long-range edge carrying contact,
+drawn as a double hairline in the manner of a period map. Isochrones bend along roads,
+which sets up the effective-distance plate (Brockmann & Helbing 2013, `VISION.md` X) and
+gives 3.0 an order: close a road. It is the least geography that does the job; the
+hexagon stays abstract otherwise.
+
+### 5.5 Questions it can answer
+
+- Does long-range mixing canalize the drift preset into a trunk? [speculative] Measure
+  lineage depth and the trunk's straightness in Fig. 3 against ε.
+- Herd immunity's threshold should move from the lattice's 50% toward 1 − 1/R0 as ε
+  grows [synthesis]. The ghost plate can show it with the coverage set by hand.
+- Long-range transmission selects for higher virulence (Boots & Sasaki 1999) [standard];
+  a plate needs a transmission–virulence trade-off first (§9).
+
+## 6. 2.4: time that recurs
+
+### 6.1 Waning that holds, then lapses [measured]
+
+`tools/spirals.mjs` runs a stripped S → I → R → S medium on Miasma's own gluing, at
+R 89 over 1,500 days, and tried three waning rules. A memoryless R → S, and susceptibility
+that fades smoothly from recovery, both melt into noise: recovered cells become partly
+susceptible right behind the front, so a wave has no refractory wake. Protection that
+holds and then lapses gives spirals. With a 40-day cycle, a 20-day hold is noise, 30
+gives ragged spirals and 36 gives clean ones, forming on their own from a random start.
+The infectious period can stay geometric; only the refractory needs to hold. The
+deterministic limit is Greenberg & Hastings's 1978 excitable medium [standard].
+
+So waning goes into the memory, not the compartments. Each memory slot gains its tick
+(`mem_t`, one own-cell Float32 per slot, written in place), and protection becomes
+`c_k · h(age)`, with `h = 1` for `age < hold`, then `exp(−(age − hold)/fade)`. Two new
+rates, `immunity_hold` and `immunity_fade`; `fade = ∞` is today's lasting immunity.
+Waning and antigenic distance compose: a remembered antigen protects less both as it
+ages and as the strain drifts from it.
+
+### 6.2 The phase view [synthesis]
+
+A view of where each cell is in its cycle, drawn as an activation map: contours of days
+since the last arrival, the way cardiac electrophysiology draws isochronal activation
+maps. Phase singularities, the spiral cores, get small circled marks with their turning
+(⟲ or ⟳), like the cone points. The core detector needs work: today's counter misses
+cores whose triangles straddle the rim. It should follow cores through the gluing and
+over time, so a core keeps its identity as it crosses a seam.
+
+### 6.3 The spirals plate [synthesis, checked by Codex for the static case]
+
+The question from `VISION.md` G: can two spirals turning the same way share a surface?
+Counted in the world hexagon's own orientation, the total charge is 0 on the torus and
+even on the Klein bottle and RP²: two same-handed unit spirals are allowed on the
+non-orientable surfaces and forbidden on the torus. The cleanest event to watch is one
+core carried across a twisted seam, whose turning reverses in screen orientation while
+the total jumps by 2; the mirrored copies already draw the far side. The prototype shows
+spirals forming and running across the gluing on all three closed surfaces. With the
+crude counter, seeds 1–6 at a 36-day hold gave net charges 0 0 1 0 0 0 (torus),
+0 −2 −1 1 0 0 (Klein) and 0 0 2 1 0 0 (RP²). The noisy rules also net ±2 on the torus,
+so that is not yet evidence: the detector (§6.2) comes first. Knob: the hold.
+Measured: the net charge and the cores' turnings. Whether spirals pin to the cone points
+or flee them is a question the literature can't answer and the plate can [speculative].
+
+### 6.4 The year rose [standard]
+
+Once runs recur, the rose becomes Nightingale's own form: twelve thirty-day wedges, with
+last year dashed, so a seasonal plate draws a lopsided rose. S.
+
+## 7. 3.0: the Inquiry
+
+A game of reading the plate under partial information, in Snow's position: the plate
+shows what was reported, the cause is hidden, and you have a week's budget to find it out
+and act. The truth, the true transmission tree and the world you didn't touch are
+revealed at the end. Open 1 decides whether this is the frame; the first sketch's
+containment game is in git history.
+
+### 7.1 The week
+
+The run proceeds in weeks around the Weekly Return (Open 6): a plate of reported deaths
+and notified cases in Snow's manner, a short table, a headline in the caption. Snow noticed
+the table on the South London water companies in the Registrar General's Weekly Return of
+19 November 1853, and Farr's Return of 14 October 1854 summarized the registrars' inquiry
+into each household's water supply [standard]. Each week you:
+
+- **Read** the Return.
+- **Inquire**, spending effort: *test* an area (reveals the true state under the brush,
+  today); *trace* a reported case (reveals its parent and children in the true tree, one
+  generation per order: 2.2's record); *sample* a case (reveals its strain's mark and
+  antigenic position). During a case, Fig. 3 and Fig. 4 show only sampled strains:
+  genomic surveillance as a budget.
+- **Act**: vaccinate, cordon, close a pump or a road, bury safely, cull. Each costs
+  something and takes time; vaccine immunity starts after a delay.
+- **Find**: file a finding when you think you know. A finding names the cause in the
+  case's own terms: this pump; the reservoir, not people; strain ω13 has escaped the
+  vaccine; this world is a Klein bottle.
+
+### 7.2 Authority follows evidence [synthesis]
+
+Strong orders need a finding on file. Closing a pump needs a finding that names it,
+updating the vaccine needs a sampled strain, a wide cordon needs reported cases inside it.
+In September 1854 Snow persuaded the parish's Board of Guardians to remove the Broad
+Street pump's handle by presenting his evidence [standard; verify the date before it
+reaches `about.md`]. It makes inference the core loop rather than a side panel: a wrong
+finding costs weeks.
+
+### 7.3 Reports, not truth
 
 Detection is a process. Deaths are reported, cases only sometimes and after a delay, and
-tests (a budget) reveal the true state in an area. The plate shows reports. The truth view
-is locked during a run and revealed in the epilogue, as Shoals reveals its hidden tracks.
-Shoals' rule carries over: the reported path never reads hidden state except through
-detection, and a test asserts it. This also retires the omniscient contact tracing that
-kills two presets today.
+tests reveal the truth where they are spent. Shoals' rule carries over: the reported path
+never reads hidden state except through detection, and a test asserts it. This retires
+the omniscient auto-quarantine the sandbox still runs.
 
-### 3.3 What you can do: orders and budgets
-
-A weekly budget of money and staff, and a dose supply that ramps with production. Every
-order is painted on the plate, costs something and takes time:
-
-- **Vaccinate:** spends doses; immunity begins after a delay; uses the current vaccine
-  antigen.
-- **Cordon** (quarantine): costs per cell-day; compliance fatigues, so a long cordon
-  leaks.
-- **Test:** reveals the true state under the brush.
-- **Trace:** follows contacts of reported cases, up to tracer capacity.
-- **Bury safely, cull, sanitize:** corpses and the reservoir.
-- **Update the vaccine:** pick a strain to match. It takes weeks, and the virus keeps
-  drifting meanwhile. This is the flu-shot decision, built on 2.1's `vax_antigen`.
-
-### 3.4 The adversary
+### 7.4 The adversary
 
 The pathogen is the evolving registry: it drifts away from your vaccine, and your orders
-are its selective environment. The Strains tab's phylogeny and antigenic map become the
-intelligence briefing. Whether cordons and tracing select for longer pre-symptomatic
-spread, or longer latency, is a question the game can measure rather than assert
-**[speculative]**.
+are its selective environment. Whether cordons and tracing select for longer latency is
+a question the game can measure rather than assert [speculative]. Fraser et al. 2004 show
+that whether isolation and tracing can control an outbreak depends on how much
+transmission happens before symptoms [standard], which latency (the L flag) models.
 
-### 3.5 Scoring: what your orders bought
+### 7.5 Scoring
 
-When you issue an order, the untouched world runs alongside it as a counterfactual twin
-with common random numbers: the same random draw for each cell and day, so the twins
-differ only by your orders. The score is deaths averted against the twin per unit spent,
-with a band from several twins. The epilogue plate overlays reported against true cases,
-your cordons as hatching, and the twin's isochrones dashed. Endings: eradication (zero
-cases through a certification window under active surveillance), an endemic
-equilibrium, or collapse. The last Weekly Return is the epilogue.
+When you issue an order, the untouched world runs alongside as a twin with common random
+numbers (§4.6), so the twins differ only by your orders. The score is deaths averted
+against the twins per unit spent, with a band from several twins, plus each finding's
+correctness and the day it was filed. The epilogue overlays reported against true cases,
+draws the true tree in Descent, hatches your cordons, and dashes the twin's isochrones.
+Endings: eradication (no cases through a certification window under active surveillance),
+an endemic equilibrium, or collapse. The last Weekly Return is the epilogue.
 
-### 3.6 Scenarios
+### 7.6 Cases
 
-2.1's presets supply the pathogens:
+- **Broad Street**, the first case: deaths only; air or water? The water route is new:
+  point sources, each cell drinking from its nearest by lattice distance, an infected
+  source infecting its drinkers (Tien & Earn 2010's SIWR shape) [standard]. Snow's 1855
+  map drew the boundary of equal walking distance around the pump [standard]; the plate
+  draws the same boundaries, through the gluing on the closed surfaces. The finding names
+  the pump; the order removes the handle.
+- **The ring:** few doses, reports only. A ring around each report or doses spread
+  evenly, as in Foege's surveillance-containment from the December 1966 Ogoja outbreak
+  [standard].
+- **The season:** drift. Sample, choose the vaccine antigen each year, and live with the
+  months it takes.
+- **The reservoir:** emergence (§4.5). Is it people or the animals? The finding decides
+  whether culling or cordons are the right spend.
+- **The unknown country:** the plate hides its chevrons and glued-edge copies, and the
+  finding names the surface from where the wave comes back, mirrored or not; in 2.4,
+  from a spiral whose turning flips. Only Miasma could set this case.
+- **The cure:** oncolytic virotherapy on the H&E section, an epidemic you want to win
+  (`VISION.md` H; Wodarz et al. 2012) [standard].
+- **Zombie defense,** for fun.
+- **The daily case:** one seeded case a day, the same for everyone, sent as a recipe link
+  (§4.6).
 
-- **Broad Street,** the tutorial: find the pump from deaths alone. Needs the water route
-  (`VISION.md`, Plate I).
-- **The ring:** smallpox-like, few doses, reports only. Ring vaccination around reported
-  cases against spreading the doses, as in Foege's Ogoja campaign of December 1966
-  **[standard]**.
-- **The season:** antigenic drift. Choose and update the vaccine antigen each year.
-- **The reservoir:** spillover. The rodents can't be eradicated, only managed.
-- **The cure:** oncolytic virotherapy, an epidemic you want to win (`VISION.md`, H).
-- **Zombie defense:** for fun.
-- **The daily plate:** one seeded scenario a day, the same for everyone, with a shareable
-  link.
+### 7.7 What it needs first
 
-### 3.7 What it needs first
+1. 2.2's record and RNG (tracing, twins, the epilogue, the daily case).
+2. The tick in a worker (§8): twins multiply the tick's cost.
+3. The detection and report layer (§7.3). M.
+4. Inquiries, orders, findings, budgets and the weekly loop with the Return. M–L.
+5. Twins, scoring and the epilogue. M.
+6. Per case: the water route for Broad Street, roads (§5.4) if closing them is an order.
 
-1. **A counter-based RNG**, `u = hash(seed, tick, cell, stream)`, in place of the
-   sequential stream. It underlies the twins, replay and seeded scenarios (`VISION.md`,
-   I1). S.
-2. Checkpoints, replayable order logs and URL recipes. M.
-3. The detection and report layer (§3.2). M.
-4. Orders, budgets and delays (§3.3), and the weekly loop with the Return (§3.1). M–L.
-5. Twins and scoring, and the epilogue plate (§3.5). M.
-6. Per scenario: the water route for Broad Street, and the mixing kernel (`VISION.md`, A)
-   if closing travel routes is to be an order.
+The game stays inside the design system: the Return is editorial (Newsreader and
+hairlines, no game chrome), the red stays the disease, and your orders are inks.
 
-The game stays inside the design system. The Weekly Return is editorial (Newsreader and
-hairlines, no game chrome), the red remains the disease, and your orders are inks.
+## 8. Engine
 
-### 3.8 Open
+- **The tick in a worker.** The site is cross-origin isolated, so the grid can live in
+  SharedArrayBuffers, with paint, presets and the registry's panels crossing as messages.
+  It frees the main thread at the largest worlds and is 3.0's prerequisite, since twins
+  run several ticks per day. M.
+- **A WebGPU compute tick** at about 10⁶ cells (R ≈ 577), with the registry as a storage
+  buffer with atomic append (`VISION.md`, I3). Worth it once size is the bottleneck; it
+  isn't yet. L, unslated.
 
-Weekly turns or real time with pause (Open 4). One budget, or separate doses, staff and
-money. How deep compliance goes. Deaths or life-years as the score. Whether the sandbox
-stays the front door (Open 5).
+## 9. Unslated
 
-## 4. Unslated
+- **Evolution to the edge of extinction:** a transmission–virulence trade-off (β tied to
+  μ), under which spatial models evolve toward the upper persistence boundary (Rand,
+  Keeling & Wilson 1995) [standard]. It also gives within-host fitness a virulence term.
+- **Effective distance** (Brockmann & Helbing 2013): after roads.
+- **Waves from the cities** (Grenfell, Bjørnstad & Kappey 2001): needs towns.
+- **The firebreak** (Murray, Stanley & Brown 1986): the rabies front in the reservoir
+  layer against a painted belt.
+- **Small things:** the tick's counters nothing displays (`zFight*`, `animalBirths`,
+  `autoQuarantined`) could weight the Model figure's arrows; isochrone labels could follow
+  their lines; animal marks shade only by S/I/R/D.
+- **Deferred:** per-strain vaccine efficacy or waning, M-cell breakthrough (its own
+  efficacy parameter), a separate breakthrough count for Re, a barricade brush for the
+  zombie reading, a cross-immunity matrix view.
 
-From `VISION.md`, not yet in a version: the mixing dial and the ghost of the ODE (A); waning,
-seasonality, the year-long rose and activation maps (C); spirals and cone points on the
-non-orientable surfaces (G); Broad Street as a plate outside the game; effective distance
-(Plate X); oncolytic therapy as a plate (H); the WebGPU compute tick (I3). The
-counter-based RNG (I1) is pulled into 3.0 (§3.7).
-
-## 5. Landed
+## 10. Landed
 
 | Milestone | Date | Commits | What |
 |---|---|---|---|
@@ -380,38 +465,61 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 | Every strain drawn | 2026-10-27 | `6466e91` | The Strain view hatches a carrier with every strain it holds, each as heavy as its load (opacity under a device pixel; one mark merges, one angle interleaves), so coinfection shows as the seams where lineages meet; a second GPU texture in the strain view, Canvas bins by weight and phase, the caption and cartouche count coinfected carriers. |
 | Steady-state ages | 2026-10-27 | `68097d6` | A new world starts at the ages its natural-death rates settle into, for people and animals, instead of one newborn cohort that died off together around day 1,000; presets without natural death bit-identical, Drift and Spillover re-surveyed. "Lifespan" renamed "Old age": the age where death and the age effects stop rising, far past the mean life. |
 | WebGPU only | 2026-10-27 | `b7082e3` | The Canvas 2D fallback removed (`render.js`, `?canvas2d`, every-level contouring); a browser without WebGPU sees a notice on the plate while the margin runs, and a lost device is replaced. |
+| Show, don't tell | 2026-10-27 | `c18dcd8` | Captions are the day and the view's live values; the margin names without explaining. |
+| The refresh | 2026-10-27 | this commit | This roadmap, rewritten from the audit; `tools/spirals.mjs`, the recurring-wave prototype on the real gluing. |
 
-## 6. Gotchas
+## 11. Gotchas
 
 - A new per-cell field that a neighbour reads needs a scratch buffer, the copy-in and
   the swap (`dynamics-scratch.js`); one that only its own cell reads (age, health, the
-  memory arrays, the animal's age) is written in place, after its last read in the tick.
+  memory arrays, the animal's age, and 2.2's `src`/`t_inf`, 2.4's `mem_t`) is written in
+  place, after its last read in the tick.
 - A pass over every cell costs about 1 ms per 100,000 cells at full speed; the tick and
   the frame visit only the cells that can act where they can (`AGENTS.md`, Performance).
+  The event log and the space–time row must not add one.
 - Paint snapshots per-cell state for undo (`captureCellState`). Anything per-cell that
   paint can change belongs in it.
-- The GPU state texel is full: `z` packs the animal and `(strain slot + 1) << 3`, and `w`
-  carries the ramp value. The strain view's new marks need `w`.
+- The GPU state texel is full, and the strain view's second texture carries every
+  strain. Descent's strokes and the phase view's cores are geometry, not texel bits.
 - `applyPreset` resets params and toggles to the defaults before merging, so a preset
-  sets every key it needs.
+  sets every key it needs, and a new mechanic's params need a quiet default in
+  `presets.js` (like `NO_EVOLUTION`) so the six plates keep their fingerprints.
 - Every param a mechanic reads needs a row in a Model part (`model.js` `PARTS`), or it
   can't be set outside a preset; a genome field also needs its row in
   `STRAIN_GENOME_LAYOUT`. A new transition counter the figure should weigh goes in
   `FLUX_KEYS` and on its arrow.
 - The extinction sweep must count every reference to a strain (active slots, memory slot
-  0 on M, R+C and D+F, and `animal_strain`) before it tombstones or reclaims.
+  0 on M, R+C and D+F, `animal_strain`, and 2.2's event log if it keeps strain ids)
+  before it tombstones or reclaims.
+- The counter-based RNG changes every seeded run: re-survey the presets and re-record
+  the bench fingerprints in the same commit.
+- Calibration and model ideation for Miasma trip vendor biology filters on Sonnet lanes
+  and Codex; keep them in the main loop. Rendering, UI and pure-math lanes delegate fine.
 - Headless runs need `globalThis.mulberry32` and `gaussian`; `tools/*.mjs` show how.
-- Citations here were verified against retrieved sources and Crossref. Verify any new one
-  before it reaches `about.md` or JSON-LD.
+- Citations here were verified against Crossref on 2026-10-24 and 2026-10-27. Verify any
+  new one, and any date stated in prose, before it reaches `about.md` or JSON-LD.
 
 ## References
 
-Also see `VISION.md` for the wider list.
+Also see `VISION.md` for the first round's list.
 
-- Bedford, T., Rambaut, A. & Pascual, M. (2012). Canalization of the evolutionary trajectory of the human influenza virus. *BMC Biology* 10, 38. doi:10.1186/1741-7007-10-38
-- Dunn, G. P., Bruce, A. T., Ikeda, H., Old, L. J. & Schreiber, R. D. (2002). Cancer immunoediting: from immunosurveillance to tumor escape. *Nature Immunology* 3, 991–998. doi:10.1038/ni1102-991
-- Grassberger, P. (1983). On the critical behavior of the general epidemic process and dynamical percolation. *Math. Biosci.* 63, 157–172. doi:10.1016/0025-5564(82)90036-0
-- Koel, B. F. et al. (2013). Substitutions near the receptor binding site determine major antigenic change during influenza virus evolution. *Science* 342, 976–979. doi:10.1126/science.1244730
+- Blumberg, S. & Lloyd-Smith, J. O. (2013). Inference of R0 and transmission heterogeneity from the size distribution of stuttering chains. *PLOS Comput. Biol.* 9, e1002993. doi:10.1371/journal.pcbi.1002993
+- Boots, M. & Sasaki, A. (1999). "Small worlds" and the evolution of virulence: infection occurs locally and at a distance. *Proc. R. Soc. B* 266, 1933–1938. doi:10.1098/rspb.1999.0869
+- Brockmann, D. & Helbing, D. (2013). The hidden geometry of complex, network-driven contagion phenomena. *Science* 342, 1337–1342. doi:10.1126/science.1245200
+- Cummings, D. A. T. et al. (2004). Travelling waves in the occurrence of dengue haemorrhagic fever in Thailand. *Nature* 427, 344–347. doi:10.1038/nature02225
+- Fraser, C., Riley, S., Anderson, R. M. & Ferguson, N. M. (2004). Factors that make an infectious disease outbreak controllable. *PNAS* 101, 6146–6151. doi:10.1073/pnas.0307506101
+- Greenberg, J. M. & Hastings, S. P. (1978). Spatial patterns for discrete models of diffusion in excitable media. *SIAM J. Appl. Math.* 34, 515–523. doi:10.1137/0134040
+- Hadfield, J. et al. (2018). Nextstrain: real-time tracking of pathogen evolution. *Bioinformatics* 34, 4121–4123. doi:10.1093/bioinformatics/bty407
+- Hovmöller, E. (1949). The trough-and-ridge diagram. *Tellus* 1, 62–66. doi:10.3402/tellusa.v1i2.8498
+- Lloyd-Smith, J. O., Schreiber, S. J., Kopp, P. E. & Getz, W. M. (2005). Superspreading and the effect of individual variation on disease emergence. *Nature* 438, 355–359. doi:10.1038/nature04153
+- Lloyd-Smith, J. O. et al. (2009). Epidemic dynamics at the human-animal interface. *Science* 326, 1362–1367. doi:10.1126/science.1177345
+- Mollison, D. (1977). Spatial contact models for ecological and epidemic spread. *J. R. Stat. Soc. B* 39, 283–326. doi:10.1111/j.2517-6161.1977.tb01627.x
+- Murray, J. D., Stanley, E. A. & Brown, D. L. (1986). On the spatial spread of rabies among foxes. *Proc. R. Soc. B* 229, 111–150. doi:10.1098/rspb.1986.0078
+- Rand, D. A., Keeling, M. J. & Wilson, H. B. (1995). Invasion, stability and evolution to criticality in spatially extended, artificial host-pathogen ecologies. *Proc. R. Soc. B* 259, 55–63. doi:10.1098/rspb.1995.0009
 - Smith, D. J. et al. (2004). Mapping the antigenic and genetic evolution of influenza virus. *Science* 305, 371–376. doi:10.1126/science.1097211
 - Snow, J. (1856). Cholera and the water supply in the south districts of London in 1854. *J. Public Health Sanit. Rev.* 2, 239–257. On the Weekly Returns of 19 November 1853 and 14 October 1854.
+- Tien, J. H. & Earn, D. J. D. (2010). Multiple transmission pathways and disease dynamics in a waterborne pathogen model. *Bull. Math. Biol.* 72, 1506–1533. doi:10.1007/s11538-010-9507-6
+- Wallinga, J. & Teunis, P. (2004). Different epidemic curves for severe acute respiratory syndrome reveal similar impacts of control measures. *Am. J. Epidemiol.* 160, 509–516. doi:10.1093/aje/kwh255
+- Wodarz, D. et al. (2012). Complex spatial dynamics of oncolytic viruses in vitro: mathematical and experimental approaches. *PLOS Comput. Biol.* 8, e1002547. doi:10.1371/journal.pcbi.1002547
 - Foege, W. H. and colleagues: surveillance-containment in eastern Nigeria from the December 1966 Ogoja outbreak; see `VISION.md`.
+- Ndemic Creations, *Plague Inc: The Cure* (2020), the expansion in which the player stops a pandemic.
