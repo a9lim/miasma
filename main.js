@@ -30,6 +30,7 @@ import { memoryOf, remember } from './src/immunity.js';
 import { makeToggles, DEFAULT_TOGGLES } from './src/toggles.js';
 import { initTimeseries, ROSE_PERIOD } from './src/rose.js';
 import { createSpacetime } from './src/spacetime.js';
+import { createChains, chainStats, SPAN_DAYS as CHAIN_DAYS } from './src/chains.js';
 import { createRegistry, getStrain, GENOME_FIELDS } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
@@ -38,7 +39,7 @@ import { applyPreset, getPreset } from './src/presets.js';
 import { createCamera, ZOOM_STEP_BTN, ZOOM_STEP_WHEEL } from './src/camera.js';
 import { createTransitionHistory } from './src/history.js';
 import { makeRngFromLocation } from './src/prng.js';
-import { createIsochrones } from './src/isochrones.js';
+import { createIsochrones, FADE_DAYS } from './src/isochrones.js';
 import { plateCaption, plateLegend } from './src/caption.js';
 import { hexBounds } from './src/topology.js';
 
@@ -54,6 +55,7 @@ function cacheDOM() {
         dashboard: $('margin'), atlas: document.querySelector('.atlas'),
         timeseriesPanel: $('timeseries-panel'), timeseriesCanvas: $('timeseries-canvas'), roseCaption: $('rose-caption'),
         spacetimePanel: $('spacetime-panel'), spacetimeCanvas: $('spacetime-canvas'), spacetimeCaption: $('spacetime-caption'),
+        chainsPanel: $('chains-panel'), chainsCanvas: $('chains-canvas'), chainsCaption: $('chains-caption'),
         strainPanel: $('tab-strains'), caption: $('plate-caption'),
         zoomInBtn: $('zoom-in-btn'), zoomOutBtn: $('zoom-out-btn'), zoomResetBtn: $('zoom-reset-btn'),
         zoomIndicator: $('zoom-indicator'), undoBtn: $('undo-btn'), redoBtn: $('redo-btn')
@@ -145,7 +147,7 @@ export default function init(dom) {
         return vp;
     };
 
-    let ts = null, spacetime = null;
+    let ts = null, spacetime = null, chains = null;
     let cachedStats = null, cachedPrev = null;
     let lastCounts = null;
     // The census and the strain prevalence, each an O(cells) sweep. A paint
@@ -240,12 +242,14 @@ export default function init(dom) {
     // µm, and its State view is an H&E-stained section (the other views draw
     // as they do everywhere).
     const tissue = () => sim.presetKey === 'immunoediting';
+    // the isochrones' fade horizon: the running preset's, else FADE_DAYS
+    const fadeDays = () => { const p = sim.presetKey ? getPreset(sim.presetKey) : null; return (p && p.fadeDays) || FADE_DAYS; };
     const histology = () => tissue() && sim.viewMode === ViewMode.COMPARTMENT;
 
     function drawPlate() {
         const vp = getEffectiveViewport();
         if (stateDirty) {
-            iso.build(sim.grid, sim.topology, sim.tick, 4);
+            iso.build(sim.grid, sim.topology, sim.tick, 4, fadeDays());
             plate.markState();
             stateDirty = false;
         }
@@ -260,7 +264,7 @@ export default function init(dom) {
         plate.draw({
             grid: sim.grid, vp, topology: sim.topology, mode: sim.viewMode,
             dpr: canvas.width / Math.max(1, vp.cssWidth),
-            contours: iso.contours, field: iso, histology: histology(),
+            contours: iso.contours, field: iso, histology: histology(), fadeDays: fadeDays(),
             legend, avoid: overlayRects, presetKey: sim.presetKey,
             trunk: sim.viewMode === ViewMode.STRAIN ? { reg: strains, id: focusStrain() } : null,
             scaleUnit: tissue() ? { per: 12, name: 'µm' } : null,
@@ -280,6 +284,13 @@ export default function init(dom) {
         } else captionStale = true;
     }
     let lastCaption = '';
+    // Fig. 4's caption: its name, and how many chains closed in its span and their mean size
+    function chainsCaption() {
+        if (!$.chainsCaption || !$.chainsPanel.closest('.tab-panel.active')) return;
+        const c = chainStats(sim.grid.descent);
+        const text = c.n ? `Chains by size · ${c.n.toLocaleString('en-US')} closed in ${CHAIN_DAYS} days, mean ${c.mean.toFixed(1)}` : 'Chains by size';
+        if ($.chainsCaption.textContent !== text) $.chainsCaption.textContent = text;
+    }
     function captionText(vp) {
         return plateCaption(sim, stats(), computeReff(history, params), histology(), vp.frame.w < 600, measureCtx());
     }
@@ -325,7 +336,12 @@ export default function init(dom) {
         if ((statsDirty || tsDirty || strainsDirty) && (!sim.playing || now - lastPanels >= PANEL_MS)) {
             lastPanels = now;
             if (statsDirty) { updateStats(); if (ui) ui.model.update(stats(), flux); statsDirty = false; }
-            if (tsDirty && ts) { ts.render(); if (spacetime) spacetime.render(sim.viewMode === ViewMode.STRAIN); tsDirty = false; }
+            if (tsDirty && ts) {
+                ts.render();
+                if (spacetime) spacetime.render(sim.viewMode === ViewMode.STRAIN);
+                if (chains) { chains.render(sim.grid); chainsCaption(); }
+                tsDirty = false;
+            }
             if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         }
         if (renderDirty) { drawPlate(); renderDirty = false; }
@@ -388,11 +404,19 @@ export default function init(dom) {
         iso.record(sim.grid, sim.tick);
     }
 
+    // The opening's two cases, unless the running preset starts its own
+    // (`seed: false`: Spillover's chains start at the animals).
+    function seedScene() {
+        const p = sim.presetKey ? getPreset(sim.presetKey) : null;
+        if (p && p.seed === false) iso.record(sim.grid, sim.tick);
+        else seedOpening(OPENING_SEEDS);
+    }
+
     // The opening frame: seeds, then a warm-up so the plate already carries
     // isochrones. Called at boot and by reset.
     function openScene(still) {
         const p = getPreset(OPENING_PRESET);
-        applyScene(p, qs.has('mi') ? topoFromString(qs.get('mi')) : null);
+        applyScene(p, qs.has('mi') ? topoFromString(qs.get('mi')) : null, qs.has('view') ? sim.viewMode : null);
         const n = (p.warmup || OPENING_WARMUP) + (still ? OPENING_STILL_EXTRA : 0);
         for (let k = 0; k < n; k++) tickOnce();
     }
@@ -428,7 +452,7 @@ export default function init(dom) {
         setWorldRadius(R);
         resetGridOnly();
         applyCoverage();
-        seedOpening(OPENING_SEEDS);
+        seedScene();
         requestFrame();
     }
 
@@ -439,7 +463,7 @@ export default function init(dom) {
     function restart() {
         resetGridOnly();
         applyCoverage();
-        seedOpening(OPENING_SEEDS);
+        seedScene();
         requestFrame();
     }
     function reset() {
@@ -462,7 +486,7 @@ export default function init(dom) {
         applyCoverage();
         if (ui && typeof ui.resetUI === 'function') ui.resetUI();
         if (ui && ui.showPreset) ui.showPreset(null);
-        seedOpening(OPENING_SEEDS);
+        seedScene();
         requestFrame();
     }
 
@@ -562,17 +586,20 @@ export default function init(dom) {
         if (b) b.click();
     }
 
-    // Apply a preset object: params, toggles and surface (or `topology`), a
-    // fresh world, its coverage, and the opening's two cases.
-    function applyScene(p, topology) {
+    // Apply a preset object: params, toggles and surface (or `topology`), the
+    // view its plate is drawn in (`view`, else State; `view` given here
+    // overrides it), a fresh world, its coverage, and the opening's two cases.
+    function applyScene(p, topology, view) {
         applyPreset(p, params, toggles, sim);
         if (topology != null) sim.topology = topology;
+        sim.viewMode = view || p.view || ViewMode.COMPARTMENT;
+        markState();
         sim.presetKey = p.key || null;
         resetGridOnly();
         applyCoverage();
         if (ui && typeof ui.resetUI === 'function') ui.resetUI();
         if (ui && ui.showPreset) ui.showPreset(sim.presetKey);
-        seedOpening(OPENING_SEEDS);
+        seedScene();
         requestFrame();
     }
 
@@ -690,6 +717,7 @@ export default function init(dom) {
         statsDirty = strainsDirty = tsDirty = true;
         if (ts) ts.resize();
         if (spacetime) spacetime.resize();
+        if (chains) chains.resize();
         requestFrame();
     }
     if ($.dashboard) {
@@ -702,6 +730,7 @@ export default function init(dom) {
         camera.resize();
         if (ts) { ts.resize(); tsDirty = true; }
         if (spacetime) spacetime.resize();
+        if (chains) chains.resize();
         markState();
     }
     window.addEventListener('resize', resize);
@@ -723,6 +752,7 @@ export default function init(dom) {
     if ($.roseCaption) $.roseCaption.textContent = `Rose · ${ROSE_PERIOD}-day wedges`;
     if ($.spacetimePanel && $.spacetimeCanvas) spacetime = createSpacetime($.spacetimePanel, $.spacetimeCanvas);
     if ($.spacetimeCaption) $.spacetimeCaption.textContent = 'Space against time · the centre row, A to A′';
+    if ($.chainsPanel && $.chainsCanvas) chains = createChains($.chainsPanel, $.chainsCanvas);
 
     resize();
     openScene(reducedMotion);

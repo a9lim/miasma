@@ -54,7 +54,7 @@ import {
 } from './strains.js';
 import { forget, remember, susceptibility } from './immunity.js';
 import { nextSuccess } from './prng.js';
-import { NO_DIR } from './descent.js';
+import { NO_DIR, SRC_TRANSFORM } from './descent.js';
 
 const MAX_ACTIVE = DEFAULTS.maxActiveStrains;
 
@@ -1672,6 +1672,8 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                         next[i] = Compartment.Z;
                         setZStrain(i, srcStrain);
                         nextFlags[i] = nextFlags[i] & ~Flag.LATENT;
+                        // a transformed cell founds a clone: a tree of its own
+                        lineage.infect(i, SRC_TRANSFORM, NO_DIR, tickIdx);
                         lToZ++;
                     }
                 } else if (c === Compartment.Z) {

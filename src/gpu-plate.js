@@ -42,7 +42,7 @@
 // centre to the edge the two cells share, in that cell's own frame, so one
 // that crosses a glued edge meets itself there and its copies come free. A
 // case placed by hand is ringed; spillover is a stroke from the animal's
-// mark. Descent texel (rgba32uint, written only in this view): descent.js
+// mark; a transformation, which founds a clone, is a disc. Descent texel (rgba32uint, written only in this view): descent.js
 // packDescent.
 
 import { memoryOf, susceptibility } from './immunity.js';
@@ -334,10 +334,14 @@ fn wheel(hb: f32) -> vec3f {
     if (rv != 0u) {
       let fa = f32((rv >> 8u) & 63u) / 63.0;
       var al = 0.0;
-      if ((dv.w >> 16u) == 2u) {
+      let kind = dv.w >> 16u;
+      if (kind == 2u) {
         // spillover: from the animal's mark to the centre
         let w = f32((rv & 255u) - 1u) / 254.0;
         al = fa * select(0.18 + 0.82 * pow(w, 0.8), 1.0, (rv >> 14u) != 0u) * cover(toSeg(lp, vec2f(rc * 0.42, rc * 0.36)), max(0.3, rc * (0.05 + 0.4 * w)), dpr);
+      } else if (kind == 3u) {
+        // a transformation founds a clone: a disc
+        al = fa * cover(length(lp), max(0.6, rc * 0.3), dpr);
       } else {
         al = fa * cover(abs(length(lp) - rc * 0.52), max(0.35, rc * 0.1), dpr);
       }
@@ -491,7 +495,7 @@ export async function createGpuPlate(canvas) {
         set(1, p.cx, p.cy, p.R, p.closed ? 1 : 0);
         set(2, p.fade[0], p.fade[1], p.fade[2], MODES[p.mode] || 0);
         set(3, p.histology ? 1 : 0, p.animalDisplay === 'only' ? 1 : p.animalDisplay === 'off' ? 2 : 0, p.maxLevel, p.step);
-        set(43, p.isoLatest, FADE_DAYS, FADE_FLOOR, CLIFF_SPAN);
+        set(43, p.isoLatest, p.fadeDays || FADE_DAYS, FADE_FLOOR, CLIFF_SPAN);
         set(4, p.brush.q, p.brush.r, p.brush.size, p.brush.active ? 1 : 0);
         col(5, p.brush.ink);
         set(6, p.cq, p.cr, p.W, p.side);

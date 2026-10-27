@@ -9,6 +9,8 @@ import { HISTOLOGY_ROWS } from './histology.js';
 import { ISO_STEP } from './isochrones.js';
 import { getPreset, criticalBeta } from './presets.js';
 import { agDist } from './immunity.js';
+import { chainStats } from './chains.js';
+import { SRC_TRANSFORM } from './descent.js';
 
 const NUMBER = new Intl.NumberFormat('en-US');
 const fmt = (n) => NUMBER.format(Math.round(n));
@@ -52,13 +54,19 @@ export function presetMeasure(sim, s, ctx) {
             return line([`lead ${reg.names[dom]}`, `${travelled.toFixed(1)} AU travelled, ${(travelled / years).toFixed(1)} a year`, `generation ${Math.round(g / w)}`]);
         }
         case 'spillover': {
-            const hh = h.sum('sToE', 30), sp = h.sum('spill', 30), rem = h.sum('iToR', 30) + h.sum('iToD', 30);
-            if (!rem && !sp) return '';
-            return line([`human Re ${rem ? (hh / rem).toFixed(2) : '–'}`, `${pct(sp / Math.max(1, sp + hh))} from the reservoir`]);
+            // the chains closed over the last year (chains.js), the largest
+            // still growing, and the share of human cases that spilled over
+            const c = chainStats(ctx.descent), g = ctx.descent.growing();
+            const hh = h.sum('sToE', 30), sp = h.sum('spill', 30);
+            return line([c.n ? `mean chain ${c.mean.toFixed(1)}` : '', g > 0 ? `largest growing ${fmt(g)}` : '',
+                sp + hh ? `${pct(sp / (sp + hh))} from the reservoir` : '']);
         }
         case 'immunoediting': {
-            const t = trend(h, s.Z);
-            return t ? `transformed ${t}` : '';
+            // and the clones (trees a transformation founded): the mean size
+            // of those surveillance cleared over the last year, and the most
+            // cells one holds now
+            const t = trend(h, s.Z), c = chainStats(ctx.descent, SRC_TRANSFORM), g = ctx.descent.largestNow(SRC_TRANSFORM);
+            return line([t ? `transformed ${t}` : '', c.n ? `cleared clones ${c.mean.toFixed(1)} cells` : '', g > 0 ? `largest clone ${fmt(g)}` : '']);
         }
         case 'zombie': {
             const t = trend(h, s.Z);
@@ -76,21 +84,29 @@ function reText(reff, counted) {
     return c ? `Re ${reff.toFixed(2)}, ${counted.toFixed(2)} by count` : `Re ${reff.toFixed(2)}`;
 }
 
-/** The live caption under the plate: the day and the view's values. */
+/**
+ * The live caption under the plate: the day and the view's values, ending, in
+ * the State view and the view the running preset's plate is drawn in, with
+ * its measured values.
+ */
 export function plateCaption(sim, s, reff, histology, narrow, ctx) {
     const re = reText(reff, ctx && ctx.descent ? ctx.descent.reCounted() : NaN);
+    const p = sim.presetKey ? getPreset(sim.presetKey) : null;
+    const measure = p && (sim.viewMode === ViewMode.COMPARTMENT || sim.viewMode === p.view) ? presetMeasure(sim, s, ctx) : '';
     let parts;
     if (histology) {
         parts = [`${fmt(s.Z)} transformed`, `${fmt(s.D)} necrotic`];
         if (!narrow) parts.push(`${fmt(s.I)} inclusions`, `${fmt(s.E)} latent`);
-        parts.push(presetMeasure(sim, s, ctx));
+        parts.push(measure);
     } else switch (sim.viewMode) {
         case ViewMode.STRAIN:
-            parts = [`${fmt(s.E + s.I + s.Z)} carriers`, s.coinfected ? `${fmt(s.coinfected)} coinfected` : '', re];
+            parts = [`${fmt(s.E + s.I + s.Z)} carriers`, s.coinfected ? `${fmt(s.coinfected)} coinfected` : ''];
+            parts.push(narrow && measure ? '' : re, measure);
             break;
         case ViewMode.DESCENT: {
             const d = ctx && ctx.descent ? ctx.descent.summary() : null;
-            parts = d && d.open ? [`${fmt(d.trees)} ${d.trees === 1 ? 'tree' : 'trees'} growing`, `generation ${fmt(d.generation)}`, re] : [re];
+            parts = d && d.open && !(narrow && measure) ? [`${fmt(d.trees)} ${d.trees === 1 ? 'tree' : 'trees'} growing`, `generation ${fmt(d.generation)}`] : [];
+            parts.push(narrow && measure ? '' : re, measure);
             break;
         }
         case ViewMode.AGE: parts = [`mean age ${fmt(s.meanAge)} days`]; break;
@@ -98,7 +114,6 @@ export function plateCaption(sim, s, reff, histology, narrow, ctx) {
         case ViewMode.STATUS: parts = [`${fmt(s.statusH)} in hospital`, `${fmt(s.statusQ)} in quarantine`]; break;
         case ViewMode.IMMUNITY: parts = [`immunity to ${sim.immunity ? sim.immunity.name : 'α'}`]; break;
         default: {
-            const measure = presetMeasure(sim, s, ctx);
             parts = [`${fmt(s.I)} infectious`, `${fmt(s.E)} exposed`];
             if (!narrow || !measure) {
                 parts.push(`${fmt(s.R)} recovered`, `${fmt(s.D)} dead`);
@@ -136,8 +151,9 @@ export function plateLegend(sim, s, toggles, histology, topStrains, reg, focus) 
         }
         case ViewMode.DESCENT:
             rows.push({ kind: 'Dl', label: 'Infection, weighted by descendants' }, { kind: 'Dt', label: 'Into a live case' });
-            if (toggles.Z || s.Z) rows.push({ kind: 'Dz', label: 'Into a zombie' });
-            rows.push({ kind: 'Do', label: 'Placed by hand' });
+            if (toggles.Z || s.Z) rows.push({ kind: 'Dz', label: toggles.L ? 'Into a transformed cell' : 'Into a zombie' });
+            if (toggles.Z && toggles.L) rows.push({ kind: 'Dx', label: 'Transformed, a clone founded' });
+            if (sim.grid.descent.intros) rows.push({ kind: 'Do', label: 'Placed by hand' });
             if (s.animalTotal) rows.push({ kind: 'Da', label: 'Spillover' });
             break;
         case ViewMode.AGE: rows.push({ kind: 'ramp', ink: _themePalette().inks.umber, label: 'Age, newborn to oldest' }); break;

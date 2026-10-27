@@ -1,4 +1,4 @@
-// model.js — the Model tab: Fig. 6, the compartment diagram, and under it
+// model.js — the Model tab: Fig. 7, the compartment diagram, and under it
 // the parameters of whichever part of the model is chosen.
 //
 // The diagram is the textbook figure of the model the plate runs: each
@@ -309,7 +309,7 @@ export function buildModel(panelEl, hooks) {
     const P = hooks.params, T = hooks.toggles;
     while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
 
-    // ── Fig. 6 ──
+    // ── Fig. 7 ──
     const fig = document.createElement('figure');
     fig.className = 'model-figure';
     const svg = el('svg', { viewBox: '0 0 340 304', class: 'model-svg', role: 'group', 'aria-label': 'The compartments of the model and the flows between them' });
@@ -320,7 +320,7 @@ export function buildModel(panelEl, hooks) {
     cap.className = 'caption model-caption';
     const capN = document.createElement('span');
     capN.className = 'caption-n';
-    capN.textContent = 'Fig. 6.';
+    capN.textContent = 'Fig. 7.';
     cap.append(capN, ' Compartments and flows');
     fig.append(svg, cap);
     panelEl.appendChild(fig);

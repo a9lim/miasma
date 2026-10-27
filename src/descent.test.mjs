@@ -7,7 +7,8 @@
 // held then; that open cases are exactly the cells still holding them; that
 // children counts and descendant counts equal the tree's own; that closed
 // trees had their size; the log's ring, undo and redo, and the view's texel
-// on their own; and the space–time figure's record of the centre row.
+// on their own; the space–time figure's record of the centre row; and
+// Fig. 4's chains.
 
 globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
@@ -22,7 +23,7 @@ const { DEFAULT_PARAMS } = await import('./default-params.js');
 const { DEFAULT_TOGGLES } = await import('./default-toggles.js');
 const { hexBounds, getNeighborTable } = await import('./topology.js');
 const { memoryOf, remember } = await import('./immunity.js');
-const { Descent, SRC_INTRO, SRC_ANIMAL, NO_DIR, WINDOW, openState, packDescent, ROOT_INTRO } = await import('./descent.js');
+const { Descent, SRC_INTRO, SRC_ANIMAL, SRC_TRANSFORM, NO_DIR, WINDOW, openState, packDescent, ROOT_INTRO } = await import('./descent.js');
 
 let pass = 0, fail = 0;
 function check(name, ok, detail) {
@@ -76,7 +77,10 @@ function checkTrees(d, label) {
         sub.set(s, n);
         if (desc[s & m] !== n) descOk = false;
         if (d.kids[s & m] !== ch.length) kidsOk = false;
-        if (d.root[s & m] === s && d.size[s & m] !== n + 1) sizeOk = false;
+    }
+    // every live tree's size is its root's subtree, while the root is kept
+    for (let t = 0; t < d.tNext; t++) {
+        if (d.tOpen[t] > 0 && d.tRoot[t] >= d.base && d.tSize[t] !== sub.get(d.tRoot[t]) + 1) sizeOk = false;
     }
     check(`${label}: descendants equal subtree sizes`, descOk);
     check(`${label}: children counts equal the tree's`, kidsOk);
@@ -98,7 +102,7 @@ for (const [key, topo] of runs) {
     const { idx: nbr, back } = getNeighborTable(grid.W, grid.H, w.topology);
     const N = grid.W * grid.H;
     const comp0 = new Uint8Array(N), flags0 = new Uint8Array(N), animal0 = new Uint8Array(N), evt0 = new Int32Array(N);
-    let srcOk = true, edgeOk = true, parentOk = true, animalOk = true, openOk = true, closedOk = true, kinds = new Set();
+    let srcOk = true, edgeOk = true, parentOk = true, animalOk = true, transformOk = true, openOk = true, closedOk = true, kinds = new Set();
     let events = 0, introSeen = 0, reMid = NaN, ratioMid = NaN, sToE = 0, removed = 0;
     for (let k = 1; k <= 400; k++) {
         comp0.set(grid.compartment); flags0.set(grid.flags); animal0.set(grid.animal); evt0.set(d.evt);
@@ -121,11 +125,14 @@ for (const [key, topo] of runs) {
             } else if (src === SRC_ANIMAL) {
                 kinds.add('animal');
                 if (animal0[cell] !== Animal.I || d.parent[e] !== -1) animalOk = false;
+            } else if (src === SRC_TRANSFORM) {
+                kinds.add('transform');
+                if (comp0[cell] !== Compartment.E || !(flags0[cell] & Flag.LATENT) || d.parent[e] !== -1) transformOk = false;
             } else srcOk = false;
         }
         // open cases are exactly the cells still holding them
         for (let j = 0; j < d.nOpen; j++) {
-            const s = d.openList[j], e = s & d.mask, c = d.cell[e];
+            const s = d.openS[j], e = s & d.mask, c = d.openC[j];
             if (d.evt[c] !== s || !openState(grid.compartment[c], grid.flags[c], toggles.C, toggles.F) || d.closed[e]) openOk = false;
         }
         for (const i of grid.activeIndices) {
@@ -140,11 +147,13 @@ for (const [key, topo] of runs) {
     check(`${label}: every source sits across the event's edge, and back`, edgeOk);
     check(`${label}: every parent is the case its source held`, parentOk);
     check(`${label}: spillover comes from an infectious animal and starts a tree`, animalOk);
+    check(`${label}: a transformation is a latent cell's, and starts a tree`, transformOk);
     check(`${label}: open cases are the cells holding them`, openOk);
     check(`${label}: a closed case's cell no longer holds it`, closedOk);
     checkTrees(d, label);
     if (key === 'spillover') check(`${label}: spillover is logged`, kinds.has('animal'), [...kinds]);
     if (key === 'zombie-apocalypse') check(`${label}: zombies are sources`, kinds.has('Z'), [...kinds]);
+    if (key === 'immunoediting') check(`${label}: transformations found clones`, kinds.has('transform') && kinds.has('Z'), [...kinds]);
     if (key === 'threshold' && topo === Topology.TORUS) {
         check(`${label}: the opening's cases are kept`, introSeen === 14, introSeen);
         check(`${label}: Re by counting near the ratio estimator on the front`, Math.abs(reMid - ratioMid) < 0.25, [reMid, ratioMid]);
@@ -190,6 +199,27 @@ for (const [key, topo] of runs) {
     check('events older than the window are dropped', d.head - d.base === 2010, d.head - d.base);
     d.settle(grid, WINDOW + 500, false, false);
     check('with no new events nothing more is dropped', d.head - d.base === 2010);
+}
+
+// A tree outlives its oldest events: a chain that runs past the window stays
+// one tree, keeps its size and its generation, and closes with all of it.
+{
+    const grid = new Grid(40, 40), d = grid.descent;
+    grid.compartment[0] = Compartment.I;
+    d.introduce(0);
+    d.settle(grid, 0, false, false);
+    const T = WINDOW + 200;
+    for (let t = 1; t <= T; t++) {
+        const prev = (t - 1) % 1600, c = t % 1600;
+        d.infect(c, prev, NO_DIR, t);
+        grid.compartment[c] = Compartment.I; grid.compartment[prev] = Compartment.R;
+        d.settle(grid, t, false, false);
+    }
+    check('a chain past the window stays one tree', d.summary().trees === 1 && d.growing() === T + 1, [d.summary(), d.growing()]);
+    check('and keeps its generation', d.summary().generation === T);
+    grid.compartment[T % 1600] = Compartment.R;
+    d.settle(grid, T + 1, false, false);
+    check('and closes with all of it', d.trees === 1 && d.treeSize[0] === T + 1, [d.trees, d.treeSize[0]]);
 }
 
 // Undo and redo of a stroke that placed cases.
@@ -266,6 +296,27 @@ for (const [key, topo] of runs) {
     }
     check('each day holds the band\'s infections that day', ok);
     check('days older than the span are gone', fig.day(T - SPAN_DAYS) === null);
+}
+
+// Fig. 4 (chains.js) reads the chains closed over its span from the log.
+{
+    const { chainStats, SPAN_DAYS } = await import('./chains.js');
+    const grid = new Grid(16, 16), d = grid.descent;
+    // three chains closing: sizes 1, 3 and 6, the first long ago
+    const chain = (size, t0, t1) => {
+        const root = 20 + d.head;
+        grid.compartment[root] = Compartment.I;
+        d.introduce(root);
+        for (let k = 1; k < size; k++) { d.infect(root + k, root, 0, t0); grid.compartment[root + k] = Compartment.E; }
+        d.settle(grid, t0, false, false);
+        for (let k = 0; k < size; k++) grid.compartment[root + k] = Compartment.R;
+        d.settle(grid, t1, false, false);
+    };
+    chain(1, 1, 2);
+    chain(3, SPAN_DAYS + 10, SPAN_DAYS + 12);
+    chain(6, SPAN_DAYS + 20, SPAN_DAYS + 30);
+    const c = chainStats(d);
+    check('chains closed within the span, by size', c.n === 2 && c.mean === 4.5 && c.max === 6 && c.bins[1] === 1 && c.bins[2] === 1, c);
 }
 
 console.log(`descent.test: ${pass} passed, ${fail} failed`);

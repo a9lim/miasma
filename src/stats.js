@@ -355,14 +355,17 @@ function appendAnimalRow(parent, key, labelText) {
     return { row, value };
 }
 
+const FIGURES = new Set(['timeseries-panel', 'spacetime-panel', 'chains-panel']);
+
 function buildPanelSkeleton(panelEl) {
-    // Wipe prior content but PRESERVE the two figures — they lead
+    // Wipe prior content but PRESERVE the figures — they lead
     // #tab-compartments and their canvas contexts are captured once
-    // (initTimeseries, createSpacetime); removing a node would orphan it.
+    // (initTimeseries, createSpacetime, createChains); removing a node would
+    // orphan it.
     let child = panelEl.firstChild;
     while (child) {
         const nextChild = child.nextSibling;
-        if (!(child.nodeType === 1 && (child.id === 'timeseries-panel' || child.id === 'spacetime-panel'))) {
+        if (!(child.nodeType === 1 && FIGURES.has(child.id))) {
             panelEl.removeChild(child);
         }
         child = nextChild;

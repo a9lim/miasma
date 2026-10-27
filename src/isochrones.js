@@ -18,6 +18,8 @@
 // A contour is faded by how far its level lies behind `latest`, the newest
 // stamp (isoFade), so the plate keeps the newest waves and lets old ones go;
 // the clock is `latest`, not the tick, so a finished outbreak stops fading.
+// The horizon is FADE_DAYS unless a preset sets its own (`fadeDays`: Drift's
+// is a season, so each year's wave carries the labels alone).
 // Triangles that reach past a glued edge read their outer corner through the
 // copy of the world beyond it (topology.wrap), so the lines run up to the
 // edge and on into the faded copies. The WebGPU plate draws every line from
@@ -38,9 +40,9 @@ export const LABEL_FADE = 0.5;   // only contours at least this opaque are label
 export const LABEL_RUN = 6;      // cells of connected line a labeled contour needs
 const SMOOTH_PASSES = 3;
 
-/** Opacity multiplier of a contour whose level lies `age` days behind the newest stamp. */
-export function isoFade(age) {
-    const x = Math.max(0, age) / FADE_DAYS;
+/** Opacity multiplier of a contour whose level lies `age` days behind the newest stamp, over `days`. */
+export function isoFade(age, days = FADE_DAYS) {
+    const x = Math.max(0, age) / days;
     return Math.max(FADE_FLOOR, 1 - x * x);
 }
 
@@ -49,14 +51,14 @@ export function isoFade(age) {
  * edges through the gluing (the WebGPU plate draws the lines from that), and
  * contour the levels a label can sit on (every ISO_LABEL days, while still
  * plain enough to label). `job` is
- * { arrival, compartment, act, W, H, topology, latest }; `bufs` is the
+ * { arrival, compartment, act, W, H, topology, latest, fadeDays }; `bufs` is the
  * caller's scratch, reused between calls. Pure, so it runs in the isochrone
  * worker (isochrones-worker.js) or, without one, on the main thread.
  * Returns { padded, side, maxLevel, latest, contours }, padded null while no
  * cell has been reached.
  */
 export function buildContours(job, bufs) {
-    const { arrival, compartment: empty, act, W, H, topology, latest } = job;
+    const { arrival, compartment: empty, act, W, H, topology, latest, fadeDays = FADE_DAYS } = job;
     const N = W * H;
     if (!bufs.field || bufs.field.length !== N) {
         bufs.field = new Float32Array(N);
@@ -134,7 +136,7 @@ export function buildContours(job, bufs) {
         // The levels to contour: the labeled ones still plain enough to carry a label.
         const levels = [];
         for (let L = ISO_LABEL; L <= maxLevel; L += ISO_LABEL) {
-            if (isoFade(latest - L) >= LABEL_FADE) levels.push(L);
+            if (isoFade(latest - L, fadeDays) >= LABEL_FADE) levels.push(L);
         }
         if (!levels.length) return out;
         const lo0 = levels[0], hi0 = levels[levels.length - 1], stepL = ISO_LABEL;
@@ -202,7 +204,7 @@ export function createIsochrones(opts = {}) {
     // is the length in cells of the connected line that segment k belongs to
     let contours = [];
     let padded = null, side = 0, maxLevelOut = 0;   // the field one cell past the edges, for the GPU
-    let lastBuild = -1, lastTopo = -1, dirty = true;
+    let lastBuild = -1, lastTopo = -1, lastFade = FADE_DAYS, dirty = true;
     let reached = 0;             // cells stamped at least once
     const bufs = {};
     // One build in flight at a time; a newer request waits in `queued`, and a
@@ -288,23 +290,24 @@ export function createIsochrones(opts = {}) {
     }
 
     /**
-     * Rebuild the isochrones if the field changed and at least `every` ticks
-     * have passed. Returns true when they changed
+     * Rebuild the isochrones if the field (or the fade horizon) changed and at
+     * least `every` ticks have passed. Returns true when they changed
      * in place; a worker's result arrives later, through `opts.onBuilt`.
      */
-    function build(grid, topology, tick, every = 4) {
+    function build(grid, topology, tick, every = 4, fadeDays = FADE_DAYS) {
         ensure(grid);
+        if (fadeDays !== lastFade) { lastFade = fadeDays; dirty = true; lastBuild = -1; }
         if (!dirty && topology === lastTopo) return false;
         if (topology === lastTopo && lastBuild >= 0 && tick - lastBuild < every && tick >= lastBuild) return false;
         lastBuild = tick; lastTopo = topology; dirty = false;
         const { W, H } = grid;
         if (worker) {
-            const job = { gen, arrival: arrival.slice(), compartment: grid.compartment.slice(), act: null, W, H, topology, latest };
+            const job = { gen, arrival: arrival.slice(), compartment: grid.compartment.slice(), act: null, W, H, topology, latest, fadeDays };
             if (busy) queued = { job, act: grid.activeIndices };
             else post(job, grid.activeIndices);
             return false;
         }
-        apply(buildContours({ arrival, compartment: grid.compartment, act: grid.activeIndices, W, H, topology, latest }, bufs));
+        apply(buildContours({ arrival, compartment: grid.compartment, act: grid.activeIndices, W, H, topology, latest, fadeDays }, bufs));
         return true;
     }
 

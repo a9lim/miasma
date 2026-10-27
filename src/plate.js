@@ -210,7 +210,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         return gpu.render({
             cssW: s.vp.cssWidth, cssH: s.vp.cssHeight, dpr, rc: G.rc, cx: G.cx, cy: G.cy, R: G.R,
             closed: S.closed, fade: [G.apo * 0.92, G.Rb * 1.9, t.dark ? 0.55 : 0.5], mode: s.mode,
-            histology: s.histology, animalDisplay: o.animalDisplay, maxLevel: s.field ? s.field.maxLevel : 0, isoLatest: s.field ? s.field.latest : 0, step: 8,
+            histology: s.histology, animalDisplay: o.animalDisplay, maxLevel: s.field ? s.field.maxLevel : 0, isoLatest: s.field ? s.field.latest : 0, step: 8, fadeDays: s.fadeDays,
             brush: { q: po ? po.q - cq : 0, r: po ? po.r - cr : 0, size: po ? po.brushSize : 0, active: !!(po && po.inside && po.mode !== 'none'), ink: paintInk(po ? po.mode : 'seed', t) },
             cq, cr, W: s.grid.W, side: s.field ? s.field.side : 0, theme: t, rampInk,
             wheel: wheelParams(),
@@ -239,9 +239,10 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     // ancestors' birthplaces (strains.js bornAt), oldest first. Each leg runs
     // the short way round: straight, or, when the far end is nearer through a
     // glued edge, as two segments, one to its image beyond that edge and one
-    // from the near end's image beyond the partner edge, so the leg crosses
-    // the gluing as the lineage did. A dot marks each birth; the strain's own
-    // is ringed in its mark.
+    // from the near end's image beyond the partner edge, clipped to the world,
+    // so the leg runs to the edge and on from where the gluing takes it, as
+    // the lineage did. A dot marks each birth; the strain's own is ringed in
+    // its mark.
     function drawTrunk(t, s, G, S) {
         const { reg, id } = s.trunk, W = s.grid.W, { cq, cr } = hexBounds(W, s.grid.H);
         const births = [];
@@ -263,6 +264,9 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         const glue = S.closed ? edgeGluings(s.topology, G.R) : null;
         const seg = (p, q) => { const [x0, y0] = toPx(p), [x1, y1] = toPx(q); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); };
         ctx.save();
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) { const [x, y] = corner(G, k); if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+        ctx.closePath(); ctx.clip();
         ctx.strokeStyle = t.rgba(t.text, 0.72); ctx.lineWidth = 1.3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.beginPath();
         for (let k = 1; k < births.length; k++) {
@@ -376,7 +380,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         ctx.font = font(narrow ? 11 : 12.5, true); ctx.textBaseline = 'middle';
         for (const { level, segs, runLen } of cs) {
             if (level % (narrow ? ISO_LABEL * 2 : ISO_LABEL) || !runLen) continue;
-            const fade = isoFade(latest - level);
+            const fade = isoFade(latest - level, s.fadeDays);
             if (fade < LABEL_FADE) continue;
             const text = 'day ' + level, w = ctx.measureText(text).width + 8;
             const long = [];
@@ -512,6 +516,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
                 break;
             case 'Dt': case 'Dz': ctx.strokeStyle = kind === 'Dt' ? t.accent : t.zombie; ctx.lineWidth = 1.6; ctx.lineCap = 'round'; ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke(); break;
             case 'Do': ctx.strokeStyle = t.muted; ctx.lineWidth = 1.1; ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.stroke(); break;
+            case 'Dx': ctx.fillStyle = t.zombie; ctx.arc(x, y, 3.2, 0, Math.PI * 2); ctx.fill(); break;
             case 'Da': ctx.strokeStyle = t.muted; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.moveTo(x - 5, y - 3); ctx.lineTo(x + 3, y + 2); ctx.stroke();
                 ctx.beginPath(); ctx.fillStyle = t.accent; ctx.moveTo(x + 4, y - 0.5); ctx.lineTo(x + 7.5, y + 5.8); ctx.lineTo(x + 0.5, y + 5.8); ctx.closePath(); ctx.fill(); break;
             default: if (row.draw) row.draw(ctx, x, y, t);

@@ -29,7 +29,7 @@ WebGPU on) and reports console errors, overflow and frame rate.
 ```bash
 node src/topology.test.mjs        # 2526 checks: gluing, χ, orientability, cone points, back directions
 node src/immunity.test.mjs        # 75 checks: antigenic torus, memory, σ, within-host selection, reclamation, birthplaces, the coinfected host as a mixture and as drawn
-node src/descent.test.mjs         # 106 checks: every infection's source, edge and parent against the tick, open and closed cases, subtree sizes, Re by count, the ring, undo, the view's texel, Fig. 3's record
+node src/descent.test.mjs         # 119 checks: every infection's source, edge and parent against the tick (transformations too), open and closed cases, subtree and tree sizes past the window, Re by count, the ring, undo, the view's texel, Figs. 3 and 4
 ```
 
 Run the first after touching `topology.js`, the second after touching immunity,
@@ -88,10 +88,10 @@ src/strains.js           registry (genome, antigen, lineage, generation), mutati
 src/strain-extinction.js periodic sweep: tombstone, reclaim dead branches, splice under pressure
 src/strain-style.js      a strain's mark from its antigen (hatch angle × OKLCH hue), the marks a carrier's strains make
 src/descent.js           who infected whom: the infection log, open and closed cases, Re by count, the Descent view's texel
-src/antigenic-map.js     Fig. 4, the antigenic map (Strains tab)
+src/antigenic-map.js     Fig. 5, the antigenic map (Strains tab)
 src/presets.js           six experiment presets, applyPreset, the theory their knobs are ticked with, the list of plates, the knob
 src/params.js            the params object, STRAIN_GENOME_LAYOUT, the slider row (Model tab, genome editor)
-src/model.js             the Model tab: Fig. 6, the compartment diagram, and each part's switches and sliders
+src/model.js             the Model tab: Fig. 7, the compartment diagram, and each part's switches and sliders
 src/toggles.js           the toggles object and the switch row
 src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), the brush rail
 src/camera.js            zoom/pan over the fitted plate
@@ -103,6 +103,7 @@ src/histology.js         the Immunoediting preset as an H&E-stained section: wha
 src/caption.js           the live figure caption and the Reference cartouche rows
 src/rose.js              Nightingale's rose (Counts tab)
 src/spacetime.js         Fig. 3, space against time along the centre row (Counts tab)
+src/chains.js            Fig. 4, chains of infection by size (Counts tab)
 src/stats.js             census and observed Re (Counts tab)
 src/lineage.js           strain prevalence, Strains tab (figures, rows, vaccine match), phylogeny, genome editor
 src/history.js           per-tick ring buffer: transitions, spillovers, the Z census
@@ -405,20 +406,28 @@ reuses ids, and the cell's slots already say what it carries), the event of the 
 infected it: a transmission into S, R or V (`pickIncomingStrain` keeps the picked edge's
 cell and direction), a Z's conversion, exposure or infectious kill, and spillover from
 the cell's own animal (`SRC_ANIMAL`). The seed brush, and the opening's seeds, which go
-through it, log a case placed by hand (`SRC_INTRO`, `introduce`). A coinfection adds a
-strain to a case that already has its event, so it is not one, and neither is a case
-that turns into a Z (I → Z, latent E → Z, F-corpse → Z): it stays the same case. No RNG
-is drawn, so every fingerprint is unchanged.
+through it, log a case placed by hand (`SRC_INTRO`, `introduce`). A latent cell's
+transformation (latent E → Z, step 9's L pathway, the Immunoediting reading) founds a
+clone, a new replicating thing whose conversions are its own, so it starts a tree
+(`SRC_TRANSFORM`); its viral case closes there. A Z made from an I cell or an F-corpse
+(the zombie reading) is the same case going on, and a coinfection adds a strain to a
+case that already has its event, so neither is one. No RNG is drawn, so every
+fingerprint is unchanged.
 
-Each cell holds the serial of its current infection's event (`evt`, −1 for none); a new
-infection reads its source's `evt` for the parent. A neighbour reads it, so the tick
-defers its writes: `settle`, after the swap, writes the tick's events into `evt`. It
-then closes the cases that ended: a case is open while its cell is E, I, Z, a carrier R
-(with `t.C`) or an F-corpse (with `t.F`) and still holds that event, and it closes
-when the cell leaves those states or takes a new infection, with its children final.
-Children are counted on the parent as they are logged (`kids`); a tree's size and its
-open cases on its root, and a tree closes with its last case (`trees`, `treeSize`,
-for 2.2's Spillover). The closures of the last `RE_DAYS` (30) give Re by count
+Each cell holds, for the infection it carries, its event's serial (`evt`, −1 for none),
+its tree (`tree`) and its generation (`gen`); a new infection reads its source's for its
+parent, tree and generation. A neighbour reads them, so the tick defers its writes:
+`settle`, after the swap, writes the tick's events into the cells. It then closes the
+cases that ended: a case is open while its cell is E, I, Z, a carrier R (with `t.C`) or
+an F-corpse (with `t.F`) and still holds that event, and it closes when the cell leaves
+those states or takes a new infection, with its children final. The open list keeps each
+case's cell and tree beside its serial, so a case open longer than the window (an
+immortal clone's cell, a carrier) still closes, uncounted in Re. Children are counted on
+the parent as they are logged (`kids`). Trees live in a pool of their own (`tSize`,
+`tOpen`, `tRoot`, `tSrc` its root's kind if not a cell; ids reused once closed), not on
+the events, so a tree stays whole after its oldest events leave the window; it closes
+with its last case into a ring of the last 16,384 (`treeSize`, `treeTick`, `treeSrc`).
+`growing(src)` is the largest tree still open, of those rooted at `src` if given. The closures of the last `RE_DAYS` (30) give Re by count
 (`reCounted`: children per closed case), shown beside observed Re in the caption and
 the Counts tab. On a spreading front the two agree (Threshold: 0.97–1.07 against
 0.90–1.25 over the wave; Spillover 0.37 against 0.40); in the Z presets the ratio reads
@@ -426,13 +435,13 @@ the Counts tab. On a spreading front the two agree (Threshold: 0.97–1.07 again
 
 Events live in a growable ring (structure of arrays, power-of-two capacity) over
 `WINDOW` days (the isochrones' `FADE_DAYS`, 420) counted back from the newest event, so
-a finished outbreak keeps its tree. An event that falls out of the window is gone: a
-later infection from its cell (a long carrier) starts a tree of its own. Descendants
+a finished outbreak keeps its tree. An event that falls out of the window is gone from
+the drawing and the parent links, but not from its tree's count. Descendants
 are counted only when the Descent view packs its texture (`countDescendants`): a
 child's serial is always later than its parent's, so one sweep from the newest event
 back sums every subtree. Undo of a stroke drops the cases it placed (`truncate`) and
 redo brings them back (`extend`), which is safe because each tick clears the paint
-history; `captureCellState` snapshots `evt`. At the default world the log holds up to
+history; `captureCellState` snapshots `evt`, `tree` and `gen`. At the default world the log holds up to
 about 18,000 events for Threshold and 150,000 for Drift (8.7 MB); Drift on the largest
 world holds 530,000 (35 MB).
 
@@ -509,12 +518,15 @@ light texture; a stroke into a case still E or I is the accent at full tone, int
 live Z the zombie's sap. Strokes fade as 1 − (age / 420)² on the log's own clock (the
 newest event). Where several events cross one edge, the most prominent (weight × fade)
 is drawn; where strokes meet in a pixel, the most visible one is. A case placed by hand
-is a ring of 0.52 rc, spillover a stroke from the animal's mark to the centre.
+is a ring of 0.52 rc, spillover a stroke from the animal's mark to the centre, and a
+transformation, which founds a clone, a disc of 0.3 rc (in the sap while the clone's
+founder lives).
 `packDescent` (descent.js) packs one rgba32uint texel per cell: x, y and z two edges
 each (weight 8 bits, fade 6, ink 2), w the root mark and its kind. It runs with the
 state texture, only in this view: 1.6 ms for Drift on the default world, 7 ms on the
 largest (which still holds 59 fps at 4× on an M5 Max). The Reference rows draw the
-same marks (`plate.js` `swatch`: `Dl`, `Dt`, `Dz`, `Do`, `Da`).
+same marks (`plate.js` `swatch`: `Dl`, `Dt`, `Dz`, `Dx`, `Do`, `Da`); with the L
+pathway on, a stroke into a Z reads "into a transformed cell".
 
 Isochrones: `isochrones.js` stamps each cell with the tick it last became E, I or Z. A
 cell that was not E/I/Z at the previous `record` and is now is stamped if it never was or
@@ -600,11 +612,11 @@ What acts on the plate sits on it; the margin holds the atlas's apparatus.
   numeral, then the Sandbox, titles only; choosing one applies it, and a changed model
   shows a Restore button under it), the surface picker (each surface's fundamental
   polygon drawn from `SURFACES` and `cornerCones`) and the World row. **Counts**: Nightingale's rose, Fig. 3
-  space against time, the census (S, E, I, R and D always,
+  space against time, Fig. 4 chains by size, the census (S, E, I, R and D always,
   the rest only while they have cells), the figures (population, observed Re, Re by count, beds,
   quarantine, mean age and health) and the reservoir while it has animals. **Strains**:
-  Fig. 4 the antigenic map with "Match vaccine to …", Fig. 5 the phylogeny, top
-  strains, genome editor. **Model** (`model.js`): Fig. 6, the model as a compartment
+  Fig. 5 the antigenic map with "Match vaccine to …", Fig. 6 the phylogeny, top
+  strains, genome editor. **Model** (`model.js`): Fig. 7, the model as a compartment
   diagram. The chain S → E → I → R runs down the left, V, Z and D beside it, births,
   the reservoir and cleared cells round the edges; each node is a chip with the plate's
   mark and its count, each arrow's weight its flux (main.js `flux`, ten-day smoothing of
@@ -622,8 +634,11 @@ the torus, or the `?mi=` surface), seeds two cases (one near a glued edge), warm
 the preset's `warmup` (300 days, when the wave has reached about 30% of the default
 world and crossed a glued edge), and plays; under reduced motion it warms up 120 days
 longer and stays paused. Applying a preset (`applyScene`) puts its params, toggles and
-surface in place, rebuilds the world, gives `vax_coverage`, and seeds the same two
-cases, so the plate is never empty. **Restart** (`restart`) runs the model as it stands
+surface in place, switches to the view its plate is drawn in (`view`: Drift the Strain
+view, Spillover Descent, the rest State), rebuilds the world, gives `vax_coverage`, and
+seeds the same two cases (`seedScene`), so the plate is never empty; Spillover
+(`seed: false`) places none, since its reservoir, 5% infected at the start, starts
+every chain within days. **Restart** (`restart`) runs the model as it stands
 (the experiment, its knob and whatever the Model tab changed) again on a fresh world;
 **Restore** (Model tab, or the note in the list) re-applies the experiment's own values,
 or the defaults in the sandbox (`modelChanged` decides whether the note shows; it leaves
@@ -635,14 +650,24 @@ effect on the next Restart.
 The figure caption (`caption.js` `plateCaption`) is the day and the view's live values,
 `·`-separated, and nothing else: what a mark means, how a control works and what a
 surface's gluing does live in the about panel (root AGENTS.md, "Show, don't tell"). In
-the State view it ends with the running preset's measured values (`presetMeasure`, from
-`measureCtx()` in main.js); a phone drops recovered, dead and Re to make room for them.
+the State view, and in the view the running preset's plate is drawn in, it ends with
+the preset's measured values (`presetMeasure`, from `measureCtx()` in main.js); a phone
+drops recovered, dead and Re (in Descent, the trees and generation) to make room for them.
 Re reads as observed Re and, once a case has closed, Re by count (`Re 1.02, 0.99 by
 count`). The Descent view's caption is the trees still growing, the deepest generation
 among the open cases (`summary()`) and Re.
 The margin's figure captions are a name and, where there is one, a live value (Fig. 4's
-leading strain and its distances); the rose's day span is drawn on the rose itself, and
-Fig. 3's days and its ends, A and A′, on its axes.
+chains and their mean, Fig. 5's leading strain and its distances); the rose's day span
+is drawn on the rose itself, and Fig. 3's days and its ends, A and A′, on its axes.
+
+Fig. 4 (`chains.js`) plots the chains of infection that closed over the last 365 days
+(`chainStats`, from the log's ring of closed trees) by size on log–log axes: sizes
+binned by doubling (1, 2–3, 4–7, …), each bin's count over its width, a dot at the
+bin's geometric middle, so a power law is a straight line, with the mean ticked on the
+size axis. A subcritical chain's sizes fall off fast; near the threshold they follow
+the branching process's −3/2. In Spillover these are the stuttering human chains each
+spillover starts; in Immunoediting nearly all are clones (the virus is one tree that
+seldom closes).
 
 Fig. 3 (`spacetime.js`) is a Hovmöller diagram: position along the world's centre row,
 from the west corner (A on the plate) to the east (A′), against time running down over
@@ -729,9 +754,9 @@ false`) so the about panel shows them without a second handler firing.
   `panelEl._lineageRefs`); per-tick writes are guarded by text equality. Strain rows are
   pooled by id and reordered with `appendChild`. `document.startViewTransition` stays
   out of tick paths: its document snapshot was the main source of UI jank.
-- `stats.js` `buildPanelSkeleton` rebuilds the Counts tab but preserves
-  `#timeseries-panel` (the rose) and `#spacetime-panel` (Fig. 3), whose canvas contexts
-  `initTimeseries` and `createSpacetime` capture once.
+- `stats.js` `buildPanelSkeleton` rebuilds the Counts tab but preserves its figures
+  (`FIGURES`: `#timeseries-panel`, `#spacetime-panel`, `#chains-panel`), whose canvas
+  contexts `initTimeseries`, `createSpacetime` and `createChains` capture once.
 - The history (200 ticks) is a typed-array ring buffer of transitions, spillovers and
   the Z census, with `sum(key, n)` and `ago(key, n)`.
 - `#speed-btn` carries an inner `<span class="speed-label">` that `main.js` writes.
@@ -786,37 +811,43 @@ view held 60 fps at 96,661 cells in drift, unthrottled, on 2026-10-27), and `rec
 
 Six experiments (`presets.js`); each preset's comment records the calibration behind
 its values. `tools/presets-survey.mjs` reproduces the facts below (ten seeds, 3,000 days,
-the default knob, the opening's two seeds, the default 24,031-cell world; surveyed
-2026-10-25, when the default grew from 10,621 cells, and Drift and Spillover again on
-2026-10-27, when worlds began starting at steady-state ages). Its fifth argument sweeps a
-preset's knob, as the presets' comments record.
+the default knob, the opening's two seeds unless the preset places none, the default
+24,031-cell world; surveyed 2026-10-25, when the default grew from 10,621 cells, Drift
+and Spillover again on 2026-10-27, when worlds began starting at steady-state ages, and
+Spillover and Immunoediting once more that day for 2.2's rebuilt plates). Its fifth
+argument sweeps a preset's knob, and `SET="key=value,…"` overrides params, as the
+presets' comments record. It also reports the chains of infection (mean size closed in
+the first year and after day 1,000, the largest) and the clones (trees a transformation
+founded). Each plate opens in its own view (`view`): Drift in Strain, Spillover in
+Descent, the rest in State; the caption carries the measure there and in State.
 
 | Preset | Knob (default) | Measured in the caption | Ten seeds, 3,000 days |
 |---|---|---|---|
 | Threshold (opening) | β (0.11, 1.8× critical) | β against the critical β (≈ 0.061, independent edges); share of cells reached | takes off 10/10, reaches the edge by day 193, peak 782 E+I, ends by day 840, reaches 97% (30% by day 300, the opening) |
 | Herd immunity | coverage (0.48, reset) | coverage against the lattice threshold (near 50%) and 1 − 1/R₀ (82%); share of the unvaccinated reached | peak 179, ends by day 1,874, reaches 66% of the unvaccinated (10% at 0.50) |
 | Antigenic drift | antigenic step (1.2 AU) | the leading strain's distance from α along its descent, per year; carriers' mean generation | never ends, peak 4,620, 154 living strains at the end, waves locked to the season |
-| Spillover | spillover rate (0.02) | human-to-human Re over 30 days; reservoir share of human cases | never ends, human Re 0.38, 62% of human cases from the reservoir (the same at any size) |
-| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days | 843 transformed cells at day 1,000, 1,693 at the end; escape at 0.25 (6,782), shrinking from 0.32 |
+| Spillover | human β (0.03, between the branching and lattice thresholds, 0.023 and 0.048) | mean size of chains closed over the last year; the largest still growing; reservoir share of human cases | chains average 5.6 cases in the first year (3.2 at β 0.02, 12.6 at 0.05, 20.2 at 0.08), human Re 0.77, 24% from the reservoir; no single chain takes over at any β |
+| Immunoediting | surveillance (0.29) | transformed-cell trend over 100 days; mean size of the clones cleared over the last year; the most cells one clone holds | 843 transformed cells at day 1,000, 1,693 at the end, the largest clone 120 cells, cleared clones' sizes as s^−1.49 (critical); escape at 0.25 (6,782; largest clone 361), shrinking from 0.32 (largest 15) |
 | Zombie apocalypse | fight-back (0.06) | zombie trend over 100 days against the living | 3,327 zombies at day 1,000, 3,238 at the end, against 1,809 and 1,617 living; burns out in 0/10 (5/10 at 0.03) |
 
 ## Open work
 
 `docs/ROADMAP.md` is the plan, refreshed on 2026-10-27 from an audit of the build: 2.2
-gives the plate cause and time (infection lineages and their Descent view, landed as
-M1; a space–time figure and the trunk on the map, landed as M2; the three plates that
-read only in their captions rebuilt, M3), 2.3
+gives the plate cause and time (infection lineages and their Descent view, M1; a
+space–time figure and the trunk on the map, M2; Spillover, Drift and Immunoediting
+rebuilt to read on the plate and in Fig. 4, M3; all landed), 2.3
 widens contact beyond the neighbours, 2.4 adds waning and the spirals plate, and 3.0 is
 the tactical game, its orders drawn on the map. When an item lands, move it to the
 roadmap's Landed table and update this file. `docs/VISION.md` holds the first ideation
 round and the measurements behind it.
 
-- Antigenic drift, Spillover and Immunoediting show their phenomenon only in the
-  caption: their plates are a snapshot of state, and the phenomenon lives in time or in
-  a distribution (roadmap §1, §4.5).
+- Growth rings for Immunoediting (roadmap §4.5) were tried and dropped: transformation
+  happens wherever the latent virus is, so the tumour is multifocal and its margin every
+  100 days is a scatter of small loops, not rings that spread or pile up. Clones as
+  chains (Fig. 4) took their place. A single-mass reading would need a recalibration
+  in which equilibrium cannot exist (a lone front either grows or shrinks).
 - The Descent view's strokes are graphite or red; the roadmap's strain-marked strokes in
-  the Strain view (§4.2) would need a strain per edge in the texel. The offspring
-  distribution and closed trees' sizes are kept but not yet drawn (M3's Spillover).
+  the Strain view (§4.2) would need a strain per edge in the texel.
 - The default-on `auto_quarantine` is instant, unlimited and omniscient (it sees every
   true case); the presets turn it off, and 3.0's reports replace it.
 - The tick runs on the main thread. Moving it to a worker is the next lever for worlds

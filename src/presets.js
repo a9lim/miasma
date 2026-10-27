@@ -19,6 +19,9 @@
 //                  where theory gives one, else the regimes the survey found
 //   measure      — which measured sentence the caption carries
 //   warmup       — days the opening runs before it is shown (opening preset)
+//   fadeDays     — the isochrones' fade horizon, if not FADE_DAYS (isochrones.js)
+//   view         — the view the plate is drawn in when the preset is applied (else State)
+//   seed         — false: no cases placed by hand; the run's own sources start it
 //
 // Calibration (docs/ROADMAP.md §2.3): every preset was surveyed headlessly
 // across at least ten seeds (tools/presets-survey.mjs); the numbers below are
@@ -40,11 +43,16 @@ export function edgeT(beta, exit) {
     return 1 - exit * (1 - beta) / (1 - (1 - exit) * (1 - beta));
 }
 
+/** β at which edgeT reaches `T`, for exit rate `exit`. */
+export function betaFor(T, exit) {
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (edgeT(m, exit) < T) lo = m; else hi = m; }
+    return lo;
+}
+
 /** β at which edgeT reaches the percolation threshold, for exit rate `exit`. */
 export function criticalBeta(exit) {
-    let lo = 0, hi = 1;
-    for (let k = 0; k < 50; k++) { const m = (lo + hi) / 2; if (edgeT(m, exit) < P_C) lo = m; else hi = m; }
-    return lo;
+    return betaFor(P_C, exit);
 }
 
 /** 1 − 1/R₀ with R₀ = 6·T, the mean-field herd-immunity threshold. */
@@ -107,7 +115,8 @@ export const PRESETS = Object.freeze([
         measure: 'herd'
     },
     {
-        // Twenty seeds, 3,000 days on the 10,621-cell world: no extinctions,
+        // Drawn in the Strain view (the trunk on the map) with the isochrones
+        // fading over a season. Twenty seeds, 3,000 days on the 10,621-cell world: no extinctions,
         // waves locked to the 365-day season (peaks 358 days apart, troughs
         // at 12% of the peaks), mean prevalence 8.6%, peaks 19%; on the
         // 24,031-cell world ten seeds never end either and peak at 19%. A low mutation rate keeps
@@ -128,24 +137,36 @@ export const PRESETS = Object.freeze([
             ...NO_ANIMALS
         },
         knob: { key: 'ag_step', label: 'Antigenic step', min: 0, max: 1.5, step: 0.05, digits: 2 },
+        // a season: each year's wave carries the labels, and last year's lines sink to the floor
+        fadeDays: 180,
+        view: 'strain',
         // one antigenic unit: a step that long meets 1/e of the immunity to its parent
         marks: () => [{ at: 1, label: '1 AU' }],
         measure: 'drift'
     },
     {
-        // Human-to-human transmission is subcritical (β 0.03, T ≈ 0.25
-        // against the threshold's 0.35; no chronic human carriers, which
-        // would transmit for life), so every human chain dies out on its own.
-        // The rodents carry the infection chronically (recovery 0.01 a day,
-        // old age at 800 days, a mean life of about 415), 5% of them infected
-        // at the start, and about 20% stay infected. Ten seeds, days
-        // 1,000–3,000: spillover 0.01 gives human Re 0.48 and 53% of human cases from the
-        // reservoir, 0.02 gives 0.38 and 62%, 0.04 0.31 and 69%, 0.08 0.26
-        // and 74% (the same on the 10,621-cell world: these do not depend on
-        // its size).
+        // Emergence: every human chain starts at a spillover from the rodents
+        // (no case is placed by hand) and the knob is human β. The rodents
+        // carry the infection chronically (recovery 0.01 a day, old age at
+        // 800 days, a mean life of about 415), 5% of them infected at the
+        // start, and about 20% stay infected. Spillover is rare (0.001) so
+        // most people are naive when a chain starts: at 0.02 the reservoir
+        // alone immunizes 40–60% of people, and no β up to 0.1 lets chains
+        // grow past about 2.4 cases on average. Ten seeds, 3,000 days, the
+        // mean size of chains closed in the first year and after day 1,000:
+        // β 0.02 3.2 and 2.8; 0.03 (the default, T ≈ 0.25) 5.6 and 4.2, with
+        // human Re 0.77 and 24% of human cases from the reservoir; 0.04 8.9
+        // and 5.6; 0.05 12.6 and 6.9; 0.06 15.6 and 8.2; 0.08 20.2 and 10.4,
+        // Re 0.91, 10%. The branching process's mean diverges at β 0.023
+        // (T = 0.2); on the lattice chains stay finite through it, lengthen
+        // most steeply between 0.04 and 0.05, about the percolation threshold
+        // (0.048), and past it no one chain takes over: the reservoir starts
+        // new chains everywhere, so they tile the world, each finite.
         key: 'spillover',
         label: 'Spillover',
         topology: Topology.PLANE,
+        view: 'descent',
+        seed: false,
         toggles: { ...QUIET_TOGGLES },
         params: {
             beta: 0.03, sigma: 0.15, gamma: 0.07, mu: 0.025,
@@ -153,9 +174,14 @@ export const PRESETS = Object.freeze([
             animal_density: 0.35, animal_seed: 0.05,
             animal_beta: 0.08, animal_gamma: 0.01, animal_mu: 0.002, animal_max_age: 800,
             animal_d_disposal: 0.05,
-            spillover_rate: 0.02, reverse_spillover_rate: 0.001
+            spillover_rate: 0.001, reverse_spillover_rate: 0.001
         },
-        knob: { key: 'spillover_rate', label: 'Spillover', min: 0, max: 0.1, step: 0.005, digits: 3 },
+        knob: { key: 'beta', label: 'β', min: 0, max: 0.12, step: 0.002, digits: 3 },
+        // a chain is a branching process whose cases each meet five fresh
+        // neighbours: its mean size 1 + 6T/(1 − 5T) diverges at T = 0.2; on
+        // the lattice a chain in fresh hosts is a percolation cluster, finite
+        // until T reaches the threshold Plate I marks
+        marks: (P) => [{ at: betaFor(0.2, P.gamma + P.mu), label: 'branching', align: 'end' }, { at: criticalBeta(P.gamma + P.mu), label: 'lattice', align: 'start' }],
         measure: 'spillover'
     },
     {
@@ -168,7 +194,13 @@ export const PRESETS = Object.freeze([
         // escapes (5,400 transformed cells by day 1,000, 6,800 by 3,000), 0.29
         // holds (about 850 by day 1,000, 1,700 by 3,000, turning over), 0.32
         // or more shrinks it (at 0.35, 47 cells by day 1,000 and 30 by
-        // 3,000).
+        // 3,000). Each transformation founds a clone (descent.js); the most
+        // cells one clone holds at the end are 361 at 0.25, 120 at 0.29, 15
+        // at 0.32 and 8 at 0.35. At 0.29 the sizes of the clones surveillance
+        // clears fall as s^−1.49 over sizes 2–512 (four seeds, 4,753 clones),
+        // the critical branching process's −3/2: equilibrium holds the clones
+        // at criticality. At 0.32 the slope is −1.88, at 0.35 −2.03, and at
+        // 0.25 hardly any clone is cleared.
         key: 'immunoediting',
         label: 'Immunoediting',
         topology: Topology.TORUS,

@@ -49,7 +49,8 @@ for (const R of radii) {
             }
         }
         const { cq, cr } = hexBounds(W, W);
-        for (const [dq0, dr0] of OPENING_SEEDS) {
+        const preset = PRESETS.find(p => p.key === key);
+        for (const [dq0, dr0] of preset && preset.seed === false ? [] : OPENING_SEEDS) {
             const dq = Math.round(dq0 * R / DEFAULTS.R), dr = Math.round(dr0 * R / DEFAULTS.R);
             for (const [a, b] of [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, -1], [-1, 1]]) {
                 const i = (cr + dr + b) * W + (cq + dq + a), c = grid.compartment[i];

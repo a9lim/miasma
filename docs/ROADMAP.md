@@ -36,6 +36,7 @@ parallel lanes fit a whole version in one.
 | 2026-10-26 | **The controls are rebuilt around the plate** (a9 asked for the rework; Claude's design): what acts on the plate sits on it, and the margin is the atlas's apparatus. **Restart keeps the model as edited; Restore puts back the experiment's values.** |
 | 2026-10-27 | **WebGPU is the one plate renderer** (`b7082e3`); a browser without it sees a notice while the margin runs. |
 | 2026-10-27 | **3.0 is tactical** (a9's call, against a proposal to reframe it as an inference game): you direct measures on the map itself, drawing where the doses go, cordoning, tracing a case's contacts, sampling strains. It is not points spent on abstract policies over a background simulation, as in strategic, global-level games like *Plague Inc: The Cure*. Claude's follow-on: inference pays through where the orders land, so there is no separate findings layer (§7.3). |
+| 2026-10-27 | **Spillover is emergence** (Open 2, in the 2.2 sketch a9 approved): human β is the knob, chains by size the measure; built in 2.2 M3. |
 | 2026-10-27 | **Descent is a seventh view** (Open 3, in the 2.2 sketch a9 approved), not a layer over the State view; built in 2.2 M1. |
 | 2026-10-27 | **Lineages, not records** (a9's call): 2.2 tracks infection lineages because the live sim draws, measures and traces them, and builds no checkpoints, replay or recipe links. Miasma is a live, causal, observational sandbox; record artifacts kept for their own sake distract from it, and sharing runs isn't worth the work. The counter-based RNG moves to 3.0, where the twins need it. |
 
@@ -49,8 +50,7 @@ Each has a recommendation; a9 decides.
 1. **3.0's orders** (§7.2): shapes as the main verbs (a ring around a case, a belt drawn
    as a line, a lassoed cordon, trace and sample by click), with the brushes for fine work
    (recommended), or the sandbox's brushes alone.
-2. **Spillover's experiment** (§4.5): emergence, with human transmissibility as the knob
-   and chain sizes as the measure (recommended), or the spillover rate as now.
+2. *(Decided above: Spillover is emergence.)*
 3. *(Decided above: Descent is a seventh view.)*
 4. **Geography** (§5.4): a road brush in 2.3, painted routes that carry long-range
    contact (recommended), or the world stays a bare hexagon.
@@ -221,7 +221,40 @@ each birth. That is where the lineage has been, the way Nextstrain draws a phylo
 map (Hadfield et al. 2018) [standard]. Fig. 4 shows where the trunk went in antigenic
 space; this shows where it went on the world. S.
 
-### 4.5 The three plates rebuilt
+### 4.5 The three plates rebuilt — landed in M3
+
+*As built, and what the surveys found (`presets.js` comments, `AGENTS.md` Presets):*
+
+- *Spillover [measured]: emergence, as sketched, with no case placed by hand (the
+  reservoir starts every chain) and the plate drawn in the Descent view. The reservoir's
+  immunity moved the threshold further than expected: at the old spillover rate (0.02)
+  it immunizes 40–60% of people, past the lattice's herd threshold, and no β up to 0.1
+  (T ≈ 0.54) lets chains average more than 2.4 cases. At 0.001 the transition shows:
+  the mean chain in the first year runs 3.2, 5.6, 8.9, 12.6, 15.6 and 20.2 cases for β
+  0.02 to 0.08, steepest between 0.04 and 0.05, about the lattice threshold (0.048),
+  while the branching foil diverges at 0.023. Past the threshold no single chain takes
+  over: the reservoir keeps starting chains elsewhere, so they tile the world, each
+  finite (none reached 1,000 cases in any run). "One that doesn't stop" needs spillover
+  rarer than a front's crossing time, which would leave the plate nearly empty. The
+  measure is Fig. 4 (chains by size, log–log, a −3/2 guide), the caption's mean chain,
+  largest growing and reservoir share.*
+- *Drift: the Strain view (strain marks and the trunk) is its plate, and its isochrones
+  fade over 180 days (`fadeDays`), so only the current season's wave is labelled.*
+- *Immunoediting [measured]: growth rings were built and dropped. Transformation happens
+  wherever the latent virus is, so the tumour is multifocal: each 100-day margin is a
+  scatter of small loops, and even the last three margins show lesions appearing and
+  vanishing in place, not growing or shrinking; under escape the transformed cells are
+  diffuse. Equilibrium here is many foci born and killed, so a single mass cannot sit in
+  it (a lone front either grows or shrinks). In their place, a transformation founds a
+  tree (a clone) in the lineage log, and Fig. 4 shows clone sizes: at equilibrium (0.29)
+  cleared clones fall as s^−1.49 over sizes 2–512, the critical branching process's
+  −3/2; at 0.32 and 0.35 the slope steepens to −1.88 and −2.03; under escape hardly any
+  clone is cleared. Surveillance holds the clones at criticality. The caption adds the
+  cleared clones' mean size and the largest clone's living cells (361, 120, 15, 8 across
+  the regimes).*
+- *The trees themselves moved off the event ring: a tree's size and open cases, and each
+  cell's tree and generation, are kept apart from the 420-day window, which had dropped
+  immortal clones and long chains from the count.*
 
 - **Spillover becomes emergence** (Open 2). The knob is human transmissibility (β), not
   the spillover rate. The phenomenon: stuttering chains rooted at animals that lengthen
@@ -253,7 +286,7 @@ ships.
 |---|---|---|---|
 | **M1** | infection lineages, Descent, Re by counting (landed 2026-10-27) | M | — |
 | **M2** | the space–time figure, the trunk on the map (landed 2026-10-27) | S–M | — |
-| **M3** | the three plates rebuilt, surveyed | M | M1 (Spillover), M2 (Drift) |
+| **M3** | the three plates rebuilt, surveyed (landed 2026-10-27) | M | M1 (Spillover), M2 (Drift) |
 
 M1 and M2 can run as parallel lanes. Receipts: tests that every event's source was a
 transmitter at the start of its tick and that descendant counts equal subtree sizes;

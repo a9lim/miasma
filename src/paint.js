@@ -103,6 +103,8 @@ function captureCellState(grid, i) {
         memY:        grid.mem_y.slice(mb, mb + MEMORY_SLOTS),
         memKind:     grid.mem_kind.slice(mb, mb + MEMORY_SLOTS),
         evt:         grid.descent.evt[i],
+        tree:        grid.descent.tree[i],
+        gen:         grid.descent.gen[i],
         compartment: grid.compartment[i],
         status:      grid.status[i],
         flags:       grid.flags[i],
@@ -115,6 +117,8 @@ function captureCellState(grid, i) {
 
 function restoreCellState(grid, i, state) {
     grid.descent.evt[i] = state.evt;
+    grid.descent.tree[i] = state.tree;
+    grid.descent.gen[i] = state.gen;
     grid.compartment[i] = state.compartment;
     grid.status[i]      = state.status;
     grid.flags[i]       = state.flags;

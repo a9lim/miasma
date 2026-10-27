@@ -36,9 +36,10 @@ paint.
   sit beyond each glued edge, and strokes on them land on the world.
 - **Six experiments**: Threshold (the critical transmission rate, and the ragged front
   just above it), Herd immunity (about half coverage stops a wave on a lattice, not the
-  textbook 82%), Antigenic drift (seasonal waves of drifting variants), Spillover (a
-  rodent reservoir keeping subcritical human chains going), Immunoediting (surveillance
-  eliminating, holding or losing a tumour), and Zombie apocalypse. They are the atlas's
+  textbook 82%), Antigenic drift (seasonal waves of drifting variants), Spillover (human
+  chains a rodent reservoir starts, lengthening as human β rises), Immunoediting
+  (surveillance eliminating, holding or losing transformed clones), and Zombie
+  apocalypse. They are the atlas's
   plates, listed in the Experiments tab; each has one knob under the plate, ticked
   where theory puts its threshold, and a measured number in the figure caption. The
   Sandbox has every mechanic at its default.
@@ -54,8 +55,8 @@ paint.
   The caption gives Re both by the ratio of infections to removals and by counting
   each closed case's children.
 - **The margin**: Nightingale's rose, a space–time figure (infections along the
-  centre row, A to A′, against the last two years), observed Re and Re by count sit in
-  the Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
+  centre row, A to A′, against the last two years), the chains of infection by size,
+  observed Re and Re by count sit in the Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
   strains by prevalence, a vaccine-matching control and a per-strain genome editor.
 - **The model as a figure**: the Model tab draws the compartment diagram of the model
   the plate runs, with each compartment's count and each arrow's daily flux; choosing a

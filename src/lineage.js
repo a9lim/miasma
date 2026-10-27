@@ -139,7 +139,7 @@ export function computeStrainPrevalence(grid, registry, maxSlot) {
 function buildPanelSkeleton(panelEl) {
     while (panelEl.firstChild) panelEl.removeChild(panelEl.firstChild);
 
-    // Fig. 4, the antigenic map, then Fig. 5, the phylogeny, above the
+    // Fig. 5, the antigenic map, then Fig. 6, the phylogeny, above the
     // rankings. Clicks on either route through selectStrain, like a row.
     const figure = (cls, label) => {
         const f = document.createElement('figure');
@@ -153,7 +153,7 @@ function buildPanelSkeleton(panelEl) {
         cap.append(num, ' ', text);
         return { f, cap, text };
     };
-    const agFig = figure('antigenic', 'Fig. 4.');
+    const agFig = figure('antigenic', 'Fig. 5.');
     const agMap = document.createElement('canvas');
     agMap.className = 'antigenic-map-canvas';
     agMap.setAttribute('aria-label', 'Antigenic map of the strains on a torus');
@@ -175,7 +175,7 @@ function buildPanelSkeleton(panelEl) {
     agFig.f.append(agMap, agFig.cap, vaxRow);
     panelEl.appendChild(agFig.f);
 
-    const phyFig = figure('phylogeny', 'Fig. 5.');
+    const phyFig = figure('phylogeny', 'Fig. 6.');
     phyFig.text.textContent = 'Phylogeny';
     const forest = document.createElement('canvas');
     forest.className = 'strain-forest-canvas';

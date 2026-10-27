@@ -1,20 +1,27 @@
 // descent.js — who infected whom, kept as live state.
 //
 // Every infection is an event: (cell, source, direction, tick), pointing at
-// its parent, the event of the case that infected it. The tick
-// logs a transmission into S, R or V, a Z's conversion, exposure or infectious
-// kill, and spillover from the cell's own animal; the seed brush (and the
-// opening's seeds, which go through it) logs a case placed by hand. A
-// coinfection adds a strain to a case that already has its event, so it is not
-// one. Events live in a ring over WINDOW days counted back from the newest
-// event, the isochrones' clock, so a finished outbreak keeps its tree and
-// nothing older is kept. Nothing is exported or replayed.
+// its parent, the event of the case that infected it. The tick logs a
+// transmission into S, R or V, a Z's conversion, exposure or infectious kill,
+// and spillover from the cell's own animal; the seed brush (and the opening's
+// seeds, which go through it) logs a case placed by hand. A latent cell's
+// transformation (L → Z, the Immunoediting reading) founds a clone, a new
+// replicating thing whose conversions are its own, so it starts a tree of its
+// own; a Z made from an I cell or a corpse (the zombie reading) is the same
+// case going on. A coinfection adds a strain to a case that already has its
+// event, so it is not one. Events live in a ring over WINDOW days counted back
+// from the newest event, the isochrones' clock, so a finished outbreak keeps
+// its tree and nothing older is kept. Nothing is exported or replayed.
 //
-// Each cell holds the serial of the event behind the infection it carries
-// (`evt`, −1 for none); a new infection finds its parent there. A neighbour
-// reads it, so the tick defers its writes to `settle`, which runs after the
-// swap: a source infected again in the same tick still passes on the
-// infection it held at the start of it.
+// Each cell holds, for the infection it carries, its event's serial (`evt`,
+// −1 for none), its tree (`tree`) and its generation (`gen`); a new infection
+// reads its source's for its parent, tree and generation. A neighbour reads
+// them, so the tick defers its writes to `settle`, which runs after the swap:
+// a source infected again in the same tick still passes on the infection it
+// held at the start of it. Trees and generations are kept per cell, not on
+// the events, so a tree stays whole after its oldest events leave the window
+// (an immortal clone, an endemic chain); only the drawing and the parent
+// links are the window's.
 //
 // A case is open while its cell incubates or can pass on that infection: E, I,
 // Z, a carrier R, an F-corpse. It closes when the cell leaves those states or
@@ -29,8 +36,8 @@
 import { Compartment, Flag } from './config.js';
 import { FADE_DAYS } from './isochrones.js';
 
-/** Sources that are not a cell: a case placed by hand, spillover from the cell's animal. */
-export const SRC_INTRO = -2, SRC_ANIMAL = -3;
+/** Sources that are not a cell: a case placed by hand, spillover from the cell's animal, a transformation. */
+export const SRC_INTRO = -2, SRC_ANIMAL = -3, SRC_TRANSFORM = -4;
 /** No direction: the source is not a neighbour. */
 export const NO_DIR = 6;
 /** Days of events kept, back from the newest. */
@@ -39,8 +46,8 @@ export const WINDOW = FADE_DAYS;
 export const RE_DAYS = 30;
 
 const DAY_RING = 32;          // ≥ RE_DAYS, a power of two
-const TREE_RING = 4096;       // closed trees remembered (size, tick)
-const KIDS_MAX = 65535, DEPTH_MAX = 65535;
+const TREE_RING = 16384;      // closed trees remembered (size, tick, source)
+const KIDS_MAX = 65535, GEN_MAX = 65535;
 
 /** True while a cell in this state still holds an infection that can spread or is incubating. */
 export function openState(c, f, tC, tF) {
@@ -49,32 +56,47 @@ export function openState(c, f, tC, tF) {
         || (c === Compartment.D && tF && (f & Flag.F_CORPSE) !== 0);
 }
 
+const grow = (a, T) => { const b = new T(a.length * 2); b.set(a); return b; };
+
 export class Descent {
     /** @param {number} N cells in the grid's storage */
     constructor(N) {
         this.evt = new Int32Array(N).fill(-1);
+        this.tree = new Int32Array(N).fill(-1);
+        this.gen = new Uint16Array(N);
         this.base = 0;          // oldest serial kept
         this.head = 0;          // next serial
-        this.mark = 0;          // first serial the next settle writes into `evt`
+        this.mark = 0;          // first serial the next settle writes into the cells
         this.now = 0;           // the last tick settled; a case placed by hand takes it
         this.latest = 0;        // the newest event's tick
         this.alloc(1 << 12);
-        this.openList = new Int32Array(1 << 10);
+        // the open cases: serial, cell and tree (the event may leave the window first)
+        this.openS = new Int32Array(1 << 10);
+        this.openC = new Int32Array(1 << 10);
+        this.openT = new Int32Array(1 << 10);
         this.nOpen = 0;
+        // the trees with a case open: size, open cases, the root's serial, its source if not a cell (else 0)
+        this.tSize = new Int32Array(1 << 8);
+        this.tOpen = new Int32Array(1 << 8);
+        this.tRoot = new Int32Array(1 << 8);
+        this.tSrc = new Int8Array(1 << 8);
+        this.tFree = [];
+        this.tNext = 0;
         this.dayN = new Int32Array(DAY_RING);
         this.dayKids = new Int32Array(DAY_RING);
         this.dayTag = new Int32Array(DAY_RING).fill(-1);
         this.treeSize = new Int32Array(TREE_RING);
         this.treeTick = new Int32Array(TREE_RING);
+        this.treeSrc = new Int8Array(TREE_RING);
         this.trees = 0;         // closed trees ever; the ring holds the last TREE_RING
+        this.intros = 0;        // cases placed by hand since the world was built
     }
 
     alloc(cap) {
         const old = this.cap ? this : null, oldMask = this.mask;
         this.cap = cap; this.mask = cap - 1;
-        const fields = [['cell', Int32Array], ['src', Int32Array], ['parent', Int32Array], ['root', Int32Array],
-            ['tick', Int32Array], ['size', Int32Array], ['open', Int32Array],
-            ['kids', Uint16Array], ['depth', Uint16Array], ['dir', Uint8Array], ['closed', Uint8Array]];
+        const fields = [['cell', Int32Array], ['src', Int32Array], ['parent', Int32Array], ['tick', Int32Array],
+            ['tid', Int32Array], ['kids', Uint16Array], ['depth', Uint16Array], ['dir', Uint8Array], ['closed', Uint8Array]];
         const next = {};
         for (const [k, T] of fields) next[k] = new T(cap);
         if (old) {
@@ -87,30 +109,30 @@ export class Descent {
         this.desc = new Int32Array(cap);
     }
 
-    // A new event; its slot. `parent` is a valid serial or −1.
-    push(cell, src, dir, tick, parent) {
+    newTree(root, src) {
+        let t = this.tFree.length ? this.tFree.pop() : this.tNext++;
+        if (t >= this.tSize.length) {
+            this.tSize = grow(this.tSize, Int32Array); this.tOpen = grow(this.tOpen, Int32Array);
+            this.tRoot = grow(this.tRoot, Int32Array); this.tSrc = grow(this.tSrc, Int8Array);
+        }
+        this.tSize[t] = 0; this.tOpen[t] = 0; this.tRoot[t] = root; this.tSrc[t] = src < 0 ? src : 0;
+        return t;
+    }
+
+    // A new event; its serial. `parent` is a valid serial or −1, `tree` the
+    // source's tree or −1 for a new one, `gen` its generation.
+    push(cell, src, dir, tick, parent, tree, gen) {
         if (this.head - this.base >= this.cap) this.alloc(this.cap * 2);
         const s = this.head++, k = s & this.mask;
         this.cell[k] = cell; this.src[k] = src; this.dir[k] = dir;
         this.tick[k] = tick; this.closed[k] = 0; this.kids[k] = 0;
-        this.parent[k] = parent;
-        let root = s;
-        if (parent >= 0) {
-            const pk = parent & this.mask;
-            root = this.root[pk];
-            this.depth[k] = this.depth[pk] < DEPTH_MAX ? this.depth[pk] + 1 : DEPTH_MAX;
-            if (this.kids[pk] < KIDS_MAX) this.kids[pk]++;
-        } else this.depth[k] = 0;
-        this.root[k] = root;
-        if (root === s) { this.size[k] = 1; this.open[k] = 1; }
-        else if (root >= this.base) { const rk = root & this.mask; this.size[rk]++; this.open[rk]++; }
+        this.parent[k] = parent; this.depth[k] = gen;
+        if (parent >= 0) { const pk = parent & this.mask; if (this.kids[pk] < KIDS_MAX) this.kids[pk]++; }
+        const t = tree >= 0 && this.tOpen[tree] > 0 ? tree : this.newTree(s, src);
+        this.tid[k] = t; this.tSize[t]++; this.tOpen[t]++;
         if (tick > this.latest) this.latest = tick;
-        if (this.nOpen === this.openList.length) {
-            const grown = new Int32Array(this.openList.length * 2);
-            grown.set(this.openList);
-            this.openList = grown;
-        }
-        this.openList[this.nOpen++] = s;
+        if (this.nOpen === this.openS.length) { this.openS = grow(this.openS, Int32Array); this.openC = grow(this.openC, Int32Array); this.openT = grow(this.openT, Int32Array); }
+        this.openS[this.nOpen] = s; this.openC[this.nOpen] = cell; this.openT[this.nOpen] = t; this.nOpen++;
         return s;
     }
 
@@ -122,12 +144,14 @@ export class Descent {
 
     /**
      * An infection in the tick: `cell` caught it from `src` (a cell, or
-     * SRC_ANIMAL), across direction `dir` of `cell` (NO_DIR when the source is
-     * not a neighbour). `evt[cell]` is written at the next settle.
+     * SRC_ANIMAL or SRC_TRANSFORM), across direction `dir` of `cell` (NO_DIR
+     * when the source is not a neighbour). The cell's fields are written at
+     * the next settle.
      */
     infect(cell, src, dir, tick) {
-        const parent = src >= 0 ? this.eventAt(src) : -1;
-        return this.push(cell, src, dir, tick, parent);
+        if (src < 0) return this.push(cell, src, dir, tick, -1, -1, 0);
+        const g = this.gen[src];
+        return this.push(cell, src, dir, tick, this.eventAt(src), this.tree[src], g < GEN_MAX ? g + 1 : g);
     }
 
     /**
@@ -138,38 +162,46 @@ export class Descent {
     introduce(i) {
         const e = this.eventAt(i);
         if (e >= this.mark && this.src[e & this.mask] === SRC_INTRO) return e;
-        const s = this.push(i, SRC_INTRO, NO_DIR, this.now, -1);
-        this.evt[i] = s;
+        const s = this.push(i, SRC_INTRO, NO_DIR, this.now, -1, -1, 0);
+        this.evt[i] = s; this.tree[i] = this.tid[s & this.mask]; this.gen[i] = 0;
+        this.intros++;
         return s;
     }
 
-    /** Undo of a stroke: drop the cases it placed (no tick has run since). */
+    /** Undo of a stroke: drop the cases it placed (no tick has run since; each began its own tree). */
     truncate(serial) {
         if (serial >= this.head) return;
+        while (this.nOpen > 0 && this.openS[this.nOpen - 1] >= serial) {
+            const t = this.openT[--this.nOpen];
+            this.tOpen[t] = 0; this.tFree.push(t);
+        }
+        this.intros -= this.head - Math.max(serial, this.base);
         this.head = Math.max(serial, this.base);
-        while (this.nOpen > 0 && this.openList[this.nOpen - 1] >= this.head) this.nOpen--;
     }
 
     /** Redo of a stroke: its cases come back, open as they were. */
     extend(serial) {
         for (let s = this.head; s < serial; s++) {
-            if (this.nOpen === this.openList.length) {
-                const grown = new Int32Array(this.openList.length * 2);
-                grown.set(this.openList);
-                this.openList = grown;
-            }
-            this.openList[this.nOpen++] = s;
+            const k = s & this.mask, t = this.tid[k], f = this.tFree.lastIndexOf(t);
+            if (f >= 0) this.tFree.splice(f, 1);
+            this.tOpen[t] = 1; this.tSize[t] = 1;
+            if (this.nOpen === this.openS.length) { this.openS = grow(this.openS, Int32Array); this.openC = grow(this.openC, Int32Array); this.openT = grow(this.openT, Int32Array); }
+            this.openS[this.nOpen] = s; this.openC[this.nOpen] = this.cell[k]; this.openT[this.nOpen] = t; this.nOpen++;
         }
-        if (serial > this.head) this.head = serial;
+        if (serial > this.head) { this.intros += serial - this.head; this.head = serial; }
     }
 
     /**
-     * After the tick's swap: write the tick's events into `evt`, close the
-     * cases that ended, and drop events older than the window.
+     * After the tick's swap: write the tick's events into the cells, close the
+     * cases that ended (and the trees they ended), and drop events older than
+     * the window.
      */
     settle(grid, tick, tC, tF) {
         const m = this.mask, evt = this.evt;
-        for (let s = this.mark; s < this.head; s++) evt[this.cell[s & m]] = s;
+        for (let s = this.mark; s < this.head; s++) {
+            const k = s & m, c = this.cell[k];
+            evt[c] = s; this.tree[c] = this.tid[k]; this.gen[c] = this.depth[k];
+        }
         this.mark = this.head;
         this.now = tick;
         const comp = grid.compartment, flags = grid.flags;
@@ -177,21 +209,24 @@ export class Descent {
         if (this.dayTag[b] !== tick) { this.dayTag[b] = tick; this.dayN[b] = 0; this.dayKids[b] = 0; }
         let n = 0;
         for (let j = 0; j < this.nOpen; j++) {
-            const s = this.openList[j];
-            if (s < this.base) continue;
-            const k = s & m, c = this.cell[k];
-            if (evt[c] === s && openState(comp[c], flags[c], tC, tF)) { this.openList[n++] = s; continue; }
-            this.closed[k] = 1;
-            this.dayN[b]++;
-            this.dayKids[b] += this.kids[k];
-            const root = this.root[k];
-            if (root >= this.base) {
-                const rk = root & m;
-                if (--this.open[rk] === 0) {
-                    const t = this.trees++ & (TREE_RING - 1);
-                    this.treeSize[t] = this.size[rk];
-                    this.treeTick[t] = tick;
-                }
+            const s = this.openS[j], c = this.openC[j], t = this.openT[j];
+            if (evt[c] === s && openState(comp[c], flags[c], tC, tF)) {
+                this.openS[n] = s; this.openC[n] = c; this.openT[n] = t; n++;
+                continue;
+            }
+            // a case open longer than the window closes uncounted: its children are gone with it
+            if (s >= this.base) {
+                const k = s & m;
+                this.closed[k] = 1;
+                this.dayN[b]++;
+                this.dayKids[b] += this.kids[k];
+            }
+            if (--this.tOpen[t] === 0) {
+                const r = this.trees++ & (TREE_RING - 1);
+                this.treeSize[r] = this.tSize[t];
+                this.treeTick[r] = tick;
+                this.treeSrc[r] = this.tSrc[t];
+                this.tFree.push(t);
             }
         }
         this.nOpen = n;
@@ -212,14 +247,36 @@ export class Descent {
 
     /** Open cases, the trees they belong to, and the newest generation among them. */
     summary() {
-        const roots = new Set();
+        const trees = new Set();
         let generation = 0;
         for (let j = 0; j < this.nOpen; j++) {
-            const k = this.openList[j] & this.mask;
-            roots.add(this.root[k]);
-            if (this.depth[k] > generation) generation = this.depth[k];
+            trees.add(this.openT[j]);
+            const g = this.gen[this.openC[j]];
+            if (g > generation) generation = g;
         }
-        return { open: this.nOpen, trees: roots.size, generation, events: this.head - this.base };
+        return { open: this.nOpen, trees: trees.size, generation, events: this.head - this.base };
+    }
+
+    /** The size so far of the largest tree with a case still open, of those rooted at source `src` if given (0 for none). */
+    growing(src) {
+        let best = 0;
+        for (let j = 0; j < this.nOpen; j++) {
+            const t = this.openT[j];
+            if (src !== undefined && this.tSrc[t] !== src) continue;
+            if (this.tSize[t] > best) best = this.tSize[t];
+        }
+        return best;
+    }
+
+    /** The most cases open at once in one tree, of those rooted at source `src` if given: a clone's living cells. */
+    largestNow(src) {
+        let best = 0;
+        for (let j = 0; j < this.nOpen; j++) {
+            const t = this.openT[j];
+            if (src !== undefined && this.tSrc[t] !== src) continue;
+            if (this.tOpen[t] > best) best = this.tOpen[t];
+        }
+        return best;
     }
 
     /** Fill `desc` (by slot) with every kept event's descendants still in the window. */
@@ -243,9 +300,9 @@ export class Descent {
 // at most 255), fade (6: 1 − (age / WINDOW)², in 63rds), ink (2: 0 graphite,
 // 1 the disease for a case still incubating or infectious, 2 the zombie's for
 // a live Z). The root mark's high 16 bits are its kind (1 placed by hand, 2
-// spillover). Where several events cross one edge, the most prominent
+// spillover, 3 a transformation). Where several events cross one edge, the most prominent
 // (weight × fade) is drawn.
-export const ROOT_INTRO = 1, ROOT_ANIMAL = 2;
+export const ROOT_INTRO = 1, ROOT_ANIMAL = 2, ROOT_TRANSFORM = 3;
 
 // weight by descendants (below WEIGHT_TABLE) and fade by age, tabulated
 const WEIGHT_TABLE = 4096;
@@ -288,7 +345,8 @@ export function packDescent(d, grid, back, out) {
             if (p > (cur & 255) * ((cur >> 8) & 63)) out[o] = ((out[o] & ~(0xFFFF << sh)) | (v << sh)) >>> 0;
         } else {
             const o = t * 4 + 3, cur = out[o] & 0xFFFF;
-            if (p > (cur & 255) * ((cur >> 8) & 63)) out[o] = (v | ((src === SRC_ANIMAL ? ROOT_ANIMAL : ROOT_INTRO) << 16)) >>> 0;
+            const kind = src === SRC_ANIMAL ? ROOT_ANIMAL : src === SRC_TRANSFORM ? ROOT_TRANSFORM : ROOT_INTRO;
+            if (p > (cur & 255) * ((cur >> 8) & 63)) out[o] = (v | (kind << 16)) >>> 0;
         }
     }
     return out;
