@@ -2,7 +2,7 @@
 name: Miasma
 title: Miasma — Spatial Epidemic Simulator
 description: Run six spatial epidemic experiments, from the outbreak threshold and herd immunity to antigenic drift and spillover, on four glued hex-grid surfaces drawn as an epidemiological atlas, and paint your own interventions.
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # Miasma

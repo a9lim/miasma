@@ -14,8 +14,9 @@
 //   M  small ring           Z  cross-hatch (sap) EMPTY  the paper
 //   latent E: a dot in the red; carrier R: a red dot in the stipple;
 //   F-corpse: a red cross; H: a plus; Q: a cordon (hex outline).
-// Strain view hatches each carrier at its strain's angle and ink
-// (strain-style.js). Age, health and immunity are single-ink ramps.
+// Strain view hatches each carrier at the angle and ink of every strain it
+// holds (strain-style.js), each strain's lines as heavy as its load. Age,
+// health and immunity are single-ink ramps.
 // The oncoviral preset turns the tile into an H&E-stained section (histology.js).
 //
 // This is the Canvas 2D renderer: the fallback when WebGPU is unavailable
@@ -221,7 +222,7 @@ export function hexPath(p, x, y, rr) {
 
 // Hatch lines at `angle` (degrees) across the box (x0, y0)–(x1, y1), spaced
 // `gap` and anchored at the origin, so every group shares one phase.
-function hatchBox(c, angle, gap, x0, y0, x1, y1) {
+function hatchBox(c, angle, gap, x0, y0, x1, y1, phase = 0) {
     const a = angle * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a), nx = -uy, ny = ux;
     let smin = Infinity, smax = -Infinity, tmin = Infinity, tmax = -Infinity;
     for (const x of [x0, x1]) for (const y of [y0, y1]) {
@@ -230,7 +231,7 @@ function hatchBox(c, angle, gap, x0, y0, x1, y1) {
         if (t < tmin) tmin = t; if (t > tmax) tmax = t;
     }
     c.beginPath();
-    for (let s = Math.ceil(smin / gap) * gap; s <= smax; s += gap) {
+    for (let s = (Math.ceil(smin / gap - phase) + phase) * gap; s <= smax; s += gap) {
         c.moveTo(nx * s + ux * tmin, ny * s + uy * tmin);
         c.lineTo(nx * s + ux * tmax, ny * s + uy * tmax);
     }
@@ -245,8 +246,8 @@ function fillCells(c, cells, fill, rr) {
 
 // Hatching at each of `angles` (degrees) through the cells, a batch at a time:
 // each batch clips to its cells and hatches its own bounds, on lines anchored
-// at the origin, so the batches share one phase.
-function hatchCells(c, cells, rr, angles, gap, color, lw) {
+// at the origin (offset by `phase` of the gap), so the batches share one phase.
+function hatchCells(c, cells, rr, angles, gap, color, lw, phase = 0) {
     c.strokeStyle = color; c.lineWidth = lw;
     for (let s = 0; s < cells.length; s += BATCH) {
         const e = Math.min(cells.length, s + BATCH);
@@ -259,7 +260,7 @@ function hatchCells(c, cells, rr, angles, gap, color, lw) {
             if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
         }
         c.clip();
-        for (const a of angles) hatchBox(c, a, gap, x0 - rr, y0 - rr, x1 + rr, y1 + rr);
+        for (const a of angles) hatchBox(c, a, gap, x0 - rr, y0 - rr, x1 + rr, y1 + rr, phase);
         c.restore();
     }
 }
@@ -292,10 +293,11 @@ function drawAtlas(c, grid, T, rc, t, opts) {
     const comp = grid.compartment, flags = grid.flags, status = grid.status, rr = rc * 1.005;
     const human = opts.animalDisplay !== 'only';
     const S = [], E = [], I = [], R = [], D = [], Dc = [], V = [], M = [], Z = [], lat = [], car = [], H = [], Q = [];
-    // Strain view: carriers grouped by their dominant strain's mark, binned to
-    // ANGLE_CODES hatch angles × 32 hues (strain-style.js).
+    // Strain view: every strain a carrier holds (strainMarks), binned to
+    // ANGLE_CODES hatch angles × 32 hues (strain-style.js) × line weight ×
+    // interleave phase, so a cell sits in one bin per strain.
     const strains = mode === ViewMode.STRAIN && opts.strains ? new Map() : null;
-    const reg = opts.strains;
+    const reg = opts.strains, marks = _marks;
     const ramp = mode === ViewMode.AGE || mode === ViewMode.HEALTH || mode === ViewMode.IMMUNITY ? [] : null;
     for (let k = 0; k < act.length; k++) {
         const i = act[k], x = comp[i];
@@ -303,12 +305,19 @@ function drawAtlas(c, grid, T, rc, t, opts) {
         if (status[i] === Status.H) H.push(i); else if (status[i] === Status.Q) Q.push(i);
         if (ramp && x !== Compartment.D) { ramp.push(i); continue; }
         if (strains && (x === Compartment.E || x === Compartment.I || x === Compartment.Z)) {
-            const sid = dominantStrain(grid, i);
-            if (sid !== 0xFFFF && sid < reg.ag_x.length) {
-                const key = angleCode(reg.ag_x[sid]) * 32 + (hueByte(reg.ag_y[sid]) >> 3);
-                let g = strains.get(key);
-                if (!g) strains.set(key, g = []);
-                g.push(i);
+            const n = strainMarks(grid, i, reg, marks);
+            if (n > 0) {
+                for (let m = 0; m < n; m++) {
+                    // key: angle · hue/8 · load level · phase. Strains that share an
+                    // angle interleave, each `before` / `same` of the gap along
+                    // (the heaviest at 0), instead of overprinting.
+                    let same = 0, before = 0;
+                    for (let j = 0; j < n; j++) if (marks.a[j] === marks.a[m]) { same++; if (j < m) before++; }
+                    const key = (((marks.a[m] * 32 + (marks.h[m] >> 3)) * 16 + loadLevel(marks.l[m])) * 4 + before) * 5 + same;
+                    let g = strains.get(key);
+                    if (!g) strains.set(key, g = []);
+                    g.push(i);
+                }
                 continue;
             }
         }
@@ -351,10 +360,17 @@ function drawAtlas(c, grid, T, rc, t, opts) {
             hatchCells(c, Z, rr, [45, -45], Math.max(2.4, rc * 0.8), t.zombie, Math.max(0.7, rc * 0.18));
         }
         if (strains) {
-            for (const [key, cells] of strains) {
-                const angle = ((key >> 5) / ANGLE_CODES) * 180, ink = hueColor((key & 31) * 8 + 4);
-                fillCells(c, cells, t.rgba(ink, 0.14), rr);
-                hatchCells(c, cells, rr, [angle], Math.max(2.4, rc * 0.78), ink, Math.max(0.8, rc * 0.24));
+            // lightest first, so where a host's strains cross the heaviest lies on top;
+            // a strain's tint and line width are its load's share of a whole carrier's
+            const bins = [...strains].map(([key, cells]) => {
+                const same = key % 5, before = ((key / 5) | 0) % 4, rest = (key / 20) | 0;
+                const q = rest % 16, mark = (rest / 16) | 0;
+                return { cells, q, phase: before / same, angle: ((mark >> 5) / ANGLE_CODES) * 180, ink: hueColor((mark & 31) * 8 + 4) };
+            }).sort((a, b) => a.q - b.q);
+            for (const b of bins) {
+                const l = b.q / LOAD_LEVELS;
+                fillCells(c, b.cells, t.rgba(b.ink, 0.14 * l), rr);
+                hatchCells(c, b.cells, rr, [b.angle], Math.max(2.4, rc * 0.78), b.ink, Math.max(0.8, rc * 0.24) * l, b.phase);
             }
         }
         if (M.length) {
@@ -397,32 +413,44 @@ function crosses(c, cells, rc, color, lw) {
     c.lineCap = 'butt';
 }
 
+/** Load quantized to the 15 line weights both renderers draw (1..15; 15 is a whole load). */
+export const LOAD_LEVELS = 15;
+export const loadLevel = (l) => Math.max(1, Math.min(LOAD_LEVELS, Math.round(l * LOAD_LEVELS)));
+
 /**
- * The GPU texel's mark of a cell's dominant active strain: (angle code + 1)
- * | hue byte << 8, or -1 when it carries none.
+ * The strains a carrier holds, as the Strain view draws them, heaviest first:
+ * each slot with load gives its hatch angle code (out.a), hue byte (out.h)
+ * and load (out.l), and two strains that share both codes are merged, since
+ * their lines would coincide. `out` holds four of each; returns how many.
  */
-export function strainMarkOf(grid, i, reg) {
-    const id = dominantStrain(grid, i);
-    if (id === 0xFFFF || !reg || id >= reg.ag_x.length) return -1;
-    return (angleCode(reg.ag_x[id]) + 1) | (hueByte(reg.ag_y[id]) << 8);
+export function strainMarks(grid, i, reg, out) {
+    const base = i * DEFAULTS.maxActiveStrains, A = out.a, Hb = out.h, L = out.l;
+    let n = 0;
+    if (!reg) return 0;
+    for (let s = 0; s < DEFAULTS.maxActiveStrains; s++) {
+        const id = grid.strain_ids[base + s], l = grid.strain_loads[base + s];
+        if (id === 0xFFFF || !(l > 0) || id >= reg.ag_x.length) continue;
+        const a = angleCode(reg.ag_x[id]), h = hueByte(reg.ag_y[id]);
+        let k = 0;
+        while (k < n && (A[k] !== a || Hb[k] !== h)) k++;
+        if (k < n) { L[k] += l; continue; }
+        A[n] = a; Hb[n] = h; L[n] = l; n++;
+    }
+    for (let k = 1; k < n; k++) {
+        const a = A[k], h = Hb[k], l = L[k];
+        let j = k - 1;
+        for (; j >= 0 && L[j] < l; j--) { A[j + 1] = A[j]; Hb[j + 1] = Hb[j]; L[j + 1] = L[j]; }
+        A[j + 1] = a; Hb[j + 1] = h; L[j + 1] = l;
+    }
+    return n;
 }
+
+const _marks = { a: new Uint8Array(4), h: new Uint8Array(4), l: new Float32Array(4) };
 
 /** The ink of a paint brush's footprint. */
 export function paintInk(mode, t) {
     const name = PAINT_INK[mode] || 'text';
     return name === 'accent' ? t.accent : name === 'text' ? t.text : t.inks[name];
-}
-
-function dominantStrain(grid, i) {
-    const base = i * DEFAULTS.maxActiveStrains;
-    let best = 0xFFFF, load = 0;
-    for (let s = 0; s < DEFAULTS.maxActiveStrains; s++) {
-        const id = grid.strain_ids[base + s];
-        if (id === 0xFFFF) continue;
-        const l = grid.strain_loads[base + s];
-        if (l > load) { load = l; best = id; }
-    }
-    return best;
 }
 
 // Single-ink ramps, quantized to eight steps so each step is one batched fill.

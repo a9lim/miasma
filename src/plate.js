@@ -15,7 +15,7 @@
 
 import { SQRT3, ViewMode } from './config.js';
 import { hexBounds, edgeGluings, cornerCones, SURFACES, wrap } from './topology.js';
-import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, strainMarkOf, paintInk, _tile } from './render.js';
+import { plateTheme, renderTile, axialToPx, pxToAxial, roundAxial, hexPath, paintInk, _tile } from './render.js';
 import { createGpuPlate } from './gpu-plate.js';
 import { wheelParams } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
@@ -148,7 +148,7 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
     function drawGpu(s, t, G, S, dpr) {
         const { cq, cr } = hexBounds(s.grid.W, s.grid.H), o = s.tileOpts;
         if (tileDirty) {
-            gpu.uploadState(s.grid, s.mode, o, strainMarkOf);
+            gpu.uploadState(s.grid, s.mode, o);
             if (s.field && s.field.padded) gpu.uploadField(s.field.padded, s.field.side);
             tileDirty = false;
         }
@@ -347,6 +347,20 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
                     const a = an * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a);
                     ctx.beginPath();
                     for (let s = -9; s <= 9; s += 3) { ctx.moveTo(x - uy * s - ux * 10, y + ux * s - uy * 10); ctx.lineTo(x - uy * s + ux * 10, y + ux * s + uy * 10); }
+                    ctx.stroke();
+                }
+                break;
+            }
+            case 'H2': {
+                // two strains in one host: the lighter load drawn thinner, first;
+                // at one angle they interleave, as on the plate
+                clipHex(); ctx.clip();
+                const [a, b] = row.marks, same = Math.abs(a.angle - b.angle) < 1e-6;
+                for (const [m, lw, off] of [[b, 0.5, same ? 1.5 : 0], [a, 1, 0]]) {
+                    const r = m.angle * Math.PI / 180, ux = Math.cos(r), uy = Math.sin(r);
+                    ctx.strokeStyle = m.ink; ctx.lineWidth = lw;
+                    ctx.beginPath();
+                    for (let s = -9 + off; s <= 9; s += 3) { ctx.moveTo(x - uy * s - ux * 10, y + ux * s - uy * 10); ctx.lineTo(x - uy * s + ux * 10, y + ux * s + uy * 10); }
                     ctx.stroke();
                 }
                 break;

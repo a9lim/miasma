@@ -27,7 +27,7 @@ overflow and frame rate.
 
 ```bash
 node src/topology.test.mjs        # 2510 checks: gluing, χ, orientability, cone points
-node src/immunity.test.mjs        # 69 checks: antigenic torus, memory, σ, within-host selection, reclamation, the coinfected host as a mixture
+node src/immunity.test.mjs        # 72 checks: antigenic torus, memory, σ, within-host selection, reclamation, the coinfected host as a mixture and as drawn
 ```
 
 Run the first after touching `topology.js` and the second after touching immunity,
@@ -330,8 +330,9 @@ that keeps one strain credits it in proportion to load × the rate behind the ou
 F-corpse keeps a strain by μ × its health factor, a carrier by γ × `c_seed`, a new Z by
 `dz_alive`, and an animal infected by reverse spillover by load alone. The pick reuses
 the uniform that rolled the outcome (u / p), so a mixed cell draws no more often than a
-single-strain one. Transmission and the prevalence census already weight by load, so no
-read of an I cell depends on the slot a strain sits in.
+single-strain one. Transmission and the prevalence census already weight by load, and the
+strain view draws every strain by load (Rendering: the plate), so no read of an I cell
+depends on the slot a strain sits in.
 
 A cell whose one strain sits at slot 0 takes the slot-0 resolvers unchanged, and
 `hostMean` returns a value its strains share exactly, so a run whose strains share one
@@ -407,8 +408,14 @@ atlas"). The disease is the one red: infectious cells solid, exposed pale. Recov
 cells are stipple, vaccinated hatching (prussian), deaths small crosses (red for an
 F-corpse), susceptible cells graphite dots, maternal-immune newborns small rings, Z
 cross-hatching (sap); a latent E carries a dark dot, a carrier R a red one; H is a
-plus and Q a cordon (hex outline, indigo). The strain view hatches each carrier with its
-dominant strain's mark, which is its antigen drawn directly (`strain-style.js`): `ag_x`
+plus and Q a cordon (hex outline, indigo). The strain view hatches each carrier with the
+mark of every strain it holds (`render.js` `strainMarks`), each strain's tint and line
+width its load's share of a whole carrier's, the lightest drawn first; under a device
+pixel a line's width turns to opacity, two strains with the same mark merge, and two at
+one angle interleave rather than overprint. A coinfected cell therefore carries no more
+ink than a single-strain one, and since neighbours mostly carry one lineage, coinfected
+cells draw the seams where lineages meet; the caption counts them and the cartouche
+gains a row while there are any. A strain's mark is its antigen drawn directly (`strain-style.js`): `ag_x`
 turns the hatching through 180° and `ag_y` walks the hue once around an OKLCH wheel, so
 antigenically close strains look alike, drift reads as a turning hatch and a drifting
 colour, and a jump as a new colour. The wheel is fitted like the inks (light L 0.525
@@ -467,9 +474,13 @@ fade, and labels are collision-checked against each other and the furniture). Wi
 (or with `?canvas2d`), `render.js` draws the same marks into an offscreen tile once per
 change and `plate.js` blits it, and its copies through `destination-in` fading. The
 GPU state texel is `x` compartment, `y` flags | status << 4, `z` animal | (hatch angle
-code + 1) << 3 (31 angles), `w` the ramp value or, in the strain view, the hue byte; the
-shader computes the same OKLCH wheel from `wheelParams()` (uniforms 21–22). The Canvas
-path bins marks to 31 angles × 32 hues and hatches each bin within its bounds. Chrome
+code + 1) << 3 (31 angles), `w` the ramp value or, in the strain view, the hue byte (both
+the heaviest strain's). In the strain view a second, `rgba16uint` texture carries every
+strain, one channel each, heaviest first: angle code + 1, the hue byte's top seven bits
+<< 5, and the load in 15 levels (`loadLevel`) << 12. The shader computes the same OKLCH
+wheel from `wheelParams()` (uniforms 21–22). The Canvas path bins marks to 31 angles ×
+32 hues × 15 line weights × interleave phase, a cell sitting in one bin per strain, and
+hatches each bin within its bounds, the lightest first. Chrome
 builds a canvas path in time quadratic in its length (10,000 hexes in one path take
 0.2 s, 100,000 take 20 s), so the tile draws long runs of marks `BATCH` (400) to a path
 (`render.js` `batched`), hatches a group of cells a batch at a time (each batch clipped
@@ -648,7 +659,8 @@ four sizes (0.6, 1.0, 1.1 and 1.8 s throttled; the default's opening warms up 30
 the others' here 200); before, the first Canvas frame alone took 4 s at R 119 and 19 s
 at R 179 (the quadratic path build). What is left on the main thread at large sizes: the tick's three full passes
 and its copy-in of the double-buffered fields, packing and uploading the state texture
-(W·H·4 bytes a tick), and `record`.
+(W·H·4 bytes a tick, and in the strain view the strain texture's W·H·8 more; the strain
+view held 60 fps at 96,661 cells in drift, unthrottled, on 2026-10-27), and `record`.
 
 ## Presets
 

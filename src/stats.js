@@ -36,7 +36,7 @@ const _animalCounts = new Uint32Array(5);
 const _statsOut = {
     S: 0, E: 0, I: 0, R: 0, D: 0, V: 0, M: 0, Z: 0, empty: 0,
     total: 0, statusH: 0, statusQ: 0,
-    latentE: 0, carrierR: 0, fCorpseD: 0,
+    latentE: 0, carrierR: 0, fCorpseD: 0, coinfected: 0,
     meanAge: 0, meanHealth: 1,
     animalS: 0, animalI: 0, animalR: 0, animalD: 0,
     animalTotal: 0, animalMeanAge: 0,
@@ -85,6 +85,8 @@ export function computeStats(grid) {
     let latentE = 0;         // E cells carrying the LATENT flag
     let carrierR = 0;        // R cells carrying the CARRIER flag
     let fCorpseD = 0;        // D cells carrying the F_CORPSE flag
+    let coinfected = 0;      // I cells holding two strains or more
+    const sIds = grid.strain_ids, sLoads = grid.strain_loads;
 
     for (let k = 0; k < activeCount; k++) {
         const i = active ? active[k] : k;
@@ -124,6 +126,12 @@ export function computeStats(grid) {
             }
         }
 
+        if (cBucket === Compartment.I && sIds) {
+            let held = 0;
+            for (let s = 0; s < 4; s++) if (sIds[i * 4 + s] !== 0xFFFF && sLoads[i * 4 + s] > 0) held++;
+            if (held > 1) coinfected++;
+        }
+
         // Age: any non-EMPTY cell contributes.
         if (cBucket !== Compartment.EMPTY) {
             if (age !== undefined) {
@@ -161,6 +169,7 @@ export function computeStats(grid) {
     _statsOut.latentE = latentE;
     _statsOut.carrierR = carrierR;
     _statsOut.fCorpseD = fCorpseD;
+    _statsOut.coinfected = coinfected;
     _statsOut.meanAge = meanAge;
     _statsOut.meanHealth = meanHealth;
     _statsOut.animalS = animalCounts[Animal.S];

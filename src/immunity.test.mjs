@@ -1,4 +1,5 @@
-// immunity.test.mjs — antigenic distance, memory, within-host selection, reclamation.
+// immunity.test.mjs — antigenic distance, memory, within-host selection, reclamation,
+// and a coinfected host as a mixture (in the tick) and as drawn (the Strain view).
 // node src/immunity.test.mjs
 
 globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
@@ -305,6 +306,23 @@ function world() {
         check('a strain past slot 0 sets the rates', grid.compartment[i] === Compartment.R);
         check('and spills over into an animal', grid.animal[j] === Animal.I && grid.animal_strain[j] === b, [grid.animal[j], grid.animal_strain[j]]);
     }
+}
+{
+    // The Strain view draws every strain a carrier holds (render.js strainMarks).
+    const { strainMarks, loadLevel, LOAD_LEVELS } = await import('./render.js');
+    const grid = new Grid(8, 8);
+    const reg = createRegistry(DEFAULT_PARAMS);
+    const far = registerStrain(reg, DEFAULT_PARAMS, 0, 0, null, 4, 2);
+    const twin = registerStrain(reg, DEFAULT_PARAMS, 0, 0, null, 0, 0);   // α's antigen, another id
+    const set = (ids, loads) => { for (let s = 0; s < 4; s++) { grid.strain_ids[s] = ids[s]; grid.strain_loads[s] = loads[s]; } };
+    const out = { a: new Uint8Array(4), h: new Uint8Array(4), l: new Float32Array(4) };
+    set([0, far, EMPTY_STRAIN, EMPTY_STRAIN], [0.3, 0.7, 0, 0]);
+    let n = strainMarks(grid, 0, reg, out);
+    check('marks every strain, heaviest first', n === 2 && near(out.l[0], 0.7, 1e-6) && near(out.l[1], 0.3, 1e-6) && out.a[0] !== out.a[1], [n, ...out.l]);
+    set([0, twin, far, 1], [0.25, 0.25, 0.5, 0]);
+    n = strainMarks(grid, 0, reg, out);
+    check('strains with one mark merge; a slot without load is skipped', n === 2 && near(out.l[0], 0.5, 1e-6) && near(out.l[1], 0.5, 1e-6), [n, ...out.l]);
+    check('a whole load is the heaviest line, a trace the lightest', loadLevel(1) === LOAD_LEVELS && loadLevel(0.001) === 1);
 }
 
 console.log(`immunity.test: ${pass} passed, ${fail} failed`);

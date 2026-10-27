@@ -88,7 +88,8 @@ export function plateCaption(sim, s, reff, strains, paint, histology, narrow, ct
         body += measure ? ' ' + measure : ' The same lattice read at the scale of cells, stained with haematoxylin and eosin; the scale bar is in micrometres.';
         return body;
     } else if (sim.viewMode === ViewMode.STRAIN) {
-        body = `${day} ${fmt(s.E + s.I + s.Z)} carriers, each hatched at the angle of its dominant strain.${re}`;
+        const co = s.coinfected ? `, ${fmt(s.coinfected)} coinfected` : '';
+        body = `${day} ${fmt(s.E + s.I + s.Z)} carriers${co}, hatched by strain and load.${re}`;
     } else if (sim.viewMode === ViewMode.AGE) {
         body = `${day} Age of every living cell, from pale (newborn) to dark (the oldest alive).`;
     } else if (sim.viewMode === ViewMode.HEALTH) {
@@ -132,6 +133,11 @@ export function plateLegend(sim, s, toggles, histology, topStrains, reg) {
                 rows.push({ kind: 'H#', ink: st.ink, angle: st.angle, label: `Strain ${p.name}, ${p.fraction < 0.01 ? '<1' : Math.round(p.fraction * 100)}%` });
             }
             if (!rows.length) rows.push({ kind: 'S', label: 'No carriers' });
+            else if (s.coinfected && topStrains.length > 1) {
+                // a host's strains overlay, each as heavy as its load
+                const a = strainStyle(reg, topStrains[0].id), b = strainStyle(reg, topStrains[1].id);
+                rows.push({ kind: 'H2', marks: [a, b], label: 'Coinfected, by load' });
+            }
             if (s.V) rows.push({ kind: 'V', label: 'Vaccinated' });   // its hatching is drawn in this view too
             break;
         }

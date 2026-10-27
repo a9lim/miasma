@@ -17,15 +17,21 @@
 // The encodings match render.js, the Canvas fallback, mark for mark.
 //
 // State texel: x compartment · y flags | status<<4 · z animal | (hatch angle code+1)<<3
-// · w ramp value (age, health or immunity, 0–255), or the strain view's hue byte.
+// · w ramp value (age, health or immunity, 0–255), or the strain view's hue byte;
+// in the strain view the angle and hue are the heaviest strain's. Strain texel
+// (rgba16uint, written only in the strain view): one channel per strain the cell
+// holds, heaviest first (render.js strainMarks), each (angle code+1) | hue byte>>1
+// << 5 | load level (1–15) << 12, 0 for none.
 
 import { memoryOf, susceptibility } from './immunity.js';
 import { FADE_DAYS, FADE_FLOOR, CLIFF_SPAN } from './isochrones.js';
+import { strainMarks, loadLevel } from './render.js';
 
 const SHADER = /* wgsl */`
 @group(0) @binding(0) var<uniform> u: array<vec4f, 48>;
 @group(0) @binding(1) var stateTex: texture_2d<u32>;
 @group(0) @binding(2) var fieldTex: texture_2d<f32>;
+@group(0) @binding(3) var strainTex: texture_2d<u32>;
 
 const SQ3: f32 = 1.7320508;
 
@@ -53,9 +59,11 @@ fn hash(n: u32) -> f32 {
 // coverage of a band of half-width hw (css px) at distance d (css px)
 fn cover(d: f32, hw: f32, dpr: f32) -> f32 { return clamp((hw - d) * dpr + 0.5, 0.0, 1.0); }
 fn over(c: vec3f, ink: vec3f, a: f32) -> vec3f { return mix(c, ink, clamp(a, 0.0, 1.0)); }
-fn hatchD(wp: vec2f, ang: f32, gap: f32) -> f32 {
+fn hatchD(wp: vec2f, ang: f32, gap: f32) -> f32 { return hatchP(wp, ang, gap, 0.0); }
+// distance to hatching whose lines sit ph of the gap off the origin's
+fn hatchP(wp: vec2f, ang: f32, gap: f32, ph: f32) -> f32 {
   let n = vec2f(-sin(ang), cos(ang));
-  let t = dot(wp, n) / gap;
+  let t = dot(wp, n) / gap - ph;
   return abs(fract(t + 0.5) - 0.5) * gap;
 }
 fn fieldAt(o: vec2i) -> f32 { return textureLoad(fieldTex, o, 0).x; }
@@ -158,10 +166,32 @@ fn wheel(hb: f32) -> vec3f {
         let bin = floor(min(ramp, 0.999) * 8.0);
         c = over(c, u[15].xyz, (0.08 + 0.1 * bin) * fillM);
       } else if (carrierHatch) {
-        let ink = wheel(f32(s.w));
-        let ang = f32(slot) / 31.0 * 3.1415927;
-        c = over(c, ink, 0.14 * fillM);
-        c = over(c, ink, fillM * cover(hatchD(wp, ang, max(2.4, rc * 0.78)), max(0.4, rc * 0.12), dpr));
+        // Every strain the cell holds, lightest first so the heaviest lies on
+        // top where they cross. A strain's tint and line width are its load's
+        // share of a whole carrier's; under a device pixel the width turns to
+        // opacity. Strains that share an angle interleave (render.js).
+        let sv = textureLoad(strainTex, vec2i(i32(st.x + cell.x), i32(st.y + cell.y)), 0);
+        var mk = array<u32, 4>(sv.x, sv.y, sv.z, sv.w);
+        let gap = max(2.4, rc * 0.78); let hw = max(0.4, rc * 0.12);
+        for (var k = 3; k >= 0; k--) {
+          let v = mk[k];
+          if (v == 0u) { continue; }
+          let code = v & 31u;
+          var same = 0.0; var before = 0.0;
+          for (var j = 0; j < 4; j++) {
+            if (mk[j] != 0u && (mk[j] & 31u) == code) { same += 1.0; if (j < k) { before += 1.0; } }
+          }
+          let ld = f32(v >> 12u) / 15.0;
+          let hb = select(f32(((v >> 5u) & 127u) * 2u + 1u), f32(s.w), k == 0);
+          let ink = wheel(hb);
+          let ang = f32(code - 1u) / 31.0 * 3.1415927;
+          let d = hatchP(wp, ang, gap, before / same);
+          let h2 = hw * ld;
+          let wide = ld >= 1.0 || 2.0 * h2 * dpr >= 1.0;   // a whole load draws as it always has
+          let cov = select(2.0 * h2 * dpr * cover(d, 0.5 / dpr, dpr), cover(d, h2, dpr), wide);
+          c = over(c, ink, 0.14 * ld * fillM);
+          c = over(c, ink, fillM * cov);
+        }
       } else if (comp == 0) {
         let r = max(0.5, rc * 0.18);
         let al = select(u[20].z, 0.3, quiet);
@@ -296,8 +326,9 @@ export async function createGpuPlate(canvas) {
     });
     const ubuf = device.createBuffer({ size: 48 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const U = new Float32Array(48 * 4);
-    let stateTex = null, fieldTex = null, bind = null, lost = false;
-    let stateData = null, fieldData = null, fieldSide = 0;
+    let stateTex = null, fieldTex = null, strainTex = null, bind = null, lost = false;
+    let stateData = null, fieldData = null, strainData = null, fieldSide = 0;
+    const marks = { a: new Uint8Array(4), h: new Uint8Array(4), l: new Float32Array(4) };
     device.lost.then(() => { lost = true; });
 
     function ensureTextures(W, H, side) {
@@ -307,6 +338,9 @@ export async function createGpuPlate(canvas) {
             // cells outside the world stay EMPTY; uploadState rewrites only the world's
             stateData = new Uint8Array(W * H * 4);
             for (let i = 0; i < W * H; i++) stateData[i * 4] = 8;
+            if (strainTex) strainTex.destroy();
+            strainTex = device.createTexture({ size: [W, H], format: 'rgba16uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+            strainData = new Uint16Array(W * H * 4);
             bind = null;
         }
         if (!fieldTex || fieldSide !== side) {
@@ -323,19 +357,20 @@ export async function createGpuPlate(canvas) {
                 entries: [
                     { binding: 0, resource: { buffer: ubuf } },
                     { binding: 1, resource: stateTex.createView() },
-                    { binding: 2, resource: fieldTex.createView() }
+                    { binding: 2, resource: fieldTex.createView() },
+                    { binding: 3, resource: strainTex.createView() }
                 ]
             });
         }
     }
 
-    /** Pack the grid into the state texture. */
-    function uploadState(grid, mode, opts, markOf) {
+    /** Pack the grid into the state texture, and in the strain view the strain texture. */
+    function uploadState(grid, mode, opts) {
         let ageMax = opts.ageMax || 5000;
         const im = opts.immunity, mem = im ? memoryOf(grid) : null;
         const { W, H } = grid;
         ensureTextures(W, H, fieldSide || 3);
-        const d = stateData, comp = grid.compartment, flags = grid.flags, status = grid.status, an = grid.animal;
+        const d = stateData, sd = strainData, comp = grid.compartment, flags = grid.flags, status = grid.status, an = grid.animal;
         const act = grid.activeIndices;
         // age reads relative to the oldest living cell, so the ramp spans the population
         if (mode === 'age') { ageMax = 1; for (let k = 0; k < act.length; k++) { const i = act[k]; if (comp[i] !== 8 && comp[i] !== 4 && grid.age[i] > ageMax) ageMax = grid.age[i]; } }
@@ -346,8 +381,11 @@ export async function createGpuPlate(canvas) {
             d[o + 1] = (flags[i] & 15) | ((status[i] & 15) << 4);
             let z = an ? an[i] & 7 : 0, w = 0;
             if (strain) {
-                const mk = c === 1 || c === 2 || c === 7 ? markOf(grid, i, opts.strains) : -1;
-                if (mk >= 0) { z |= (mk & 31) << 3; w = mk >> 8; }
+                const n = c === 1 || c === 2 || c === 7 ? strainMarks(grid, i, opts.strains, marks) : 0;
+                if (n > 0) { z |= (marks.a[0] + 1) << 3; w = marks.h[0]; }
+                for (let m = 0; m < 4; m++) {
+                    sd[o + m] = m < n ? (marks.a[m] + 1) | ((marks.h[m] >> 1) << 5) | (loadLevel(marks.l[m]) << 12) : 0;
+                }
             } else if (age) w = Math.min(255, (grid.age[i] / ageMax) * 255) | 0;
             else if (health) w = Math.max(0, Math.min(255, grid.health[i] * 255)) | 0;
             else if (immunity) w = Math.round(255 * (1 - susceptibility(mem, i, im.ax, im.ay, im.cInf, im.cVax)));
@@ -355,6 +393,7 @@ export async function createGpuPlate(canvas) {
             d[o + 3] = w;
         }
         device.queue.writeTexture({ texture: stateTex }, d, { bytesPerRow: W * 4 }, [W, H]);
+        if (strain) device.queue.writeTexture({ texture: strainTex }, sd, { bytesPerRow: W * 8 }, [W, H]);
     }
 
     /** Upload the padded arrival field (side = 2R+3, -1 = none). */
