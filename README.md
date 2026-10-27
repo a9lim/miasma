@@ -53,8 +53,9 @@ paint.
   heavy as the infections descended through it, so a wave reads like a drainage map.
   The caption gives Re both by the ratio of infections to removals and by counting
   each closed case's children.
-- **The margin**: Nightingale's rose, observed Re and Re by count sit in the Counts
-  tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
+- **The margin**: Nightingale's rose, a space–time figure (infections along the
+  centre row, A to A′, against the last two years), observed Re and Re by count sit in
+  the Counts tab; the Strains tab has the antigenic map, a time-scaled phylogeny, the
   strains by prevalence, a vaccine-matching control and a per-strain genome editor.
 - **The model as a figure**: the Model tab draws the compartment diagram of the model
   the plate runs, with each compartment's count and each arrow's daily flux; choosing a

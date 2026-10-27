@@ -1,4 +1,4 @@
-// antigenic-map.js — the Strains tab's antigenic map (Fig. 3).
+// antigenic-map.js — the Strains tab's antigenic map (Fig. 4).
 //
 // Every strain the registry keeps sits at its antigenic position on the torus
 // of immunity.js, drawn as the fundamental square with its glued edges marked

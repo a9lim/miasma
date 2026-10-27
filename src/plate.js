@@ -12,12 +12,15 @@
 //   heavy rule, hachures  a shore: the edge is open and neighbors stop there
 //   small open circles    cone points, where the gluing curves the surface
 //   isochrone labels      the day the wave reached that line
+//   A, A′                 the ends of the centre row, the section Fig. 3 plots
+//   the trunk             in the Strain view, the route a lineage took: its
+//                         ancestors' birthplaces in order, a dot at each birth
 //   scale bar             the lattice's own scale (cells; µm on the slide)
 
 import { SQRT3, ViewMode } from './config.js';
 import { hexBounds, edgeGluings, cornerCones, SURFACES, wrap } from './topology.js';
 import { createGpuPlate } from './gpu-plate.js';
-import { wheelParams } from './strain-style.js';
+import { wheelParams, strainStyle } from './strain-style.js';
 import { ISO_LABEL, LABEL_FADE, LABEL_RUN, isoFade } from './isochrones.js';
 import { getPreset, plateNumeral } from './presets.js';
 
@@ -184,7 +187,9 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
         }
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         drawEdges(t, G, S);
+        if (s.trunk) drawTrunk(t, s, G, S);
         placed.length = 0;
+        drawSection(t, G, frame);
         const furniture = drawFurniture(t, s, G, frame).concat(s.avoid || []);
         if (S.closed) drawCones(t, G, cornerCones(s.topology, G.R), frame);
         if ((!s.histology || s.mode !== ViewMode.COMPARTMENT) && s.mode !== ViewMode.DESCENT) drawIsoLabels(t, s, G, frame, furniture);
@@ -211,6 +216,77 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
             wheel: wheelParams(),
             ghosts: S.closed ? edgeGluings(s.topology, G.R) : null
         });
+    }
+
+    // The centre row's ends, A at the west corner and A′ at the east: the
+    // section Fig. 3 plots against time. Below the corner, where a cone
+    // point's label (above it) leaves room.
+    function drawSection(t, G, frame) {
+        ctx.font = font(12, true); ctx.textBaseline = 'middle'; ctx.fillStyle = t.muted;
+        for (const [k, label, out] of [[3, 'A', -1], [0, 'A′', 1]]) {
+            const [x, y] = corner(G, k), w = ctx.measureText(label).width;
+            let dir = out;
+            if (dir > 0 && x + 9 + w > frame.x + frame.w - 4) dir = -1;
+            if (dir < 0 && x - 9 - w < frame.x + 4) dir = 1;
+            ctx.textAlign = dir > 0 ? 'left' : 'right';
+            ctx.fillText(label, x + dir * 7, y + 12);
+            placed.push(dir > 0 ? [x + 5, y + 4, x + 9 + w, y + 20] : [x - 9 - w, y + 4, x - 5, y + 20]);
+        }
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    }
+
+    // The trunk on the map (Strain view): a lineage's route through its
+    // ancestors' birthplaces (strains.js bornAt), oldest first. Each leg runs
+    // the short way round: straight, or, when the far end is nearer through a
+    // glued edge, as two segments, one to its image beyond that edge and one
+    // from the near end's image beyond the partner edge, so the leg crosses
+    // the gluing as the lineage did. A dot marks each birth; the strain's own
+    // is ringed in its mark.
+    function drawTrunk(t, s, G, S) {
+        const { reg, id } = s.trunk, W = s.grid.W, { cq, cr } = hexBounds(W, s.grid.H);
+        const births = [];
+        for (let k = id, guard = 0; k !== null && k !== undefined && guard < 65536; guard++) {
+            const c = reg.bornAt[k];
+            if (c >= 0 && c !== births[births.length - 1]) births.push(c);
+            k = reg.parent[k];
+        }
+        if (!births.length) return;
+        births.reverse();
+        const at = (c) => [c % W - cq, ((c / W) | 0) - cr];
+        const toPx = ([q, r]) => { const [x, y] = axialToPx(q, r, G.rc); return [G.cx + x, G.cy + y]; };
+        const far = ([q0, r0], [q1, r1]) => { const [x, y] = axialToPx(q1 - q0, r1 - r0, 1); return x * x + y * y; };
+        const map = (g, [q, r]) => [g.m[0] * q + g.m[1] * r + g.v[0], g.m[2] * q + g.m[3] * r + g.v[1]];
+        const unmap = (g, [q, r]) => {
+            const [a, b, c, d] = g.m, det = a * d - b * c, x = q - g.v[0], y = r - g.v[1];
+            return [(d * x - b * y) / det, (a * y - c * x) / det];
+        };
+        const glue = S.closed ? edgeGluings(s.topology, G.R) : null;
+        const seg = (p, q) => { const [x0, y0] = toPx(p), [x1, y1] = toPx(q); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); };
+        ctx.save();
+        ctx.strokeStyle = t.rgba(t.text, 0.72); ctx.lineWidth = 1.3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        for (let k = 1; k < births.length; k++) {
+            const a = at(births[k - 1]), b = at(births[k]);
+            let best = b, d = far(a, b), via = null;
+            if (glue) for (const g of glue) {
+                if (!g) continue;
+                const bi = map(g, b), di = far(a, bi);
+                if (di < d) { d = di; best = bi; via = g; }
+            }
+            seg(a, best);
+            if (via) seg(unmap(via, a), b);
+        }
+        ctx.stroke();
+        ctx.fillStyle = t.rgba(t.text, 0.78);
+        ctx.beginPath();
+        for (const c of births) { const [x, y] = toPx(at(c)); ctx.moveTo(x + 2, y); ctx.arc(x, y, 2, 0, Math.PI * 2); }
+        ctx.fill();
+        if (reg.bornAt[id] >= 0) {
+            const [x, y] = toPx(at(reg.bornAt[id]));
+            ctx.fillStyle = t.paper; ctx.strokeStyle = strainStyle(reg, id).ink; ctx.lineWidth = 1.6;
+            ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
     }
 
     function corner(G, k) {
@@ -424,6 +500,11 @@ export function createPlate(canvas, gpuCanvas, onGpu) {
                 ctx.beginPath(); ctx.strokeStyle = t.rgba(t.text, 0.42); ctx.lineWidth = 1; for (const o of [-6, -1, 4]) { ctx.moveTo(x + o, y); ctx.lineTo(x + o, y + 4.5); } ctx.stroke(); break;
             case 'cone': ctx.fillStyle = t.paper; ctx.strokeStyle = t.text; ctx.lineWidth = 1.2; ctx.arc(x, y, 3.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
             case 'ramp': for (let b = 0; b < 4; b++) { ctx.fillStyle = t.rgba(row.ink, 0.12 + 0.24 * b); ctx.fillRect(x - 9 + b * 4.5, y - 5, 4.5, 10); } break;
+            // the trunk on the map: legs between birthplaces, the strain's own ringed in its mark
+            case 'Tk': ctx.strokeStyle = t.rgba(t.text, 0.72); ctx.lineWidth = 1.3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                ctx.moveTo(x - 9, y + 3); ctx.lineTo(x - 3, y - 3); ctx.lineTo(x + 5, y + 1); ctx.stroke();
+                ctx.beginPath(); ctx.fillStyle = t.rgba(t.text, 0.78); for (const [a, b] of [[-9, 3], [-3, -3]]) { ctx.moveTo(x + a + 2, y + b); ctx.arc(x + a, y + b, 2, 0, Math.PI * 2); } ctx.fill();
+                ctx.beginPath(); ctx.fillStyle = t.paper; ctx.strokeStyle = row.ink; ctx.lineWidth = 1.6; ctx.arc(x + 5, y + 1, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); break;
             // Descent: a trunk splitting into lighter twigs; a stroke into a live case or a zombie;
             // the ring of a case placed by hand; spillover from the animal's mark
             case 'Dl': ctx.strokeStyle = t.muted; ctx.lineCap = 'round';

@@ -28,8 +28,8 @@ WebGPU on) and reports console errors, overflow and frame rate.
 
 ```bash
 node src/topology.test.mjs        # 2526 checks: gluing, χ, orientability, cone points, back directions
-node src/immunity.test.mjs        # 72 checks: antigenic torus, memory, σ, within-host selection, reclamation, the coinfected host as a mixture and as drawn
-node src/descent.test.mjs         # 101 checks: every infection's source, edge and parent against the tick, open and closed cases, subtree sizes, Re by count, the ring, undo, the view's texel
+node src/immunity.test.mjs        # 75 checks: antigenic torus, memory, σ, within-host selection, reclamation, birthplaces, the coinfected host as a mixture and as drawn
+node src/descent.test.mjs         # 106 checks: every infection's source, edge and parent against the tick, open and closed cases, subtree sizes, Re by count, the ring, undo, the view's texel, Fig. 3's record
 ```
 
 Run the first after touching `topology.js`, the second after touching immunity,
@@ -88,10 +88,10 @@ src/strains.js           registry (genome, antigen, lineage, generation), mutati
 src/strain-extinction.js periodic sweep: tombstone, reclaim dead branches, splice under pressure
 src/strain-style.js      a strain's mark from its antigen (hatch angle × OKLCH hue), the marks a carrier's strains make
 src/descent.js           who infected whom: the infection log, open and closed cases, Re by count, the Descent view's texel
-src/antigenic-map.js     Fig. 3, the antigenic map (Strains tab)
+src/antigenic-map.js     Fig. 4, the antigenic map (Strains tab)
 src/presets.js           six experiment presets, applyPreset, the theory their knobs are ticked with, the list of plates, the knob
 src/params.js            the params object, STRAIN_GENOME_LAYOUT, the slider row (Model tab, genome editor)
-src/model.js             the Model tab: Fig. 5, the compartment diagram, and each part's switches and sliders
+src/model.js             the Model tab: Fig. 6, the compartment diagram, and each part's switches and sliders
 src/toggles.js           the toggles object and the switch row
 src/paint.js             paint controller (pointer events, brush, undo/redo, paint keys), the brush rail
 src/camera.js            zoom/pan over the fitted plate
@@ -102,6 +102,7 @@ src/gpu-plate.js         WebGPU: the lattice, its copies and isolines from a sta
 src/histology.js         the Immunoediting preset as an H&E-stained section: what its marks read, its Reference rows
 src/caption.js           the live figure caption and the Reference cartouche rows
 src/rose.js              Nightingale's rose (Counts tab)
+src/spacetime.js         Fig. 3, space against time along the centre row (Counts tab)
 src/stats.js             census and observed Re (Counts tab)
 src/lineage.js           strain prevalence, Strains tab (figures, rows, vaccine match), phylogeny, genome editor
 src/history.js           per-tick ring buffer: transitions, spillovers, the Z census
@@ -382,7 +383,10 @@ uniformly random direction: length exponential with mean `ag_step` AU, or a 2 AU
 with chance `ag_jump`. Recombination (step 3, coinfected I cells) averages two parents
 with range-scaled noise, puts the antigen at their short-way midpoint, and records both
 (`parent`, `parents2`; `getStrain` exposes the second as `parent2`). Recombination's
-noise lets selection inflate β, which is why the drift preset turns it off.
+noise lets selection inflate β, which is why the drift preset turns it off. Each strain
+keeps the cell it was born in (`bornAt`): the host of the infection whose pick mutated
+(`pickIncomingStrain`), or the coinfected host of a recombination; α, seeded everywhere,
+has −1. A reused id takes its new strain's.
 
 `runExtinctionSweep` runs every 30 ticks: strains absent from every human strain slot
 (memory slot 0 included) and every `animal_strain` are tombstoned, and a tombstoned
@@ -391,7 +395,7 @@ from (through either parent) is then reclaimed and its id reused; cells remember
 antigens, not ids, so nothing points at it. Above `SPLICE_ABOVE` (16,384) slots the sweep
 also splices dead single-line ancestors out of `parent`, keeping about three slots per
 living strain however long the run; below it the whole descent is kept, so the antigenic
-map can draw the trunk's path.
+map and the plate can draw the trunk's path.
 
 ### Lineages
 
@@ -595,11 +599,12 @@ What acts on the plate sits on it; the margin holds the atlas's apparatus.
   default): the list of plates (`buildExperimentList`: the six experiments by plate
   numeral, then the Sandbox, titles only; choosing one applies it, and a changed model
   shows a Restore button under it), the surface picker (each surface's fundamental
-  polygon drawn from `SURFACES` and `cornerCones`) and the World row. **Counts**: Nightingale's rose, the census (S, E, I, R and D always,
+  polygon drawn from `SURFACES` and `cornerCones`) and the World row. **Counts**: Nightingale's rose, Fig. 3
+  space against time, the census (S, E, I, R and D always,
   the rest only while they have cells), the figures (population, observed Re, Re by count, beds,
   quarantine, mean age and health) and the reservoir while it has animals. **Strains**:
-  Fig. 3 the antigenic map with "Match vaccine to …", Fig. 4 the phylogeny, top
-  strains, genome editor. **Model** (`model.js`): Fig. 5, the model as a compartment
+  Fig. 4 the antigenic map with "Match vaccine to …", Fig. 5 the phylogeny, top
+  strains, genome editor. **Model** (`model.js`): Fig. 6, the model as a compartment
   diagram. The chain S → E → I → R runs down the left, V, Z and D beside it, births,
   the reservoir and cleared cells round the edges; each node is a chip with the plate's
   mark and its count, each arrow's weight its flux (main.js `flux`, ten-day smoothing of
@@ -635,8 +640,35 @@ the State view it ends with the running preset's measured values (`presetMeasure
 Re reads as observed Re and, once a case has closed, Re by count (`Re 1.02, 0.99 by
 count`). The Descent view's caption is the trees still growing, the deepest generation
 among the open cases (`summary()`) and Re.
-The margin's figure captions are a name and, where there is one, a live value (Fig. 3's
-leading strain and its distances); the rose's day span is drawn on the rose itself.
+The margin's figure captions are a name and, where there is one, a live value (Fig. 4's
+leading strain and its distances); the rose's day span is drawn on the rose itself, and
+Fig. 3's days and its ends, A and A′, on its axes.
+
+Fig. 3 (`spacetime.js`) is a Hovmöller diagram: position along the world's centre row,
+from the west corner (A on the plate) to the east (A′), against time running down over
+the last 730 days. After each tick `record` reads the lineage log's new events (so it
+visits only the infections, never every cell) and counts those in a band of
+`bandOf(R)` rows each side of the centre row (6 at the default world) by column and day,
+keeping the strain the cell took as its mark (angle code and hue byte, not an id, which
+the sweep reuses). `render` sums days into image rows, divides by the band's cells per
+column and the days per row (incidence per cell-day), and inks each place by the square
+root of incidence, full at the 95th percentile of the inked places (sampled), in the
+accent; in the Strain view, in the mark of the strain that took the most infections
+there, a tint under hatching at its angle. A front crossing the row is a Λ whose slope
+is its speed (Threshold); a season is a band whose mark changes from one to the next
+(Drift). It renders with the rose, only while the Counts tab is showing: 1.5 ms (3 in
+the Strain view) on the largest world; recording costs about 0.02 ms a tick. The plate
+marks A and A′ below its west and east corners, clear of a cone point's label above.
+
+In the Strain view the plate draws the trunk on the map (`plate.js` `drawTrunk`): the
+focus strain's ancestry (main.js `focusStrain`: the strain selected in the Strains tab
+while it lives, else the most prevalent, the one the immunity view uses) as a route
+through its ancestors' birthplaces, oldest first, a dot at each and the strain's own
+ringed in its mark. A leg runs the short way round: straight, or, when its far end is
+nearer through a glued edge (`edgeGluings`), as two segments, one to the far end's image
+beyond that edge and one from the near end's image beyond the partner edge. A route
+through a cone point takes one edge at a time, not the corner. The Reference gains the
+row `Ancestry of ρ5, by birthplace`.
 
 The antigenic map (`antigenic-map.js`) draws the torus as a square centred on α, its
 glued edges marked like the plate's (one chevron left and right, two top and bottom,
@@ -698,7 +730,8 @@ false`) so the about panel shows them without a second handler firing.
   pooled by id and reordered with `appendChild`. `document.startViewTransition` stays
   out of tick paths: its document snapshot was the main source of UI jank.
 - `stats.js` `buildPanelSkeleton` rebuilds the Counts tab but preserves
-  `#timeseries-panel` (the rose), whose canvas context `initTimeseries` captures once.
+  `#timeseries-panel` (the rose) and `#spacetime-panel` (Fig. 3), whose canvas contexts
+  `initTimeseries` and `createSpacetime` capture once.
 - The history (200 ticks) is a typed-array ring buffer of transitions, spillovers and
   the Z census, with `sum(key, n)` and `ago(key, n)`.
 - `#speed-btn` carries an inner `<span class="speed-label">` that `main.js` writes.
@@ -771,8 +804,8 @@ preset's knob, as the presets' comments record.
 
 `docs/ROADMAP.md` is the plan, refreshed on 2026-10-27 from an audit of the build: 2.2
 gives the plate cause and time (infection lineages and their Descent view, landed as
-M1; a space–time figure and the trunk on the map, M2; the three plates that read only
-in their captions rebuilt, M3), 2.3
+M1; a space–time figure and the trunk on the map, landed as M2; the three plates that
+read only in their captions rebuilt, M3), 2.3
 widens contact beyond the neighbours, 2.4 adds waning and the spirals plate, and 3.0 is
 the tactical game, its orders drawn on the map. When an item lands, move it to the
 roadmap's Landed table and update this file. `docs/VISION.md` holds the first ideation

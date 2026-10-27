@@ -184,7 +184,18 @@ from the two seeds and across glued edges. Spillover becomes a forest of small t
 at animals. Drift lays a new forest each season. Zombie apocalypse draws the conversion
 trees.
 
-### 4.3 Space–time, a figure [synthesis]
+### 4.3 Space–time, a figure [synthesis] — landed in M2
+
+*As built (`src/spacetime.js`, Fig. 3 in the Counts tab; the antigenic map, the phylogeny
+and the model became Figs. 4–6): incidence is read from the lineage log's new events, not
+a pass over cells, in a band of R/16 rows each side of the centre row (6 at the default
+world); cells outside the hexagon don't contribute, so the band thins at the corners
+rather than reading through the gluing. A ring of 730 days by 2R + 1 columns on the CPU,
+drawn to a 2D canvas with the rose's cadence, not a texture. Ink is the square root of
+incidence, full at the 95th percentile; in the Strain view each place takes the hatched
+mark of the strain with the most infections there. The plate marks the row's ends A and
+A′. Threshold's front reads as a Λ; Drift's seasons as bands whose marks change. 1.5–3 ms
+a render on the largest world, about 0.02 ms a tick to record.*
 
 A Hovmöller diagram (Hovmöller 1949, the meteorologists' trough-and-ridge diagram)
 [standard]: position along a transect against time, inked by incidence. The transect is
@@ -195,13 +206,19 @@ Strain view, sweeps are bands where the mark changes. Cummings et al. 2004 found
 waves radiating from Bangkok in this kind of view [standard]. One row of W values per tick
 into a ring texture: O(W), drawn as a figure in the Counts tab beside the rose.
 
-### 4.4 The trunk on the map [synthesis]
+### 4.4 The trunk on the map [synthesis] — landed in M2
+
+*As built (`strains.js` `bornAt`, `plate.js` `drawTrunk`): the route follows the focus
+strain, the one selected in the Strains tab while it lives, else the dominant one (the
+immunity view's), so a reader can trace any lineage. A leg that is shorter through a glued
+edge is drawn as two segments through the edge isometry; one through a cone point takes
+one edge, not the corner. α has no birthplace, so the route starts at its first mutant.*
 
 Each strain records its birth cell (`born_at`, Int32 in the registry; a recombinant takes
 its host's cell). The Strain view draws the dominant strain's ancestry as a route through
 its ancestors' birthplaces, each leg the short way round through the gluing, with a dot at
 each birth. That is where the lineage has been, the way Nextstrain draws a phylogeny on a
-map (Hadfield et al. 2018) [standard]. Fig. 3 shows where the trunk went in antigenic
+map (Hadfield et al. 2018) [standard]. Fig. 4 shows where the trunk went in antigenic
 space; this shows where it went on the world. S.
 
 ### 4.5 The three plates rebuilt
@@ -235,7 +252,7 @@ ships.
 | Milestone | Contents | Size | Depends on |
 |---|---|---|---|
 | **M1** | infection lineages, Descent, Re by counting (landed 2026-10-27) | M | — |
-| **M2** | the space–time figure, the trunk on the map | S–M | — |
+| **M2** | the space–time figure, the trunk on the map (landed 2026-10-27) | S–M | — |
 | **M3** | the three plates rebuilt, surveyed | M | M1 (Spillover), M2 (Drift) |
 
 M1 and M2 can run as parallel lanes. Receipts: tests that every event's source was a
@@ -282,7 +299,7 @@ hexagon stays abstract otherwise.
 ### 5.5 Questions it can answer
 
 - Does long-range mixing canalize the drift preset into a trunk? [speculative] Measure
-  lineage depth and the trunk's straightness in Fig. 3 against ε.
+  lineage depth and the trunk's straightness in Fig. 4 against ε.
 - Herd immunity's threshold should move from the lattice's 50% toward 1 − 1/R0 as ε
   grows [synthesis]. The ghost plate can show it with the coverage set by hand.
 - Long-range transmission selects for higher virulence (Boots & Sasaki 1999) [standard];
@@ -372,7 +389,7 @@ order is placed on the plate, costs something and takes time:
 - **Trace:** click a reported case to reveal its parent and children in the true
   transmission tree (2.2's lineages), one generation per order, up to tracer capacity.
 - **Sample:** click a case to reveal its strain's mark and antigenic position. During a
-  game, Fig. 3 and Fig. 4 show only sampled strains, so the phylogeny is the surveillance
+  game, Fig. 4 and Fig. 5 show only sampled strains, so the phylogeny is the surveillance
   you paid for.
 - **Close** a pump or a road (§5.4). **Bury safely, cull, sanitize:** corpses and the
   reservoir.

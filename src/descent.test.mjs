@@ -6,8 +6,8 @@
 // across the edge the event names, and that its parent is the case the source
 // held then; that open cases are exactly the cells still holding them; that
 // children counts and descendant counts equal the tree's own; that closed
-// trees had their size; and the log's ring, undo and redo, and the view's
-// texel on their own.
+// trees had their size; the log's ring, undo and redo, and the view's texel
+// on their own; and the space–time figure's record of the centre row.
 
 globalThis.mulberry32 = function (seed) { let a = seed | 0; return function () { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 globalThis.gaussian = function (rng) { rng = rng || Math.random; let u1 = rng(); if (u1 < 1e-12) u1 = 1e-12; return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rng()); };
@@ -236,6 +236,36 @@ for (const [key, topo] of runs) {
     check('a live tip is the disease\'s ink', (hb >> 14) === 1);
     check('a case placed by hand is a root mark', (out[a * 4 + 3] >>> 16) === ROOT_INTRO);
     check('a root weighs its descendants', (out[a * 4 + 3] & 255) > (hb & 255));
+}
+
+// The space–time figure (spacetime.js) reads the log's events along the centre row.
+{
+    const { createSpacetime, columnOf, bandOf, SPAN_DAYS } = await import('./spacetime.js');
+    const R = 24, W = 2 * R + 2, { cq, cr } = hexBounds(W, W), band = bandOf(R);
+    const at = (q, r) => r * W + q;
+    check('the centre is the middle column, the corners A and A′ the ends',
+        columnOf(at(cq, cr), W, cq, cr, R, band) === R && columnOf(at(cq - R, cr), W, cq, cr, R, band) === 0 && columnOf(at(cq + R, cr), W, cq, cr, R, band) === 2 * R);
+    check('a cell up the band sits over its column', columnOf(at(cq - 1, cr + 2), W, cq, cr, R, band) === R);
+    check('outside the band, no column', columnOf(at(cq, cr + band + 1), W, cq, cr, R, band) === -1 && columnOf(at(cq + 1, cr - 2), W, cq, cr, R, band) === R);
+    const w = world('threshold', R, Topology.TORUS, 5), fig = createSpacetime({}, { getContext: () => ({}) });
+    const T = SPAN_DAYS + 120;
+    for (let k = 1; k <= T; k++) {
+        tick(w.grid, w.params, w.toggles, w.topology, w.rng, w.reg, k);
+        fig.record(w.grid, w.reg, k);
+    }
+    const d = w.grid.descent, want = new Map();
+    for (let s = d.base; s < d.head; s++) {
+        const k = s & d.mask, col = columnOf(d.cell[k], W, cq, cr, R, band);
+        if (col < 0 || d.tick[k] <= T - SPAN_DAYS) continue;
+        want.set(d.tick[k], (want.get(d.tick[k]) || 0) + 1);
+    }
+    let ok = want.size > 0;
+    for (let t = T - SPAN_DAYS + 1; t <= T; t++) {
+        const row = fig.day(t), got = row ? row.reduce((a, b) => a + b, 0) : 0;
+        if (got !== (want.get(t) || 0)) ok = false;
+    }
+    check('each day holds the band\'s infections that day', ok);
+    check('days older than the span are gone', fig.day(T - SPAN_DAYS) === null);
 }
 
 console.log(`descent.test: ${pass} passed, ${fail} failed`);

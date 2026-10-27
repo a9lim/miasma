@@ -356,13 +356,13 @@ function appendAnimalRow(parent, key, labelText) {
 }
 
 function buildPanelSkeleton(panelEl) {
-    // Wipe prior content but PRESERVE the time-series chart — it lives as the
-    // first child of #tab-compartments and its canvas context is captured
-    // once by initTimeseries(); removing the node would orphan that context.
+    // Wipe prior content but PRESERVE the two figures — they lead
+    // #tab-compartments and their canvas contexts are captured once
+    // (initTimeseries, createSpacetime); removing a node would orphan it.
     let child = panelEl.firstChild;
     while (child) {
         const nextChild = child.nextSibling;
-        if (!(child.nodeType === 1 && child.id === 'timeseries-panel')) {
+        if (!(child.nodeType === 1 && (child.id === 'timeseries-panel' || child.id === 'spacetime-panel'))) {
             panelEl.removeChild(child);
         }
         child = nextChild;

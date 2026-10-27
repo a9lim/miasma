@@ -198,6 +198,8 @@ function clamp(v, lo, hi) {
  *                  recombineStrains, where (parent, parents2) records the
  *                  unordered pair of recombination parents.
  *   birthTick[]  : Int32 tick at which the strain was registered
+ *   bornAt[]     : the cell it was born in: the host of a mutation or a
+ *                  recombination; −1 for α, which is seeded everywhere
  *
  * Plain JS arrays (not typed) because the count is small (≤ MAX_STRAINS) and
  * we want growable storage without managing capacity. `free` holds reclaimed
@@ -251,6 +253,7 @@ export function createRegistry(seedParams) {
         parents2:  [],
         gen:       [],
         birthTick: [],
+        bornAt:    [],
         // Extinction tombstone. `extinct[id]` is true when no live cell or
         // animal carries the strain in any slot; `extinctTick[id]` records the
         // sim tick at which the sweep first observed extinction. A strain can
@@ -289,9 +292,10 @@ export function createRegistry(seedParams) {
  * @param {number|null} [parent2Id]
  * @param {number} [agX]
  * @param {number} [agY]
+ * @param {number} [bornAt] — the cell it was born in, or −1
  * @returns {number} new strain ID, or -1 if the registry is full
  */
-export function registerStrain(reg, params, parentId, birthTick, parent2Id, agX, agY) {
+export function registerStrain(reg, params, parentId, birthTick, parent2Id, agX, agY, bornAt) {
     const id = reg.free.length ? reg.free.pop() : reg.ids.length;
     if (id >= MAX_STRAINS) return -1;
     const hasParent = parentId !== null && parentId !== undefined;
@@ -313,6 +317,7 @@ export function registerStrain(reg, params, parentId, birthTick, parent2Id, agX,
     reg.parents2[id] = parent2Id === null || parent2Id === undefined ? null : (parent2Id | 0);
     reg.gen[id] = hasParent ? 1 + Math.max(reg.gen[parentId] | 0, reg.parents2[id] === null ? 0 : (reg.gen[reg.parents2[id]] | 0)) : 0;
     reg.birthTick[id] = birthTick | 0;
+    reg.bornAt[id] = typeof bornAt === 'number' ? bornAt : -1;
     // Every new strain starts alive (the caller is registering it because
     // it's about to write the ID into a slot). The next extinction sweep that
     // finds zero carriers will mark it.
@@ -343,6 +348,7 @@ export function getStrain(reg, id) {
         parent2:     reg.parents2[id],
         gen:         reg.gen[id],
         birthTick:   reg.birthTick[id],
+        bornAt:      reg.bornAt[id],
         extinct:     !!reg.extinct[id],
         extinctTick: reg.extinctTick[id] | 0
     };
@@ -479,9 +485,10 @@ export function countLiving(reg) {
  * @param {number} birthTick
  * @param {number} [agStep] — mean antigenic step, AU
  * @param {number} [agJump] — chance of a large jump instead
+ * @param {number} [bornAt] — the host cell, or −1
  * @returns {number} new strain ID, or -1 on failure
  */
-export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, agStep, agJump) {
+export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, agStep, agJump, bornAt) {
     const src = getStrain(reg, sourceId);
     if (src === null) return -1;
     // 0 is a real choice (antigenic steps only); only a missing value falls back.
@@ -503,7 +510,7 @@ export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, ag
     else if (agStep > 0) len = -agStep * Math.log(1 - r());
     const theta = 2 * Math.PI * r();
     return registerStrain(reg, newParams, sourceId, birthTick, null,
-        src.agX + len * Math.cos(theta), src.agY + len * Math.sin(theta));
+        src.agX + len * Math.cos(theta), src.agY + len * Math.sin(theta), bornAt);
 }
 
 /**
@@ -534,9 +541,10 @@ export function mutateStrain(reg, sourceId, mutationStrength, rng, birthTick, ag
  * @param {number} idB — second parent strain ID (must differ from idA)
  * @param {() => number} rng — uniform [0, 1); defaults to Math.random
  * @param {number} birthTick
+ * @param {number} [bornAt] — the host cell, or −1
  * @returns {number} new strain ID, or -1 on failure
  */
-export function recombineStrains(reg, idA, idB, rng, birthTick) {
+export function recombineStrains(reg, idA, idB, rng, birthTick, bornAt) {
     if (idA === idB) return -1;
     if (idA === EMPTY_STRAIN || idB === EMPTY_STRAIN) return -1;
     const a = getStrain(reg, idA);
@@ -558,7 +566,7 @@ export function recombineStrains(reg, idA, idB, rng, birthTick) {
     }
     return registerStrain(reg, newParams, idA, birthTick, idB,
         agMid(a.agX, b.agX) + AG_RECOMBINATION_JITTER * gaussian(r),
-        agMid(a.agY, b.agY) + AG_RECOMBINATION_JITTER * gaussian(r));
+        agMid(a.agY, b.agY) + AG_RECOMBINATION_JITTER * gaussian(r), bornAt);
 }
 
 // ─── A host's strains as a mixture ──────────────────────────────────────────

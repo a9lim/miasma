@@ -29,6 +29,7 @@ import { DEFAULT_PARAMS } from './src/default-params.js';
 import { memoryOf, remember } from './src/immunity.js';
 import { makeToggles, DEFAULT_TOGGLES } from './src/toggles.js';
 import { initTimeseries, ROSE_PERIOD } from './src/rose.js';
+import { createSpacetime } from './src/spacetime.js';
 import { createRegistry, getStrain, GENOME_FIELDS } from './src/strains.js';
 import { computeStrainPrevalence, renderStrainPanel } from './src/lineage.js';
 import { createPaintController, PaintMode } from './src/paint.js';
@@ -52,6 +53,7 @@ function cacheDOM() {
         plateHead: document.querySelector('.plate-head'), statsPanel: $('tab-compartments'), modelPanel: $('tab-model'),
         dashboard: $('margin'), atlas: document.querySelector('.atlas'),
         timeseriesPanel: $('timeseries-panel'), timeseriesCanvas: $('timeseries-canvas'), roseCaption: $('rose-caption'),
+        spacetimePanel: $('spacetime-panel'), spacetimeCanvas: $('spacetime-canvas'), spacetimeCaption: $('spacetime-caption'),
         strainPanel: $('tab-strains'), caption: $('plate-caption'),
         zoomInBtn: $('zoom-in-btn'), zoomOutBtn: $('zoom-out-btn'), zoomResetBtn: $('zoom-reset-btn'),
         zoomIndicator: $('zoom-indicator'), undoBtn: $('undo-btn'), redoBtn: $('redo-btn')
@@ -143,7 +145,7 @@ export default function init(dom) {
         return vp;
     };
 
-    let ts = null;
+    let ts = null, spacetime = null;
     let cachedStats = null, cachedPrev = null;
     let lastCounts = null;
     // The census and the strain prevalence, each an O(cells) sweep. A paint
@@ -210,6 +212,7 @@ export default function init(dom) {
         statsStale = prevStale = true;
         history.push(counts.sToE, counts.eToI, counts.iToR, counts.iToD, counts.spillovers, counts.zPop);
         if (ts) ts.push(sim.tick, counts);
+        if (spacetime) spacetime.record(sim.grid, strains, sim.tick);
         iso.record(sim.grid, sim.tick);
         renderDirty = stateDirty = statsDirty = tsDirty = strainsDirty = true;
     }
@@ -218,7 +221,7 @@ export default function init(dom) {
         if (!$.strainPanel || !$.strainPanel.classList.contains('active')) return;
         renderStrainPanel($.strainPanel, prevalence(), strains, (id) => {
             sim.selectedStrain = id;
-            if (sim.viewMode === ViewMode.IMMUNITY) markState();
+            if (sim.viewMode === ViewMode.IMMUNITY || sim.viewMode === ViewMode.STRAIN) markState();
         }, sim.tick, {
             vax: { x: params.vax_ag_x || 0, y: params.vax_ag_y || 0 },
             onMatchVaccine: (id) => {
@@ -248,8 +251,9 @@ export default function init(dom) {
         }
         const now = performance.now();
         if (legendDirty || !legend || now - lastLegendAt >= CAPTION_MS) {
+            const strainView = sim.viewMode === ViewMode.STRAIN;
             legend = plateLegend(sim, stats(), toggles, histology(),
-                sim.viewMode === ViewMode.STRAIN ? prevalence() : null, strains);
+                strainView ? prevalence() : null, strains, strainView ? focusStrain() : null);
             lastLegendAt = now; legendDirty = false;
         }
         sim.immunity = sim.viewMode === ViewMode.IMMUNITY ? immunityTarget() : null;
@@ -258,6 +262,7 @@ export default function init(dom) {
             dpr: canvas.width / Math.max(1, vp.cssWidth),
             contours: iso.contours, field: iso, histology: histology(),
             legend, avoid: overlayRects, presetKey: sim.presetKey,
+            trunk: sim.viewMode === ViewMode.STRAIN ? { reg: strains, id: focusStrain() } : null,
             scaleUnit: tissue() ? { per: 12, name: 'µm' } : null,
             stateOpts: {
                 mode: sim.viewMode,
@@ -289,14 +294,17 @@ export default function init(dom) {
         };
     }
 
-    // The immunity view's strain: the one selected in the Strains tab while it
-    // lives, else the most prevalent, else α.
+    // The strain the immunity view shades against and the Strain view's trunk
+    // follows: the one selected in the Strains tab while it lives, else the
+    // most prevalent, else α.
+    function focusStrain() {
+        const id = sim.selectedStrain;
+        if (id != null && getStrain(strains, id) && !strains.extinct[id]) return id;
+        const prev = prevalence();
+        return prev.length ? prev[0].id : 0;
+    }
     function immunityTarget() {
-        let id = sim.selectedStrain;
-        if (id == null || !getStrain(strains, id) || strains.extinct[id]) {
-            const prev = prevalence();
-            id = prev.length ? prev[0].id : 0;
-        }
+        const id = focusStrain();
         return {
             id, name: strains.names[id], ax: strains.ag_x[id], ay: strains.ag_y[id],
             cInf: params.immunity_strength, cVax: params.vax_efficacy
@@ -317,7 +325,7 @@ export default function init(dom) {
         if ((statsDirty || tsDirty || strainsDirty) && (!sim.playing || now - lastPanels >= PANEL_MS)) {
             lastPanels = now;
             if (statsDirty) { updateStats(); if (ui) ui.model.update(stats(), flux); statsDirty = false; }
-            if (tsDirty && ts) { ts.render(); tsDirty = false; }
+            if (tsDirty && ts) { ts.render(); if (spacetime) spacetime.render(sim.viewMode === ViewMode.STRAIN); tsDirty = false; }
             if (strainsDirty) { updateStrainPanel(); strainsDirty = false; }
         }
         if (renderDirty) { drawPlate(); renderDirty = false; }
@@ -353,6 +361,7 @@ export default function init(dom) {
         iso.clear();
         accumulator = 0;
         if (ts) ts.clear();
+        if (spacetime) spacetime.clear();
         for (const k of FLUX_KEYS) flux[k] = 0;
         strains = createRegistry(params);
         sim.selectedStrain = null;
@@ -508,7 +517,7 @@ export default function init(dom) {
     ui = setupUI($, sim, {
         onTopologyChange: () => { iso.markDirty(); markState(); },
         onWorldChange: (R) => setWorld(R),
-        onViewModeChange: () => markState(),
+        onViewModeChange: () => { markState(); tsDirty = true; },
         // A slider in the Model tab has set params[key]. A genome field lives
         // on every strain, so it is written onto all of them; the knob and
         // its marks follow.
@@ -680,6 +689,7 @@ export default function init(dom) {
     function wakeRenders() {
         statsDirty = strainsDirty = tsDirty = true;
         if (ts) ts.resize();
+        if (spacetime) spacetime.resize();
         requestFrame();
     }
     if ($.dashboard) {
@@ -691,6 +701,7 @@ export default function init(dom) {
     function resize() {
         camera.resize();
         if (ts) { ts.resize(); tsDirty = true; }
+        if (spacetime) spacetime.resize();
         markState();
     }
     window.addEventListener('resize', resize);
@@ -710,6 +721,8 @@ export default function init(dom) {
 
     if ($.timeseriesPanel && $.timeseriesCanvas) ts = initTimeseries($.timeseriesPanel, $.timeseriesCanvas);
     if ($.roseCaption) $.roseCaption.textContent = `Rose · ${ROSE_PERIOD}-day wedges`;
+    if ($.spacetimePanel && $.spacetimeCanvas) spacetime = createSpacetime($.spacetimePanel, $.spacetimeCanvas);
+    if ($.spacetimeCaption) $.spacetimeCaption.textContent = 'Space against time · the centre row, A to A′';
 
     resize();
     openScene(reducedMotion);

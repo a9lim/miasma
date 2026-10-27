@@ -111,8 +111,8 @@ export function plateCaption(sim, s, reff, histology, narrow, ctx) {
     return line([`Day ${fmt(sim.tick)}`, ...parts]);
 }
 
-/** Rows of the Reference cartouche for the current view. */
-export function plateLegend(sim, s, toggles, histology, topStrains, reg) {
+/** Rows of the Reference cartouche for the current view; `focus` is the strain the Strain view's trunk follows. */
+export function plateLegend(sim, s, toggles, histology, topStrains, reg, focus) {
     const S = SURFACES[sim.topology], edges = [];
     if (S.closed) edges.push({ kind: 'G', label: 'Glued edge' });
     else edges.push({ kind: 'shore', label: 'Shore' });
@@ -131,6 +131,7 @@ export function plateLegend(sim, s, toggles, histology, topStrains, reg) {
                 rows.push({ kind: 'H2', marks: [a, b], label: 'Coinfected' });
             }
             if (s.V) rows.push({ kind: 'V', label: 'Vaccinated' });   // its hatching is drawn in this view too
+            if (focus != null && reg.bornAt[focus] >= 0) rows.push({ kind: 'Tk', ink: strainStyle(reg, focus).ink, label: `Ancestry of ${reg.names[focus]}, by birthplace` });
             break;
         }
         case ViewMode.DESCENT:

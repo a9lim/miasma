@@ -601,7 +601,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
                 if (aSlot >= 0 && bSlot >= 0) {
                     const idA = nextStrainIds[slot0 + aSlot];
                     const idB = nextStrainIds[slot0 + bSlot];
-                    const newId = recombineStrains(strainRegistry, idA, idB, r, tickIdx);
+                    const newId = recombineStrains(strainRegistry, idA, idB, r, tickIdx, i);
                     if (typeof newId === 'number' && newId !== -1 && newId !== EMPTY_STRAIN) {
                         // Slot placement: prefer an empty slot. If none,
                         // evict the lowest-load slot (likely a parent;
@@ -926,7 +926,7 @@ export function tick(grid, params, toggles, topology, rng, strainRegistry, simTi
             // Mutation roll on the picked strain.
             if (pick !== EMPTY_STRAIN && mutRate > 0 && r() < mutRate) {
                 const mutId = mutateStrain(
-                    strainRegistry, pick, mutStrength, r, tickIdx, ag_step, ag_jump
+                    strainRegistry, pick, mutStrength, r, tickIdx, ag_step, ag_jump, ii
                 );
                 if (typeof mutId === 'number' && mutId !== EMPTY_STRAIN && mutId !== -1) {
                     pick = mutId;

@@ -83,6 +83,34 @@ check('midpoint the short way', near(agMid(0.5, S - 0.5), 0) || near(agMid(0.5, 
     const h = recombineStrains(reg, a, b, mulberry32(3), 2);
     check('recombinant near the short-way midpoint', agDist(reg.ag_x[h], reg.ag_y[h], 0, 1) < 0.3, [reg.ag_x[h], reg.ag_y[h]]);
     check('names follow the birth serial', reg.names[0] === 'α' && reg.names[1] === 'β');
+    check('α has no birthplace; a strain registered without one neither', reg.bornAt[0] === -1 && reg.bornAt[a] === -1);
+    check('a mutant and a recombinant keep the cell they were born in',
+        reg.bornAt[mutateStrain(reg, 0, 0.05, rng, 1, 0.3, 0, 17)] === 17 && reg.bornAt[recombineStrains(reg, a, b, mulberry32(4), 3, 23)] === 23);
+}
+
+// ─── Birthplaces in the tick: a strain is born in the host it first infects ───
+{
+    const { PRESETS, applyPreset } = await import('./presets.js');
+    const params = { ...DEFAULT_PARAMS }, toggles = { ...DEFAULT_TOGGLES }, sim = { topology: Topology.TORUS };
+    applyPreset(PRESETS.find(p => p.key === 'antigenic-drift'), params, toggles, sim);
+    const grid = new Grid(50, 50);
+    initializeGrid(grid);
+    const reg = createRegistry(params), rng = mulberry32(11);
+    for (const i of grid.activeIndices.slice(1000, 1040)) { grid.compartment[i] = Compartment.I; grid.strain_ids[i * 4] = 0; grid.strain_loads[i * 4] = 1; }
+    let born = 0, held = 0;
+    for (let t = 1; t <= 400; t++) {
+        const before = reg.born;
+        tick(grid, params, toggles, sim.topology, rng, reg, t);
+        for (let id = 0; id < reg.ids.length; id++) {
+            if (reg.birthTick[id] !== t || reg.parent[id] === null) continue;
+            born++;
+            const c = reg.bornAt[id];
+            // slot 0 for a first infection; a coinfection places it in another
+            if (c >= 0 && [0, 1, 2, 3].some(k => grid.strain_ids[c * 4 + k] === id)) held++;
+        }
+        if (reg.born < before) break;
+    }
+    check('every mutant is in its birthplace at the end of the tick it was born', born >= 3 && held === born, [born, held]);
 }
 
 // ─── Reclamation ───
