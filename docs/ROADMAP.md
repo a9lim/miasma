@@ -376,6 +376,7 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 | Performance | 2026-10-25 | `97bd94d` | A single-pass tick with source stamps, skipped rare rolls and in-place own-cell fields (2.5–3.4× faster); the isochrones in a Web Worker; census and text on a cadence; the Canvas fallback batched (Chrome's quadratic path build); the world's size a setting up to 96,661 cells; `tools/bench.mjs`. |
 | Default world | 2026-10-25 | `4a632db` | 24,031 cells by default (a9's call), the opening warmed up 300 days, every preset re-surveyed at that size with knob sweeps; `tools/presets-survey.mjs` takes a radius and knob values. |
 | The apparatus | 2026-10-26 | `00f5bdb` | The controls rebuilt around the plate: the view picker over it, the brush rail on it, the knob as a ruler ticked at the theory's threshold beside the caption, the experiments as numbered plates, Fig. 5 the model as a compartment diagram holding every switch and rate; Restart keeps edits, Restore undoes them. |
+| Coinfection as a mixture | 2026-10-27 | `8befba2` | A coinfected host's rates are its strains' load-weighted means, and a kept strain (carrier, F-corpse, new Z, reverse spillover) is credited by load × the rate behind it; slot order no longer matters, closing the case where a pruned slot 0 dropped a host to the sim-wide rates. Presets bit-identical; the Sandbox unchanged over 100 seeds. |
 
 ## 6. Gotchas
 
