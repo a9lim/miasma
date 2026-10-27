@@ -377,6 +377,7 @@ counter-based RNG (I1) is pulled into 3.0 (§3.7).
 | Default world | 2026-10-25 | `4a632db` | 24,031 cells by default (a9's call), the opening warmed up 300 days, every preset re-surveyed at that size with knob sweeps; `tools/presets-survey.mjs` takes a radius and knob values. |
 | The apparatus | 2026-10-26 | `00f5bdb` | The controls rebuilt around the plate: the view picker over it, the brush rail on it, the knob as a ruler ticked at the theory's threshold beside the caption, the experiments as numbered plates, Fig. 5 the model as a compartment diagram holding every switch and rate; Restart keeps edits, Restore undoes them. |
 | Coinfection as a mixture | 2026-10-27 | `8befba2` | A coinfected host's rates are its strains' load-weighted means, and a kept strain (carrier, F-corpse, new Z, reverse spillover) is credited by load × the rate behind it; slot order no longer matters, closing the case where a pruned slot 0 dropped a host to the sim-wide rates. Presets bit-identical; the Sandbox unchanged over 100 seeds. |
+| Every strain drawn | 2026-10-27 | `6466e91` | The Strain view hatches a carrier with every strain it holds, each as heavy as its load (opacity under a device pixel; one mark merges, one angle interleaves), so coinfection shows as the seams where lineages meet; a second GPU texture in the strain view, Canvas bins by weight and phase, the caption and cartouche count coinfected carriers. |
 
 ## 6. Gotchas
 
