@@ -503,6 +503,7 @@ life-years as the score.
 | WebGPU only | 2026-10-27 | `b7082e3` | The Canvas 2D fallback removed (`render.js`, `?canvas2d`, every-level contouring); a browser without WebGPU sees a notice on the plate while the margin runs, and a lost device is replaced. |
 | Show, don't tell | 2026-10-27 | `c18dcd8` | Captions are the day and the view's live values; the margin names without explaining. |
 | The refresh | 2026-10-27 | `5419af3` | This roadmap, rewritten from the audit; `tools/spirals.mjs`, the recurring-wave prototype on the real gluing. |
+| 2.2 M1 | 2026-10-27 | `31f5ce6` | Infection lineages (`src/descent.js`): every infection's source, edge and parent case, open and closed cases, trees, Re by count beside observed Re; the Descent view, a drainage map of who infected whom drawn through the gluing; 101 lineage tests; every fingerprint unchanged. |
 
 ## 11. Gotchas
 
