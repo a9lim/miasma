@@ -466,7 +466,7 @@ hairlines, no game chrome), the red stays the disease, and your orders are inks.
 | Steady-state ages | 2026-10-27 | `68097d6` | A new world starts at the ages its natural-death rates settle into, for people and animals, instead of one newborn cohort that died off together around day 1,000; presets without natural death bit-identical, Drift and Spillover re-surveyed. "Lifespan" renamed "Old age": the age where death and the age effects stop rising, far past the mean life. |
 | WebGPU only | 2026-10-27 | `b7082e3` | The Canvas 2D fallback removed (`render.js`, `?canvas2d`, every-level contouring); a browser without WebGPU sees a notice on the plate while the margin runs, and a lost device is replaced. |
 | Show, don't tell | 2026-10-27 | `c18dcd8` | Captions are the day and the view's live values; the margin names without explaining. |
-| The refresh | 2026-10-27 | this commit | This roadmap, rewritten from the audit; `tools/spirals.mjs`, the recurring-wave prototype on the real gluing. |
+| The refresh | 2026-10-27 | `5419af3` | This roadmap, rewritten from the audit; `tools/spirals.mjs`, the recurring-wave prototype on the real gluing. |
 
 ## 11. Gotchas
 
