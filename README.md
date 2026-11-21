@@ -110,8 +110,8 @@ the cells that can act where it can, and draws rare per-cell events by skipping 
 next one. `src/dynamics.js` holds the per-tick model, `src/topology.js` the surface
 identifications, `src/immunity.js` antigenic distance and immune memory, and
 `src/strains.js` the strain registry, `src/descent.js` who infected whom;
-`node src/topology.test.mjs`, `node src/immunity.test.mjs` and
-`node src/descent.test.mjs` run the tests, and `node tools/bench.mjs` times the tick.
+`node --test 'tests/*.test.mjs'` runs the tests, and `node tools/bench.mjs` times the
+tick.
 [AGENTS.md](AGENTS.md) has the detailed map.
 
 ## License

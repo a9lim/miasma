@@ -63,7 +63,7 @@
 //
 // The closings were found by exhaustive search over every pairing (and both
 // orientations) of the leftover slots, keeping the ones with the right χ and
-// orientability and the fewest defects; `topology.test.mjs` re-checks χ,
+// orientability and the fewest defects; `tests/topology.test.mjs` re-checks χ,
 // orientability, symmetry and the vertex classes.
 
 import { Topology, HEX_DIRS } from './config.js';

@@ -1,24 +1,21 @@
 # Miasma: where it could go
 
-A working draft from an ideation round on 2026-10-24, the day the atlas rebuild landed.
-It is for a9 and whichever agent picks the work up next: what Miasma is strong at,
-what it lacks, and directions that could take it many sessions to reach. Nothing here
-is ratified. What a9 slated from it lives in `ROADMAP.md`: B (antigenic space) and the
-preset rework are 2.1, which landed on 2026-10-24 (with seasonality from C, and the
-"Found in passing" items fixed); D and E (the observer and the response) are the core
-of 3.0, the game. On 2026-10-27 Claude refreshed the roadmap from an audit and proposed
-A as 2.3, C and G as 2.4 (waning, the phase view, the spirals plate, measured with
-`tools/spirals.mjs`), D and E as the core of 3.0, the tactical game, Plate I as its
-first case and H as another; a9 ratifies them through the roadmap's Open items. Rewind,
-replay and shareable runs (E, and I1 except for 3.0's twins) were set aside the same day:
-Miasma is a live, causal, observational sandbox, not a record. The measurements below describe the build before 2.1. Claims carry a tag: **[standard]** for an established result,
-**[synthesis]** for a connection drawn here, **[speculation]** for a guess still to
-test. Codex checked every citation against a retrieved source (several claims were
-corrected), Crossref confirmed every DOI, and Codex adversarially checked the
-topology argument in G. Codex's ideation consult was cut off by its vendor's
-biological-risk filter (a false positive on an educational lattice model). Its one
-surviving paragraph independently matched the exact-id novelty finding and the
-handedness point, and it caught the within-host competition bug.
+A working draft from an ideation round on 2026-10-24, the day the atlas rebuild landed:
+what Miasma was strong at, what it lacked, and directions that could take it many
+sessions to reach. Nothing here is ratified; what a9 slated from it lives in
+`ROADMAP.md`. B (antigenic space) and the preset rework became 2.1 and landed on
+2026-10-24, with seasonality from C and the round's "found in passing" fixes. The
+2026-10-27 refresh proposed A as 2.3, C and G as 2.4, and D, E, Plate I and H as the
+core and cases of 3.0, the tactical game. Rewind, replay and shareable runs (E, and I1
+except for 3.0's twins) were set aside that day (a9's call): Miasma is a live, causal,
+observational sandbox, not a record.
+
+Claims carry a tag: **[standard]** for an established result, **[synthesis]** for a
+connection drawn here, **[speculation]** for a guess still to test. Codex checked every
+citation against a retrieved source, Crossref confirmed every DOI, and Codex
+adversarially checked the topology argument in G. Codex's ideation consult was cut off
+by its vendor's biological-risk filter (a false positive on an educational lattice
+model).
 
 ## The thesis
 
@@ -37,111 +34,57 @@ The sim is named for the wrong hypothesis and drawn in the style of its refutati
 plate where the reader plays Snow and tells miasma from water by the pattern of deaths
 alone would close that loop (see Plate I below).
 
-## What it is strong at
+## What it was strong at
 
-- **The plate.** The atlas medium works. Isochrones keep the outbreak's history on the
-  map after the wave has passed. The glued-edge copies, drawn with the correct
-  isometries and pickable, make the topology legible without any 3D. The H&E reskin
-  (the same lattice read at the scale of cells) is the right instinct: one state
-  machine, two scales.
-- **Mathematical honesty about the surfaces.** It has 2,510 topology checks, an
-  exhaustive search over 4,864 gluings, and a proof that the flat glide Klein bottle
-  can't exist on this lattice. Few sims hold themselves to that.
-- **Determinism and headless import.** `?seed=` and Node-importable dynamics made the
-  survey below a 30-line script. Every direction that needs measurement builds on this.
+- **The plate.** Isochrones keep the outbreak's history on the map after the wave has
+  passed; the glued-edge copies, drawn with the correct isometries and pickable, make
+  the topology legible without 3D; the H&E reskin reads one state machine at two scales.
+- **Mathematical honesty about the surfaces:** an exhaustive search over 4,864 gluings
+  and a proof that the flat glide Klein bottle can't exist on this lattice.
+- **Determinism and headless import,** which every direction that needs measurement
+  builds on.
 - **Direct manipulation.** Painting interventions onto the map is the right interface.
   It needs constraints, not replacement.
 
-## What the measurements say
+## What the measurements said
 
-Headless survey on 2026-10-24 (`node tools/survey.mjs`): seed 12345, two 7-cell seed
-clusters at the opening offsets, 3,000 ticks per preset. T is the per-edge transmissibility,
-`1 − q(1−β)/(1 − (1−q)(1−β))` with exit rate `q = γ + μ` (geometric infectious
-period). The bond-percolation threshold of the triangular lattice, which is the
-adjacency graph of hex cells, is `p_c = 2 sin(π/18) ≈ 0.347`. β_c solves T(β) = p_c.
-This treats edges as independent, which overstates the precision: with random
-infectious periods a cell's edges are correlated, so the true threshold sits somewhat
-higher (Grassberger 1983 gives the percolation-type threshold **[standard]**). The
-ordering still holds.
+A headless survey of the pre-2.1 presets (seed 12345, 3,000 ticks each; the presets and
+their tables are in git history). T is the per-edge transmissibility,
+`1 − q(1−β)/(1 − (1−q)(1−β))` with exit rate `q = γ + μ`; the bond-percolation
+threshold of the triangular lattice (the hex cells' adjacency graph) is
+`p_c = 2 sin(π/18) ≈ 0.347`, and β_c solves T(β) = p_c. Independent edges overstate the
+precision: with random infectious periods a cell's edges are correlated, so the true
+threshold sits somewhat higher (Grassberger 1983) **[standard]**.
 
-| Preset | T | β / β_c | Fate by day 3,000 |
-|---|---|---|---|
-| SEIR vanilla | 0.79 | 5.2 | one wave, extinct day 311 |
-| COVID-like | 0.89 | 9.6 | extinct day 142, peak 31 |
-| Ebola | 0.74 | 4.4 | flat endemic, ~520–700 active |
-| TB | 0.93 | 21 | slow decay, 27 → 5 active |
-| Andes hantavirus | 0.48 | 1.7 | flat endemic, ~840–880 |
-| Smallpox | 0.93 | 12 | extinct day 227, peak 42 |
-| Plague + rats | 0.82 | 6.2 | flat endemic, ~510–660 |
-| Zombie apocalypse | 0.82 | 6.2 | zombies extinct day 1,346 |
-| Oncoviral | 0.84 | 9.1 | 6,524 transformed from day ~200, static |
-| Absurd | 0.89 | 8.0 | all zombie, then decays to 1 |
-| Defaults (sandbox) | 0.79 | 5.2 | flat endemic, ~1,050–1,170 |
+1. **Every preset was far supercritical** (T 0.74–0.93), so every outbreak looked like
+   the same solid ring at a different speed. A final-size sweep on the plane put the
+   crossover near β ≈ 0.067, just above the independent-edge 0.061, in the direction
+   correlated edges should push it; everything between "fizzles" and "fills the world"
+   happened for β in 0.055–0.09. The holes in the wavefront belong to the
+   near-threshold regime (T ≈ 0.35–0.5). *Became the Threshold plate.*
+2. **Tracing is omniscient.** Default-on `auto_quarantine` is instant, unlimited and sees
+   every true case; it killed COVID-like and smallpox in 5 of 5 seeds. *The presets turn
+   it off; 3.0's reports replace it.*
+3. **There is one act.** Nothing waned and nothing was forced, so nothing recurred.
+   *Seasonality landed in 2.1; waning is 2.4.*
+4. **Evolution was cosmetic.** Cross-immunity was exact id membership, so every mutant
+   was fully novel to every host, lineages stayed shallow (a broom, not a tree), and
+   within-host selection let the incumbent win whatever its genome. *Antigenic space
+   (2.1) fixed both.*
+5. **"Observed Re ≈ 1" while the outbreak grows.** On a lattice, incidence grows with the
+   front's circumference, roughly linearly, so the ratio estimator hovers near 1
+   **[standard]**. It is the most important thing the lattice teaches. *Re by count
+   (2.2) now stands beside it.*
 
-What follows from it:
+## What it lacked
 
-1. **Every preset is far supercritical, and the interesting regime is a sliver of the
-   β slider.** A sweep of SEIR vanilla on the plane (one seed cell at the center,
-   eight seeds per β, final size as a fraction of the 10,621 cells):
-
-   | β | 0.045 | 0.055 | 0.060 | 0.065 | 0.070 | 0.080 | 0.110 | 0.150 | 0.32 (preset) |
-   |---|---|---|---|---|---|---|---|---|---|
-   | mean final size | 0.1% | 0.4% | 1.2% | 7% | 27% | 64% | 84% | 99% | 100% |
-   | runs above 10% | 0/8 | 0/8 | 0/8 | 2/8 | 5/8 | 7/8 | 7/8 | 8/8 | 8/8 |
-
-   The crossover sits near β ≈ 0.067, just above the independent-edge prediction of
-   0.061, in the direction correlated edges should push it. Everything between
-   "fizzles" and "fills the world" happens for β in 0.055–0.09. With T between 0.74
-   and 0.93, the wave
-   fills nearly everything it touches, so every outbreak looks like the same solid
-   ring at a different speed. The "holes in the wavefront" that `about.md` celebrates
-   belong to the near-threshold regime (T ≈ 0.35–0.5), where the outbreak is a fractal
-   cluster and chance decides the shape. Only hantavirus, propped up by its
-   reservoir, gets close.
-2. **COVID-like and smallpox never spread.** They died in 5 of 5 seeds with the
-   default-on contact tracing. With `auto_quarantine` off they peaked at 4.6–5.0k and
-   2.7–3.0k active in all five. Tracing is instant, unlimited and omniscient: it sees
-   every true case at rate 0.5 a day.
-3. **There is one act.** Each run ends in extinction, a flat plateau, or saturation.
-   Nothing oscillates: there is no R → S waning (only partial reinfection through
-   `r_susceptibility_mult`) and no seasonality, so nothing recurs. After the first
-   wave there is nothing to watch.
-4. **Evolution is cosmetic.** Thousands of strains are born (Ebola 1,585, plague
-   2,222), and the carriers' mean β drifts up a little (Ebola 0.220 → 0.234, plague
-   0.340 → 0.370). Lineages stay shallow, though: mean depth 0.5–1.8 and at most 5
-   generations from α by day 3,000. The phylogeny is a broom, not a tree. The cause
-   is structural. Cross-immunity is exact membership of a strain id in the bloom
-   filter, so every mutant, however small the change, is completely novel to every
-   host. Escape is binary and costs nothing, so no lineage holds an antigenic
-   advantage long enough to build a trunk. Within a host, selection ignores the
-   genome too: the incumbent strain always wins (see B; fixed in 2.1). Without tracing, COVID-like registers
-   about 12,000 strains by day 600 (2,400 living), so a long run at high incidence
-   would reach the 65,535 cap.
-5. **"Observed Re ≈ 1" while the outbreak grows.** The opening plate reads Re 0.86
-   with the wave still advancing. That isn't a bug. On a lattice, incidence grows with
-   the front's circumference, roughly linearly, not exponentially, so the ratio
-   estimator hovers near 1 **[standard]**. It is the most important thing the lattice
-   teaches, and the plate never says so.
-
-## What it lacks
-
-- **The comparison it was built for.** `about.md` opens on the contrast with the
-  well-mixed ODE, but the ODE appears nowhere, and no number is measured against a
-  theory.
-- **Any mixing beyond nearest neighbors.** It has no travel, no dispersal kernel, and
-  no long-range jumps. Lattice R0 is capped at 6 by geometry, so a measles-like
-  pathogen (R0 12–18) can't be calibrated.
-- **Recurrence.** Waning immunity, seasonal forcing, and the cycles and spirals they
-  produce are all missing.
-- **Antigenic structure.** Immunity can't depend on how different two strains are.
-- **An observer.** The plate shows the truth, which no epidemiologist ever sees.
-- **Constraint.** Interventions are free and instant, and tracing is omniscient.
-- **Topology that matters to a phenomenon.** On a scalar contact process, the surface
-  only changes which cells neighbor which. Non-orientability can't show until
-  something in the scene has a handedness.
-- **A plate for Z's own story.** The oncoviral run saturates into a uniform purple
-  section, and its rose stays empty because the rose counts only E, R and D
-  transitions.
+The comparison with the well-mixed ODE that `about.md` opens on (A); any mixing beyond
+nearest neighbours, so lattice R0 is capped at 6 (A); recurrence (C); antigenic
+structure (B, landed); an observer, since the plate shows the truth no epidemiologist
+sees (D); constraint, since interventions are free and instant (E); topology that
+matters to a phenomenon, since a scalar contact process can't show non-orientability
+until something in the scene has a handedness (G); and a plate for Z's own story (H;
+2.2's clones gave Immunoediting one).
 
 ## Directions
 
@@ -170,42 +113,23 @@ Kermack–McKendrick's final size against the lattice's.
 
 ### B. Antigenic space: evolution that matters
 
-Give each strain an antigenic coordinate in ℝ². Mutation moves it by a small Gaussian
-step, and recombination takes the midpoint. Replace exact-id cross-immunity with
-distance-based immunity: each cell remembers its last K (2–4) antigenic positions and
-the tick of each, and its susceptibility to strain s falls off with the distance from
-s to the nearest memory. Storage is about 340 KB at K = 4.
+Landed in 2.1 (antigenic torus, per-cell memory, distance-based immunity, strain marks
+from antigenic position, the antigenic map; `AGENTS.md`). Still ahead from it:
 
-- Expected: a trunk-and-twig phylogeny in place of today's broom, antigenic clusters,
-  and strain replacement arriving as waves across the plate **[synthesis]**: the
-  influenza pattern (Smith et al. 2004 on clustered H3N2 antigenic evolution; the
-  phylodynamic frame in Grenfell et al. 2004) on a lattice.
-- Depiction: the hatch angle becomes the antigenic direction, so related strains
-  hatch alike, and a sweep reads as hatching rotating across the plate (depict, don't
-  decorate). The Strains tab gains an antigenic map: strains as points sized by
-  prevalence, with the trunk as a trail. Smith's figure is a map, so it already
-  belongs in an atlas.
 - Optional transmission–virulence trade-off (β tied to μ). On a lattice with host
   regrowth, spatial models evolve toward the *upper* persistence boundary, where a
   more transmissible pathogen burns out its local hosts and dies out (Rand, Keeling &
-  Wilson 1995) **[standard]**. Every preset already sits in that over-exploiting
+  Wilson 1995) **[standard]**. Every pre-2.1 preset sat in that over-exploiting
   regime, so this plate is closer than it looks.
-- Fixed in 2.1 M1: within-host selection ignored the genome. Step 3 updated each
-  slot as `old · (1 + k·(old − 1/n))`, so a strain's fitness was its own current
-  load. The incumbent always grew, and a coinfecting strain that entered at
-  `coinfection_load_delta` = 0.35 always lost, whatever its genome. That is
-  frequency-dependent positive feedback, not replicator dynamics. (Codex spotted it;
-  confirmed here.) Fitness is now β × the host's susceptibility to the strain, and
-  since 2026-10-27 every other rate of a coinfected host is the load-weighted mixture
-  of its strains' (`AGENTS.md`, Coinfection), where before only the strain in slot 0
-  counted. Fitness still has no term tied to virulence: a within-host replication
-  rate that raised both β and μ is where a nested within-host/between-host trade-off
-  would live.
+- Within-host fitness (β × the host's susceptibility since 2.1) has no term tied to
+  virulence: a within-host replication rate that raised both β and μ is where a nested
+  within-host/between-host trade-off would live.
 
 ### C. Time that recurs
 
 Add R → S and V → S waning as genome fields, and seasonal forcing
-β(t) = β₀(1 + A cos 2πt/365).
+β(t) = β₀(1 + A cos 2πt/365) (landed in 2.1 as `season_amp`). Roadmap §6.1 found that
+waning must hold and then lapse to give spirals.
 
 - Expected: damped oscillations toward endemicity. With births and forcing,
   transitions among annual, biennial and irregular cycles (Earn et al. 2000, a
@@ -259,7 +183,7 @@ after a delay. Then the experiments the budget makes meaningful:
   doesn't", made into an instrument. It needs I1.
 - **Rewind and branch.** Keyframes plus a replayable intervention log: rewind seven
   days and paint again. Put the seed, preset and log in the URL and a plate becomes
-  shareable.
+  shareable. *Set aside (a9, 2026-10-27): lineages, not records.*
 
 ### F. Plates as experiments
 
@@ -300,8 +224,9 @@ complex spread becomes concentric again **[standard]**. Here, towns linked by ro
 the source until the same isochrones become rings. It is a signature view the atlas
 medium is uniquely suited to.
 
-Each plate's measurement doubles as a regression test (for example, "Plate III: the
-measured β_c lies within 10% of the corrected threshold").
+Built since: III as Threshold, VII as Immunoediting, VIII as Antigenic drift. Each
+plate's measurement is surveyed across seeds (`tools/presets-survey.mjs`) before it
+ships.
 
 ### G. Topology that matters
 
@@ -364,57 +289,21 @@ an epidemic you want to win.
    by cell (common random numbers), so a twin differs only by the intervention. Replay
    can start from any keyframe, and a GPU tick can match the CPU one. It is small and
    unlocks E and the measurement harness.
-2. **A measurement harness** in `tools/` (staged-out). `tools/survey.mjs` and
-   `tools/threshold.mjs` reproduce every number in this document. The harness proper
-   promotes them to scripted experiments, one per plate.
+2. **A measurement harness** in `tools/` (staged-out). Landed as
+   `tools/presets-survey.mjs`, which surveys every plate across seeds and sweeps its
+   knob.
 3. **A WebGPU compute tick** at about 10⁶ cells (R ≈ 577). It makes threshold and
    front-roughness measurements clean and makes the plate atlas-dense. The CPU path
    stays at today's size. The strain registry becomes a storage buffer with atomic
    append. Large; worth it once size is the bottleneck.
 
-## Found in passing
-
-1. Default-on `auto_quarantine` makes COVID-like and smallpox fizzle in 5 of 5 seeds
-   (above). Either those presets turn it off, or tracing gets capacity and detection
-   (D).
-2. The rose counts E, R and D transitions only, so the oncoviral rose stays empty
-   while 6,500 cells transform.
-3. In the strain view, vaccination hatching (prussian) is drawn but missing from the
-   cartouche, so at a glance it reads as a strain.
-4. Under spillover-driven regimes (plague), isochrone labels land like "day 24" beside
-   "day 192". The contours are honest, but the labels are noise. Suppress labels where
-   the local field is incoherent, or switch to days since last arrival (C).
-5. Strain-registry growth: see "Evolution is cosmetic" above.
-6. Hospital capacity is `h_capacity_frac · W · H` (14,400 cells) rather than the
-   active count (10,621), so the stated fraction is off by 36%. It is documented, but
-   probably not intended.
-7. Within-host competition is genome-blind, and the incumbent always wins (see B;
-   fixed in 2.1 M1).
-
-## A possible order
-
-1. I1 counter-based RNG and I2 the harness. Small, and they make everything after
-   them measurable.
-2. A, the mixing dial and the ODE ghost. Foundational and on-mission. Plates II and
-   III follow almost for free.
-3. Plate I, Broad Street (the water route plus the death-only view). It is the
-   thematic keystone, and it's medium-sized.
-4. C, recurrence (waning, seasonality, the year-long rose, activation maps). It ends
-   the one-act problem and sets up G.
-5. B, antigenic space. Plates VIII and XI.
-6. D and E, the observer and the response, with twins. Large; plates VI and V.
-7. G, H, and I3 as the earlier work lands.
-
 ## Open questions for a9
 
-- Is "an atlas of plates, each an experiment" the right top-level frame? It turns the
-  preset dropdown into an atlas index, with pathogens as a second axis.
-- How much game? Shoals has a full game layer. Should Miasma score interventions
-  (deaths averted per dose), or stay an instrument?
+- Is "an atlas of plates, each an experiment" the right top-level frame? *Yes: 2.1
+  built it, with fewer, better presets (a9's rule).*
+- How much game? *A tactical game, 3.0 (a9's call, 2026-10-27).*
 - Abstract world or geography? Towns, rivers and roads (needed for IX and X) against
-  the purity of the hexagonal world.
-- Real disease names: keep "COVID-like" hand-tuned, or calibrate to published R0 and
-  serial intervals once A makes R0 > 6 reachable?
+  the purity of the hexagonal world. *Open: roadmap Open 4 proposes roads alone.*
 
 ## References
 
@@ -426,7 +315,6 @@ an epidemic you want to win.
 - Foege, W. H. and colleagues: surveillance-containment in eastern Nigeria from the December 1966 Ogoja outbreak; see Foege's retrospective in the *Bulletin of the WHO* and Henderson's WHO interview on the 1966 programme documents.
 - Grassberger, P. (1983). On the critical behavior of the general epidemic process and dynamical percolation. *Math. Biosci.* 63, 157–172. doi:10.1016/0025-5564(82)90036-0
 - Grenfell, B. T., Bjørnstad, O. N. & Kappey, J. (2001). Travelling waves and spatial hierarchies in measles epidemics. *Nature* 414, 716–723. doi:10.1038/414716a
-- Grenfell, B. T. et al. (2004). Unifying the epidemiological and evolutionary dynamics of pathogens. *Science* 303, 327–332. doi:10.1126/science.1090727
 - Mollison, D. (1977). Spatial contact models for ecological and epidemic spread. *J. R. Stat. Soc. B* 39, 283–326 (with discussion). doi:10.1111/j.2517-6161.1977.tb01627.x
 - Murray, J. D., Stanley, E. A. & Brown, D. L. (1986). On the spatial spread of rabies among foxes. *Proc. R. Soc. B* 229, 111–150. doi:10.1098/rspb.1986.0078
 - Nightingale, F. (1858). Diagram of the causes of mortality in the army in the East. In *Notes on Matters Affecting the Health, Efficiency, and Hospital Administration of the British Army*.
