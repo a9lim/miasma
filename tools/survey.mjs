@@ -1,4 +1,4 @@
-// Headless preset survey (docs/VISION.md, "What the measurements say").
+// Headless preset survey: fates, strain composition and genome drift over long runs.
 // usage: node tools/survey.mjs [ticks=3000] [preset,preset,...|__default]
 // env: SEED=<int> (default 12345); TOG='{"auto_quarantine":false}' overrides toggles after the preset.
 // Seeds two 7-cell clusters at the opening offsets; prints peak, extinction tick, strain counts,

@@ -23,7 +23,7 @@
 //   view         — the view the plate is drawn in when the preset is applied (else State)
 //   seed         — false: no cases placed by hand; the run's own sources start it
 //
-// Calibration (docs/ROADMAP.md §2.3): every preset was surveyed headlessly
+// Calibration: every preset was surveyed headlessly
 // across at least ten seeds (tools/presets-survey.mjs); the numbers below are
 // for the default 24,031-cell world (re-surveyed 2026-10-25; the presets were
 // first tuned on the 10,621-cell one), and say so where they differ from

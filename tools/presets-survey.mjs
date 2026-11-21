@@ -1,4 +1,4 @@
-// The presets' facts (AGENTS.md "Presets"): each preset at its default knob,
+// The presets' calibration (their comments in src/presets.js): each preset at its default knob,
 // seeded with the opening's two cases, run headlessly.
 // usage: node tools/presets-survey.mjs [preset,...|all] [seeds=10] [days=3000] [radius=the default] [knob values,...]
 // SET="key=value,..." overrides params after the preset is applied.

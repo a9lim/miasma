@@ -14,7 +14,7 @@
 // summed around every lattice triangle inside the hexagon, so charges are
 // counted in the hexagon's own orientation (a disk). Cores whose triangles
 // straddle the rim are missed, which is why a total can come out odd.
-// ROADMAP.md (2.4, recurrence) cites what this prints. Measured 2026-10-27,
+// Measured 2026-10-27,
 // R 89, 1,500 days, τ 40, β 0.35, γ 0.2, seed 1 on the torus: memoryless,
 // fade and hold:20 give noise (494, 106 and 228 cores), hold:30 ragged
 // spirals (40), hold:36 clean ones (10). With hold:36 the net charge over
